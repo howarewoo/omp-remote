@@ -2,6 +2,27 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
+type DaemonEnvironment = {
+  OMP_REMOTE_HOST?: string;
+  OMP_REMOTE_PORT?: string;
+};
+
+export function resolveDaemonTargets(environment: DaemonEnvironment) {
+  const host = environment.OMP_REMOTE_HOST ?? "127.0.0.1";
+  const port = Number(environment.OMP_REMOTE_PORT ?? "4387");
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("OMP_REMOTE_PORT must be an integer between 1 and 65535");
+  }
+  const urlHost = host.includes(":") ? `[${host}]` : host;
+
+  return {
+    http: `http://${urlHost}:${port}`,
+    ws: `ws://${urlHost}:${port}`,
+  };
+}
+
+const daemonTargets = resolveDaemonTargets(process.env);
+
 export default defineConfig({
   plugins: [
     react(),
@@ -31,8 +52,8 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 5173,
     proxy: {
-      "/healthz": "http://127.0.0.1:4387",
-      "/ws": { target: "ws://127.0.0.1:4387", ws: true },
+      "/healthz": daemonTargets.http,
+      "/ws": { target: daemonTargets.ws, ws: true },
     },
   },
 });

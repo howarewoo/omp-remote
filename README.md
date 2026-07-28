@@ -69,14 +69,16 @@ The dashboard is then available at the HTTPS URL reported by `tailscale serve st
 pnpm dev
 ```
 
-The Vite app runs on `127.0.0.1:5173` and proxies `/healthz`, `/ws`, and `/extension` to the daemon on port `4387`.
+Unless `OMP_REMOTE_PORT` is already set, `pnpm dev` runs the development daemon on `127.0.0.1:4388`. The Vite app runs on `127.0.0.1:5173` and proxies `/healthz` and `/ws` to the daemon using `OMP_REMOTE_HOST` and `OMP_REMOTE_PORT`. The installed service and other production commands continue to default to port `4387`.
+
+The default development endpoint is `OMP_REMOTE_EXTENSION_URL=ws://127.0.0.1:4388/extension`. Set it when starting terminal OMP sessions that should register with the development daemon instead of the installed service. If you override `OMP_REMOTE_HOST` or `OMP_REMOTE_PORT`, substitute the active host and port in this URL; enclose an IPv6 host in brackets, for example `ws://[::1]:4399/extension`.
 
 Optional environment variables:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `OMP_REMOTE_HOST` | `127.0.0.1` | Daemon bind address; keep loopback for Tailscale Serve |
-| `OMP_REMOTE_PORT` | `4387` | Daemon port |
+| `OMP_REMOTE_PORT` | `4387` | Daemon port; `pnpm dev` uses `4388` when unset |
 | `OMP_REMOTE_ORIGIN` | local and `*.ts.net` origins | Exact browser origin override |
 | `OMP_REMOTE_OMP_PATH` | `omp` | OMP executable used for RPC sessions |
 | `OMP_REMOTE_EXTENSION_URL` | `ws://127.0.0.1:4387/extension` | Extension registration socket |
