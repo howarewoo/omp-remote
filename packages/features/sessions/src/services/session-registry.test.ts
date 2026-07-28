@@ -14,6 +14,7 @@ const BASE_SESSION: Session = {
   lastActivity: "2026-07-28T17:00:00.000Z",
   capabilities: ["prompt", "steer", "follow_up", "abort", "resume"],
   messages: [],
+  sessionPath: "/work/.omp/session.jsonl",
 };
 
 describe("SessionRegistry", () => {

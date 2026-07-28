@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-export const SessionSourceSchema = z.enum(["rpc", "extension"]);
-export const SessionStatusSchema = z.enum(["idle", "running", "waiting", "disconnected"]);
+export const SessionSourceSchema = z.enum(["rpc", "extension", "history"]);
+export const SessionStatusSchema = z.enum(["idle", "running", "waiting", "disconnected", "history"]);
 export const SessionCapabilitySchema = z.enum(["prompt", "steer", "follow_up", "abort", "resume"]);
 
 export const TranscriptMessageSchema = z.object({
@@ -23,6 +23,18 @@ export const SessionSchema = z.object({
   contextPercent: z.number().min(0).max(100).nullable(),
   lastActivity: z.string(),
   capabilities: z.array(SessionCapabilitySchema),
+  messages: z.array(TranscriptMessageSchema),
+  sessionPath: z.string().min(1).nullable(),
+});
+
+export const SessionCatalogPageSchema = z.object({
+  sessions: z.array(SessionSchema),
+  total: z.number().int().nonnegative(),
+  nextOffset: z.number().int().nonnegative().nullable(),
+});
+
+export const SessionTranscriptResponseSchema = z.object({
+  sessionId: z.string().min(1),
   messages: z.array(TranscriptMessageSchema),
 });
 
@@ -113,6 +125,8 @@ export type BrowserCommand = z.infer<typeof BrowserCommandSchema>;
 export type ExtensionCommand = z.infer<typeof ExtensionCommandSchema>;
 export type ExtensionFrame = z.infer<typeof ExtensionFrameSchema>;
 export type ServerFrame = z.infer<typeof ServerFrameSchema>;
+export type SessionCatalogPage = z.infer<typeof SessionCatalogPageSchema>;
+export type SessionTranscriptResponse = z.infer<typeof SessionTranscriptResponseSchema>;
 export type Session = z.infer<typeof SessionSchema>;
 export type SessionCapability = z.infer<typeof SessionCapabilitySchema>;
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
