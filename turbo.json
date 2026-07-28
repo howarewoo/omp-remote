@@ -7,6 +7,7 @@
     },
     "dev": {
       "dependsOn": ["^build"],
+      "env": ["OMP_REMOTE_HOST", "OMP_REMOTE_PORT"],
       "cache": false,
       "persistent": true
     },

@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "dev": "turbo run dev",
+    "dev": "OMP_REMOTE_PORT=${OMP_REMOTE_PORT-4388} turbo run dev",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",
