@@ -69,7 +69,7 @@ The dashboard is then available at the HTTPS URL reported by `tailscale serve st
 pnpm dev
 ```
 
-Unless `OMP_REMOTE_PORT` is already set, `pnpm dev` runs the development daemon on `127.0.0.1:4388`. The Vite app runs on `127.0.0.1:5173` and proxies `/healthz` and `/ws` to the daemon using `OMP_REMOTE_HOST` and `OMP_REMOTE_PORT`. The installed service and other production commands continue to default to port `4387`.
+Unless `OMP_REMOTE_PORT` is already set, `pnpm dev` runs the development daemon on `127.0.0.1:4388`. The Vite app runs on `127.0.0.1:5173` and proxies `/api`, `/healthz`, `/ws`, and `/extension` to the daemon using `OMP_REMOTE_HOST` and `OMP_REMOTE_PORT`. The installed service and other production commands continue to default to port `4387`.
 
 The default development endpoint is `OMP_REMOTE_EXTENSION_URL=ws://127.0.0.1:4388/extension`. Set it when starting terminal OMP sessions that should register with the development daemon instead of the installed service. If you override `OMP_REMOTE_HOST` or `OMP_REMOTE_PORT`, substitute the active host and port in this URL; enclose an IPv6 host in brackets, for example `ws://[::1]:4399/extension`.
 
