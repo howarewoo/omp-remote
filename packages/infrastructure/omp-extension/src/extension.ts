@@ -93,8 +93,9 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
       model: model ? `${model.provider}/${model.id}` : null,
       contextPercent: normalizeContextPercent(ctx),
       lastActivity: new Date().toISOString(),
-      capabilities: ["prompt", "steer", "follow_up", "abort"] as const,
+      capabilities: ["prompt", "steer", "follow_up", "abort", "resume"] as const,
       messages,
+      sessionPath: ctx.sessionManager.getSessionFile() ?? null,
     };
   };
 

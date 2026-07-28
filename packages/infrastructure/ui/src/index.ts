@@ -5,6 +5,7 @@ export const SESSION_STATUS_LABEL: Record<SessionStatus, string> = {
   running: "Train running",
   waiting: "Held for input",
   disconnected: "Signal lost",
+  history: "Session history",
 };
 
 export const SESSION_STATUS_TONE: Record<SessionStatus, string> = {
@@ -12,4 +13,5 @@ export const SESSION_STATUS_TONE: Record<SessionStatus, string> = {
   running: "running",
   waiting: "waiting",
   disconnected: "disconnected",
+  history: "history",
 };

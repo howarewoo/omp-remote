@@ -5,6 +5,8 @@ import { type RpcFrame, RpcSession } from "@omp-remote/omp-rpc";
 import {
   BrowserCommandSchema,
   ExtensionFrameSchema,
+  SessionCatalogPageSchema,
+  SessionTranscriptResponseSchema,
   type ServerFrame,
   type Session,
   type TranscriptMessage,
@@ -12,10 +14,12 @@ import {
 import { SessionRegistry } from "@omp-remote/sessions/services";
 import Fastify from "fastify";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { z } from "zod";
+import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
 
 const MAX_MESSAGES = 200;
 const logger = createLogger("omp-remote-daemon");
@@ -60,8 +64,18 @@ const RpcMessagesResponseSchema = z.object({
   success: z.literal(true),
   data: z.union([z.array(z.unknown()), z.object({ messages: z.array(z.unknown()) })]),
 });
+const CatalogQuerySchema = z.object({
+  offset: z.coerce.number().int().nonnegative().default(0),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+  q: z.string().trim().max(200).default(""),
+});
+const SessionParamsSchema = z.object({ sessionId: z.string().min(1) });
 
 const environment = EnvironmentSchema.parse(process.env);
+const sessionCatalog = new SessionCatalog(
+  await resolveSessionRoots(homedir(), process.env.PI_CODING_AGENT_DIR),
+);
+const initialCatalogDiff = await sessionCatalog.refresh();
 const registry = new SessionRegistry();
 const browserSockets = new Set<WebSocket>();
 const rpcSessions = new Map<string, RpcSession>();
@@ -76,6 +90,34 @@ app.get("/healthz", async () => ({
   sessions: registry.list().length,
   timestamp: new Date().toISOString(),
 }));
+
+app.get("/api/sessions", async (request, reply) => {
+  const query = CatalogQuerySchema.safeParse(request.query);
+  if (!query.success) return reply.code(400).send({ error: "Invalid session catalog query" });
+  return SessionCatalogPageSchema.parse(
+    sessionCatalog.list({
+      offset: query.data.offset,
+      limit: query.data.limit,
+      query: query.data.q,
+    }),
+  );
+});
+
+app.get("/api/sessions/:sessionId/transcript", async (request, reply) => {
+  const params = SessionParamsSchema.safeParse(request.params);
+  if (!params.success || !sessionCatalog.get(params.data.sessionId)) {
+    return reply.code(404).send({ error: "Session history was not found" });
+  }
+  try {
+    return SessionTranscriptResponseSchema.parse({
+      sessionId: params.data.sessionId,
+      messages: await sessionCatalog.transcript(params.data.sessionId),
+    });
+  } catch (error) {
+    logger.error("Could not read OMP session transcript", error, { sessionId: params.data.sessionId });
+    return reply.code(500).send({ error: "Session history could not be read" });
+  }
+});
 
 app.get("/ws", { websocket: true }, (socket, request) => {
   if (!originAllowed(request.headers.origin)) {
@@ -169,7 +211,7 @@ app.get("/extension", { websocket: true }, (socket, request) => {
       const previousSessionId = extensionSessionBySocket.get(socket);
       if (previousSessionId && previousSessionId !== frame.session.id) {
         extensionSockets.delete(previousSessionId);
-        registry.update(previousSessionId, { connected: false, status: "disconnected" });
+        markSessionHistorical(previousSessionId);
       }
       extensionSessionBySocket.set(socket, frame.session.id);
       extensionSockets.set(frame.session.id, socket);
@@ -211,7 +253,7 @@ app.get("/extension", { websocket: true }, (socket, request) => {
     if (!sessionId) return;
     extensionSessionBySocket.delete(socket);
     if (extensionSockets.get(sessionId) === socket) extensionSockets.delete(sessionId);
-    registry.update(sessionId, { connected: false, status: "disconnected" });
+    markSessionHistorical(sessionId);
   });
 });
 
@@ -219,7 +261,11 @@ const webDist = resolve(dirname(fileURLToPath(import.meta.url)), "../../web/dist
 if (existsSync(webDist)) {
   await app.register(fastifyStatic, { root: webDist, wildcard: false });
   app.setNotFoundHandler(async (request, reply) => {
-    if (request.raw.method === "GET" && !request.url.startsWith("/healthz"))
+    if (
+      request.raw.method === "GET" &&
+      !request.url.startsWith("/healthz") &&
+      !request.url.startsWith("/api/")
+    )
       return reply.sendFile("index.html");
     return reply.code(404).send({ error: "Not found" });
   });
@@ -231,6 +277,13 @@ logger.info("OMP Remote daemon listening", {
   host: environment.OMP_REMOTE_HOST,
   port: environment.OMP_REMOTE_PORT,
 });
+logger.info("OMP session history indexed", { sessions: initialCatalogDiff.upserted.length });
+const catalogRefreshTimer = setInterval(() => {
+  void sessionCatalog
+    .refresh()
+    .catch((error) => logger.error("Could not refresh OMP session history", error));
+}, 10_000);
+catalogRefreshTimer.unref();
 
 async function launchRpcSession(cwd: string, resume: string | null): Promise<Session> {
   const rpc = new RpcSession({
@@ -250,7 +303,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
       registry.update(sessionId, { status: "idle", lastActivity: new Date().toISOString() });
       void refreshRpcState(sessionId, rpc);
     } else if (frame.type === "process_exit") {
-      registry.update(sessionId, { connected: false, status: "disconnected" });
+      markSessionHistorical(sessionId);
       rpcSessions.delete(sessionId);
     } else {
       const parsed = RpcMessageFrameSchema.safeParse(frame);
@@ -290,6 +343,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
     lastActivity: new Date().toISOString(),
     capabilities: ["prompt", "steer", "follow_up", "abort", "resume"],
     messages: [],
+    sessionPath: stateResponse.data.sessionFile ?? null,
   };
   rpcSessions.set(sessionId, rpc);
   registry.upsert(session);
@@ -364,6 +418,32 @@ function sendFrame(socket: WebSocket, frame: ServerFrame): void {
 
 function broadcast(frame: ServerFrame): void {
   for (const socket of browserSockets) sendFrame(socket, frame);
+}
+
+function markSessionHistorical(sessionId: string): void {
+  const current = registry.get(sessionId);
+  if (!current) return;
+  const historical = sessionCatalog.get(sessionId);
+  if (historical) {
+    registry.upsert({
+      ...historical,
+      messages: current.messages.map((message) => ({ ...message, streaming: false })),
+    });
+    return;
+  }
+  if (current.sessionPath) {
+    registry.upsert({
+      ...current,
+      source: "history",
+      status: "history",
+      connected: false,
+      contextPercent: null,
+      capabilities: ["resume"],
+      messages: current.messages.map((message) => ({ ...message, streaming: false })),
+    });
+    return;
+  }
+  registry.update(sessionId, { connected: false, status: "disconnected" });
 }
 
 function originAllowed(origin: string | undefined): boolean {
