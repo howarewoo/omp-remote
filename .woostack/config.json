@@ -1,0 +1,11 @@
+{
+  "artifacts": {
+    "specPlan": "markdown"
+  },
+  "models": {},
+  "review": {},
+  "respond": {},
+  "status": {
+    "staleDays": 14
+  }
+}

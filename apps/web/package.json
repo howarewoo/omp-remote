@@ -1,0 +1,29 @@
+{
+  "name": "@omp-remote/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b && vite build",
+    "dev": "vite",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run src --passWithNoTests"
+  },
+  "dependencies": {
+    "@omp-remote/protocol": "workspace:*",
+    "@omp-remote/session-client": "workspace:*",
+    "@omp-remote/sessions": "workspace:*",
+    "@omp-remote/ui": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plugin-pwa": "catalog:",
+    "vitest": "catalog:"
+  }
+}

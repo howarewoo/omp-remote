@@ -1,0 +1,30 @@
+{
+  "name": "omp-remote",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "node": ">=24.18.0"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "install:service": "node scripts/install-service.mjs",
+    "setup:extension": "pnpm --filter @omp-remote/omp-extension install:user",
+    "start": "pnpm --filter @omp-remote/daemon start",
+    "tailscale:serve": "node scripts/tailscale-serve.mjs"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "catalog:",
+    "@types/node": "catalog:",
+    "turbo": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
