@@ -52,7 +52,9 @@ export default defineConfig({
     host: "127.0.0.1",
     port: 5173,
     proxy: {
+      "/api": daemonTargets.http,
       "/healthz": daemonTargets.http,
+      "/extension": { target: daemonTargets.ws, ws: true },
       "/ws": { target: daemonTargets.ws, ws: true },
     },
   },
