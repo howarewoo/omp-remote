@@ -80,9 +80,13 @@ export const ServerFrameSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("error"), message: z.string() }),
 ]);
 
+const ExtensionRegistrationSessionSchema = SessionSchema.extend({
+  sessionPath: SessionSchema.shape.sessionPath.default(null),
+});
+
 export const ExtensionRegisterSchema = z.object({
   type: z.literal("register"),
-  session: SessionSchema,
+  session: ExtensionRegistrationSessionSchema,
 });
 
 export const ExtensionEventSchema = z.object({

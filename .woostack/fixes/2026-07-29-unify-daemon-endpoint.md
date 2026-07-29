@@ -1,6 +1,6 @@
 ---
 type: fix
-status: hardened
+status: executing
 branch: fix/unify-daemon-endpoint
 ---
 
@@ -55,13 +55,14 @@ The endpoint fix removed the split authority but did not resolve the reported li
   - Run the focused launcher tests, root test command, and root typecheck.
   - With a temporary valid daemon health server on a non-default loopback port, run `pnpm dev --dry=json` and verify Turbo selects only web development against that endpoint; with the server absent, verify the same finite command selects the full graph on the same endpoint.
   - Exercise the session path against one daemon: register an extension session before the browser connects, verify the browser snapshot marks it `source: "extension"`, `status: "running"`, and `connected: true`, verify a later transcript event streams to the browser, route `steer` to the extension, and return `command_result` to the browser.
-- [ ] **Step 4: Reproduce the rejected installed-extension frame**
+- [x] **Step 4: Reproduce the rejected installed-extension frame**
   - Add protocol tests proving the immediately previous registration frame without `sessionPath` is normalized to `sessionPath: null`, while canonical `SessionSchema` still rejects omission.
   - Cover current nonempty paths unchanged plus empty-string and wrong-type rejection; run the focused test before implementation and capture the failure.
-- [ ] **Step 5: Apply boundary-local compatibility**
+- [x] **Step 5: Apply boundary-local compatibility**
   - Give `ExtensionRegisterSchema` a registration-only session schema whose omitted `sessionPath` defaults to `null`.
   - Keep canonical session parsing and current extension snapshots unchanged; add no fallback command route and no synthetic resume capability.
-- [ ] **Step 6: Verify the reported active session**
+- [x] **Step 6: Verify the reported active session**
   - Run focused protocol tests, root tests, and root typecheck under supported Node.
   - Start the corrected daemon against the currently installed previous extension and verify its retry stays open, increments live health, and upserts the same session ID without duplication.
   - Without restarting or resuming `TimeoutProvenanceQualityReview`, verify the dashboard replaces the saved-session fallback with connected live state, streams a subsequent event, routes `steer` to that child socket, and returns `command_result`.
+  - `TimeoutProvenanceQualityReview` completed normally before the interaction probe could reach it and was not restarted or resumed. The same hot-registration, stream, and command path was verified against another already-loaded previous-extension Task session, including stable identity across daemon reconnect.
