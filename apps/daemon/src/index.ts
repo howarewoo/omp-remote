@@ -86,6 +86,7 @@ const app = Fastify({ logger: false, bodyLimit: 1024 * 1024 });
 await app.register(fastifyWebsocket, { options: { maxPayload: 1024 * 1024 } });
 
 app.get("/healthz", async () => ({
+  service: "omp-remote",
   status: "ok",
   sessions: registry.list().length,
   timestamp: new Date().toISOString(),

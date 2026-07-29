@@ -9,11 +9,11 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "dev": "OMP_REMOTE_PORT=${OMP_REMOTE_PORT-4388} turbo run dev",
+    "dev": "node scripts/dev.mjs",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",
-    "test": "turbo run test",
+    "test": "node --test scripts/dev.test.mjs && turbo run test",
     "typecheck": "turbo run typecheck",
     "install:service": "node scripts/install-service.mjs",
     "setup:extension": "pnpm --filter @omp-remote/omp-extension install:user",
