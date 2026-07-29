@@ -1,6 +1,6 @@
 import type { Session } from "@omp-remote/protocol";
 import { describe, expect, it } from "vitest";
-import { groupSessionsByConnection } from "./dashboard.js";
+import { formatSubagentActivityLabel, groupSessionsByConnection } from "./dashboard.js";
 
 const BASE_SESSION: Session = {
   id: "session-1",
@@ -15,6 +15,7 @@ const BASE_SESSION: Session = {
   capabilities: ["prompt", "steer", "follow_up", "abort", "resume"],
   messages: [],
   sessionPath: "/work/.omp/session.jsonl",
+  activeSubagents: [],
 };
 
 describe("groupSessionsByConnection", () => {
@@ -48,5 +49,14 @@ describe("groupSessionsByConnection", () => {
         sessions: [BASE_SESSION],
       },
     ]);
+  });
+});
+
+describe("formatSubagentActivityLabel", () => {
+  it.each([
+    [1, "1 subagent running"],
+    [3, "3 subagents running"],
+  ])("formats %i active subagents", (count, expected) => {
+    expect(formatSubagentActivityLabel(count)).toBe(expected);
   });
 });

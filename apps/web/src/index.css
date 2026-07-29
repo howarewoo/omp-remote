@@ -809,6 +809,78 @@ textarea:disabled {
   white-space: nowrap;
 }
 
+.subagent-activity {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 0 0 1.1rem;
+}
+
+.subagent-activity-heading {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--foreground);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.subagent-activity-heading::before {
+  width: 0.4rem;
+  height: 0.4rem;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--cyan);
+  content: "";
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+.subagent-list {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.subagent-list li {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 0.2rem;
+  padding: 0 0.8rem;
+  border-left: 1px solid var(--border);
+}
+
+.subagent-list span {
+  max-width: 15rem;
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 0.6875rem;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-list time {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.5625rem;
+}
+
+.subagent-list .subagent-overflow span {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-weight: 500;
+}
+
 .transcript {
   min-height: 12rem;
   flex: 1;
@@ -1222,6 +1294,16 @@ textarea:disabled {
 
   .session-metadata dd {
     max-width: 8rem;
+  }
+
+  .subagent-activity {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.65rem;
+  }
+
+  .subagent-list {
+    width: 100%;
   }
 
   .transcript {

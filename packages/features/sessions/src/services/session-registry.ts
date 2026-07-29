@@ -31,7 +31,7 @@ export class SessionRegistry {
   update(sessionId: string, patch: Partial<Omit<Session, "id" | "messages">>): Session | undefined {
     const current = this.#sessions.get(sessionId);
     if (!current) return undefined;
-    const next = { ...current, ...patch, messages: [...current.messages] };
+    const next = cloneSession({ ...current, ...patch, messages: current.messages });
     this.#sessions.set(sessionId, next);
     this.#emit({ type: "session_upsert", session: next });
     return cloneSession(next);
@@ -76,5 +76,6 @@ function cloneSession(session: Session): Session {
     ...session,
     capabilities: [...session.capabilities],
     messages: session.messages.map((message) => ({ ...message })),
+    activeSubagents: session.activeSubagents.map((subagent) => ({ ...subagent })),
   };
 }

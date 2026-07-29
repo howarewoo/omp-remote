@@ -216,7 +216,10 @@ app.get("/extension", { websocket: true }, (socket, request) => {
       }
       extensionSessionBySocket.set(socket, frame.session.id);
       extensionSockets.set(frame.session.id, socket);
-      registry.upsert(frame.session);
+      registry.upsert({
+        ...frame.session,
+        activeSubagents: sessionCatalog.get(frame.session.id)?.activeSubagents ?? [],
+      });
     } else if (frame.type === "heartbeat") {
       registry.update(frame.sessionId, {
         connected: true,
@@ -282,6 +285,9 @@ logger.info("OMP session history indexed", { sessions: initialCatalogDiff.upsert
 const catalogRefreshTimer = setInterval(() => {
   void sessionCatalog
     .refresh()
+    .then((diff) => {
+      for (const session of diff.upserted) syncActiveSubagents(session);
+    })
     .catch((error) => logger.error("Could not refresh OMP session history", error));
 }, 10_000);
 catalogRefreshTimer.unref();
@@ -345,6 +351,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
     capabilities: ["prompt", "steer", "follow_up", "abort", "resume"],
     messages: [],
     sessionPath: stateResponse.data.sessionFile ?? null,
+    activeSubagents: sessionCatalog.get(sessionId)?.activeSubagents ?? [],
   };
   rpcSessions.set(sessionId, rpc);
   registry.upsert(session);
@@ -406,6 +413,27 @@ function normalizeRpcMessage(raw: unknown, streaming: boolean, fallbackId: strin
           : new Date().toISOString(),
     streaming,
   };
+}
+
+function syncActiveSubagents(catalogSession: Session): void {
+  const liveSession = registry.get(catalogSession.id);
+  if (!liveSession || activeSubagentsEqual(liveSession.activeSubagents, catalogSession.activeSubagents))
+    return;
+  registry.update(catalogSession.id, { activeSubagents: catalogSession.activeSubagents });
+}
+
+function activeSubagentsEqual(left: Session["activeSubagents"], right: Session["activeSubagents"]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((subagent, index) => {
+      const other = right[index];
+      return (
+        subagent.id === other?.id &&
+        subagent.name === other.name &&
+        subagent.lastActivity === other.lastActivity
+      );
+    })
+  );
 }
 
 function normalizePercent(percent: number | undefined): number | null {

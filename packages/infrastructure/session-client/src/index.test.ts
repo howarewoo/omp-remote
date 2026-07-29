@@ -23,6 +23,7 @@ const SESSION: Session = {
     },
   ],
   sessionPath: "/tmp/session.jsonl",
+  activeSubagents: [],
 };
 
 describe("upsertTranscriptMessage", () => {

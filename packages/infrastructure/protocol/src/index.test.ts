@@ -79,10 +79,32 @@ describe("historical session schemas", () => {
     capabilities: ["resume"],
     messages: [],
     sessionPath: "/home/user/.omp/agent/sessions/project/session.jsonl",
+    activeSubagents: [],
   };
 
   it("accepts resumable historical sessions", () => {
     expect(SessionSchema.parse(historicalSession)).toEqual(historicalSession);
+  });
+
+  it("accepts active subagent activity on the main session", () => {
+    expect(
+      SessionSchema.parse({
+        ...historicalSession,
+        activeSubagents: [
+          {
+            id: "session-worker",
+            name: "ResearchAgent",
+            lastActivity: "2026-07-28T10:05:00.000Z",
+          },
+        ],
+      }).activeSubagents,
+    ).toEqual([
+      {
+        id: "session-worker",
+        name: "ResearchAgent",
+        lastActivity: "2026-07-28T10:05:00.000Z",
+      },
+    ]);
   });
 
   it("validates bounded catalog pages", () => {
@@ -138,6 +160,7 @@ describe("ExtensionRegisterSchema", () => {
       type: "register",
       session: {
         ...previousExtensionSession,
+        activeSubagents: [],
         sessionPath: null,
       },
     });
@@ -153,7 +176,7 @@ describe("ExtensionRegisterSchema", () => {
       }),
     ).toEqual({
       type: "register",
-      session: { ...previousExtensionSession, sessionPath },
+      session: { ...previousExtensionSession, activeSubagents: [], sessionPath },
     });
   });
 
