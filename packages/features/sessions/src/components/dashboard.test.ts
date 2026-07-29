@@ -11,6 +11,7 @@ const BASE_SESSION: Session = {
   connected: true,
   model: "openai/gpt-5.6",
   contextPercent: 12,
+  createdAt: "2026-07-28T16:00:00.000Z",
   lastActivity: "2026-07-28T17:00:00.000Z",
   capabilities: ["prompt", "steer", "follow_up", "abort", "resume"],
   messages: [],

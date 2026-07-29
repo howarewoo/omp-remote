@@ -28,6 +28,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
   const SessionEntrySchema = z
     .object({ id: z.string(), type: z.literal("message"), message: z.unknown() })
     .passthrough();
+  const sessionCreatedAt = new Map<string, string>();
 
   let context: ExtensionContext | undefined;
   let socket: WebSocket | undefined;
@@ -82,9 +83,13 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
       .map((entry) => normalizeMessage(entry.data.message, false, entry.data.id))
       .filter((message) => message !== null)
       .slice(-200);
+    const sessionId = ctx.sessionManager.getSessionId();
+    const now = new Date().toISOString();
+    const createdAt = sessionCreatedAt.get(sessionId) ?? messages[0]?.timestamp ?? now;
+    sessionCreatedAt.set(sessionId, createdAt);
     const model = ctx.models.current();
     return {
-      id: ctx.sessionManager.getSessionId(),
+      id: sessionId,
       source: "extension" as const,
       name: ctx.sessionManager.getSessionName() ?? null,
       cwd: ctx.cwd,
@@ -92,7 +97,8 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
       connected: true,
       model: model ? `${model.provider}/${model.id}` : null,
       contextPercent: normalizeContextPercent(ctx),
-      lastActivity: new Date().toISOString(),
+      createdAt,
+      lastActivity: now,
       capabilities: ["prompt", "steer", "follow_up", "abort", "resume"] as const,
       messages,
       sessionPath: ctx.sessionManager.getSessionFile() ?? null,

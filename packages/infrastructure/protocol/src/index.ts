@@ -27,6 +27,7 @@ export const SessionSchema = z.object({
   connected: z.boolean(),
   model: z.string().nullable(),
   contextPercent: z.number().min(0).max(100).nullable(),
+  createdAt: z.string(),
   lastActivity: z.string(),
   capabilities: z.array(SessionCapabilitySchema),
   messages: z.array(TranscriptMessageSchema),
@@ -88,6 +89,7 @@ export const ServerFrameSchema = z.discriminatedUnion("type", [
 ]);
 
 const ExtensionRegistrationSessionSchema = SessionSchema.extend({
+  createdAt: SessionSchema.shape.createdAt.optional(),
   sessionPath: SessionSchema.shape.sessionPath.default(null),
 });
 
@@ -148,3 +150,7 @@ export type Session = z.infer<typeof SessionSchema>;
 export type SessionCapability = z.infer<typeof SessionCapabilitySchema>;
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 export type TranscriptMessage = z.infer<typeof TranscriptMessageSchema>;
+
+export function compareSessionsByCreation(left: Session, right: Session): number {
+  return right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id);
+}
