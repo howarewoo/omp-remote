@@ -1076,27 +1076,70 @@ textarea:disabled {
   background: var(--omp-tool-message);
 }
 
-.code-block figcaption {
+.code-block summary {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.32rem 0.7rem;
-  border-bottom: 1px solid var(--omp-dark-gray);
+  min-height: 2.75rem;
+  padding: 0.42rem 0.7rem;
   color: var(--omp-gray);
   font-family: var(--font-mono);
   font-size: 0.625rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   line-height: 1.4;
+  list-style: none;
   text-transform: lowercase;
+  cursor: pointer;
 }
 
-.code-block figcaption span {
+.code-block summary::-webkit-details-marker {
+  display: none;
+}
+
+.code-block summary:hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--omp-dark-gray) 35%, transparent);
+}
+
+.code-block summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.code-block[open] summary {
+  border-bottom: 1px solid var(--omp-dark-gray);
+}
+
+.code-block-chevron {
   width: 0.42rem;
   height: 0.42rem;
   flex: none;
-  border-radius: 50%;
-  background: var(--omp-blue);
+  border-right: 1.5px solid var(--omp-blue);
+  border-bottom: 1.5px solid var(--omp-blue);
+  transform: rotate(-45deg);
+  transition: transform 140ms ease;
+}
+
+.code-block[open] .code-block-chevron {
+  transform: rotate(45deg);
+}
+
+.code-block-action {
+  margin-inline-start: auto;
+  color: var(--muted-foreground);
+}
+
+.code-block-action-expanded {
+  display: none;
+}
+
+.code-block[open] .code-block-action-collapsed {
+  display: none;
+}
+
+.code-block[open] .code-block-action-expanded {
+  display: inline;
 }
 
 .code-block pre {

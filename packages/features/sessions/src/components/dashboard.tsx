@@ -525,6 +525,24 @@ const HighlightedCode = memo(function HighlightedCode({
   );
 });
 
+export function TranscriptCodeBlock({ code, language }: { code: string; language: string | null }) {
+  return (
+    <details className="code-block">
+      <summary>
+        <span className="code-block-chevron" aria-hidden="true" />
+        <span>{language ?? "code"}</span>
+        <span className="code-block-action">
+          <span className="code-block-action-collapsed">Show code</span>
+          <span className="code-block-action-expanded">Hide code</span>
+        </span>
+      </summary>
+      <pre>
+        <HighlightedCode code={code} language={language} />
+      </pre>
+    </details>
+  );
+}
+
 const TranscriptText = memo(function TranscriptText({ text }: { text: string }) {
   const blocks = useMemo(() => parseTranscriptBlocks(text || "…"), [text]);
 
@@ -535,17 +553,7 @@ const TranscriptText = memo(function TranscriptText({ text }: { text: string }) 
           return <TranscriptProse key={`${index}:text`} text={block.text} />;
         }
         if (block.kind === "code") {
-          return (
-            <figure className="code-block" key={`${index}:code`}>
-              <figcaption>
-                <span aria-hidden="true" />
-                {block.language ?? "code"}
-              </figcaption>
-              <pre>
-                <HighlightedCode code={block.text} language={block.language} />
-              </pre>
-            </figure>
-          );
+          return <TranscriptCodeBlock code={block.text} key={`${index}:code`} language={block.language} />;
         }
         return (
           <div className="transcript-message-diff" key={`${index}:diff`}>
