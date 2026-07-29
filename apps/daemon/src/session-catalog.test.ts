@@ -114,6 +114,39 @@ describe("SessionCatalog", () => {
     });
   });
 
+  it("lists sessions by creation time instead of file activity", async () => {
+    const root = await makeTemporaryDirectory();
+    const olderPath = join(root, "project-a", "older.jsonl");
+    const newerPath = join(root, "project-a", "newer.jsonl");
+    await writeSession(olderPath, {
+      id: "older-session",
+      title: "Older session",
+      cwd: "/workspace/alpha",
+      timestamp: "2026-07-28T10:00:00.000Z",
+    });
+    await writeSession(newerPath, {
+      id: "newer-session",
+      title: "Newer session",
+      cwd: "/workspace/alpha",
+      timestamp: "2026-07-28T11:00:00.000Z",
+    });
+    await setModifiedTime(olderPath, "2026-07-28T12:00:00.000Z");
+    await setModifiedTime(newerPath, "2026-07-28T11:30:00.000Z");
+
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    expect(
+      catalog.list({ offset: 0, limit: 20, query: "" }).sessions.map((session) => ({
+        id: session.id,
+        createdAt: session.createdAt,
+      })),
+    ).toEqual([
+      { id: "newer-session", createdAt: "2026-07-28T11:00:00.000Z" },
+      { id: "older-session", createdAt: "2026-07-28T10:00:00.000Z" },
+    ]);
+  });
+
   it("updates the main session when an active subagent exits", async () => {
     const root = await makeTemporaryDirectory();
     const mainPath = join(root, "project-a", "main.jsonl");

@@ -75,6 +75,7 @@ describe("historical session schemas", () => {
     connected: false,
     model: null,
     contextPercent: null,
+    createdAt: "2026-07-28T09:00:00.000Z",
     lastActivity: "2026-07-28T10:00:00.000Z",
     capabilities: ["resume"],
     messages: [],
@@ -149,6 +150,10 @@ describe("ExtensionRegisterSchema", () => {
     capabilities: ["prompt", "steer", "follow_up", "abort"],
     messages: [],
   };
+  const currentExtensionSession = {
+    ...previousExtensionSession,
+    createdAt: "2026-07-29T09:00:00.000Z",
+  };
 
   it("normalizes the previous extension register without synthesizing resume", () => {
     expect(
@@ -172,11 +177,11 @@ describe("ExtensionRegisterSchema", () => {
     expect(
       ExtensionRegisterSchema.parse({
         type: "register",
-        session: { ...previousExtensionSession, sessionPath },
+        session: { ...currentExtensionSession, sessionPath },
       }),
     ).toEqual({
       type: "register",
-      session: { ...previousExtensionSession, activeSubagents: [], sessionPath },
+      session: { ...currentExtensionSession, activeSubagents: [], sessionPath },
     });
   });
 
@@ -196,7 +201,7 @@ describe("ExtensionRegisterSchema", () => {
   });
 
   it("keeps canonical sessions strict about omitted sessionPath", () => {
-    const result = SessionSchema.safeParse(previousExtensionSession);
+    const result = SessionSchema.safeParse(currentExtensionSession);
 
     expect(result.success).toBe(false);
     if (!result.success) {

@@ -2,7 +2,7 @@ import { createReadStream, type Dir } from "node:fs";
 import { type FileHandle, open, opendir, readdir, stat } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import { createInterface } from "node:readline";
-import type { Session, TranscriptMessage } from "@omp-remote/protocol";
+import { compareSessionsByCreation, type Session, type TranscriptMessage } from "@omp-remote/protocol";
 
 const METADATA_READ_BYTES = 16 * 1024;
 const MAX_TRANSCRIPT_MESSAGES = 200;
@@ -159,7 +159,7 @@ export class SessionCatalog {
     this.#rootEntriesBySessionId = nextRootEntriesBySessionId;
     this.#sortedSessions = [...nextRootEntriesBySessionId.values()]
       .map((entry) => entry.session)
-      .sort((left, right) => right.lastActivity.localeCompare(left.lastActivity));
+      .sort(compareSessionsByCreation);
 
     return { upserted, removed };
   }
@@ -250,6 +250,10 @@ async function readSessionMetadata(path: string): Promise<SessionMetadata | null
         connected: false,
         model: null,
         contextPercent: null,
+        createdAt: normalizeTimestamp(
+          header.timestamp,
+          fileStats.birthtimeMs > 0 ? fileStats.birthtime : fileStats.mtime,
+        ),
         lastActivity: fileStats.mtime.toISOString(),
         capabilities: ["resume"],
         messages: [],
@@ -310,9 +314,12 @@ function normalizeTranscriptMessage(record: Record<string, unknown>): Transcript
   };
 }
 
-function normalizeTimestamp(value: unknown): string {
-  const date = typeof value === "number" || typeof value === "string" ? new Date(value) : new Date();
-  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+function normalizeTimestamp(value: unknown, fallback?: Date): string {
+  if (typeof value === "number" || typeof value === "string") {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return date.toISOString();
+  }
+  return (fallback ?? new Date()).toISOString();
 }
 
 function fallbackSessionName(path: string, id: string, cwd: string, rawTimestamp: unknown): string | null {

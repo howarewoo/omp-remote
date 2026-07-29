@@ -1,4 +1,5 @@
 import {
+  compareSessionsByCreation,
   type BrowserCommand,
   type Session,
   SessionCatalogPageSchema,
@@ -255,7 +256,7 @@ export function useSessionClient(): SessionClient {
 function mergeSessions(base: Session[], overrides: Session[]): Session[] {
   const sessions = new Map(base.map((session) => [session.id, session]));
   for (const session of overrides) sessions.set(session.id, session);
-  return [...sessions.values()].sort((left, right) => right.lastActivity.localeCompare(left.lastActivity));
+  return [...sessions.values()].sort(compareSessionsByCreation);
 }
 
 function sessionMatchesQuery(session: Session, query: string): boolean {

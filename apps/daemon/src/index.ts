@@ -209,6 +209,7 @@ app.get("/extension", { websocket: true }, (socket, request) => {
     if (!frame) return;
 
     if (frame.type === "register") {
+      const catalogSession = sessionCatalog.get(frame.session.id);
       const previousSessionId = extensionSessionBySocket.get(socket);
       if (previousSessionId && previousSessionId !== frame.session.id) {
         extensionSockets.delete(previousSessionId);
@@ -218,7 +219,8 @@ app.get("/extension", { websocket: true }, (socket, request) => {
       extensionSockets.set(frame.session.id, socket);
       registry.upsert({
         ...frame.session,
-        activeSubagents: sessionCatalog.get(frame.session.id)?.activeSubagents ?? [],
+        createdAt: catalogSession?.createdAt ?? frame.session.createdAt ?? frame.session.lastActivity,
+        activeSubagents: catalogSession?.activeSubagents ?? [],
       });
     } else if (frame.type === "heartbeat") {
       registry.update(frame.sessionId, {
@@ -332,6 +334,8 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
   sessionId = stateResponse.data.sessionId;
   if (!sessionId) throw new Error("OMP RPC did not return a session ID");
   const contextPercent = normalizePercent(stateResponse.data.contextUsage?.percent);
+  const catalogSession = sessionCatalog.get(sessionId);
+  const now = new Date().toISOString();
   const session: Session = {
     id: sessionId,
     source: "rpc",
@@ -347,11 +351,12 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
       ? `${stateResponse.data.model.provider}/${stateResponse.data.model.id}`
       : null,
     contextPercent,
-    lastActivity: new Date().toISOString(),
+    createdAt: catalogSession?.createdAt ?? now,
+    lastActivity: now,
     capabilities: ["prompt", "steer", "follow_up", "abort", "resume"],
     messages: [],
     sessionPath: stateResponse.data.sessionFile ?? null,
-    activeSubagents: sessionCatalog.get(sessionId)?.activeSubagents ?? [],
+    activeSubagents: catalogSession?.activeSubagents ?? [],
   };
   rpcSessions.set(sessionId, rpc);
   registry.upsert(session);
@@ -417,9 +422,16 @@ function normalizeRpcMessage(raw: unknown, streaming: boolean, fallbackId: strin
 
 function syncActiveSubagents(catalogSession: Session): void {
   const liveSession = registry.get(catalogSession.id);
-  if (!liveSession || activeSubagentsEqual(liveSession.activeSubagents, catalogSession.activeSubagents))
+  if (
+    !liveSession ||
+    (liveSession.createdAt === catalogSession.createdAt &&
+      activeSubagentsEqual(liveSession.activeSubagents, catalogSession.activeSubagents))
+  )
     return;
-  registry.update(catalogSession.id, { activeSubagents: catalogSession.activeSubagents });
+  registry.update(catalogSession.id, {
+    createdAt: catalogSession.createdAt,
+    activeSubagents: catalogSession.activeSubagents,
+  });
 }
 
 function activeSubagentsEqual(left: Session["activeSubagents"], right: Session["activeSubagents"]): boolean {

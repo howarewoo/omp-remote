@@ -11,6 +11,7 @@ const BASE_SESSION: Session = {
   connected: true,
   model: "openai/gpt-5.6",
   contextPercent: 12,
+  createdAt: "2026-07-28T16:00:00.000Z",
   lastActivity: "2026-07-28T17:00:00.000Z",
   capabilities: ["prompt", "steer", "follow_up", "abort", "resume"],
   messages: [],
@@ -25,6 +26,28 @@ const BASE_SESSION: Session = {
 };
 
 describe("SessionRegistry", () => {
+  it("keeps newer sessions first when older sessions receive updates", () => {
+    const registry = new SessionRegistry();
+    registry.upsert({
+      ...BASE_SESSION,
+      id: "newer-session",
+      createdAt: "2026-07-28T17:00:00.000Z",
+      lastActivity: "2026-07-28T17:00:00.000Z",
+    });
+    registry.upsert({
+      ...BASE_SESSION,
+      id: "older-session",
+      createdAt: "2026-07-28T16:00:00.000Z",
+      lastActivity: "2026-07-28T18:00:00.000Z",
+    });
+
+    expect(registry.list().map((session) => session.id)).toEqual(["newer-session", "older-session"]);
+
+    registry.update("older-session", { lastActivity: "2026-07-28T19:00:00.000Z" });
+
+    expect(registry.list().map((session) => session.id)).toEqual(["newer-session", "older-session"]);
+  });
+
   it("replaces a streaming message without duplicating it", () => {
     const registry = new SessionRegistry();
     registry.upsert(BASE_SESSION);

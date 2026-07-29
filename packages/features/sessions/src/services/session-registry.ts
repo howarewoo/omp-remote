@@ -1,4 +1,4 @@
-import type { Session, TranscriptMessage } from "@omp-remote/protocol";
+import { compareSessionsByCreation, type Session, type TranscriptMessage } from "@omp-remote/protocol";
 
 const MAX_TRANSCRIPT_MESSAGES = 200;
 
@@ -11,9 +11,7 @@ export class SessionRegistry {
   readonly #listeners = new Set<(event: SessionRegistryEvent) => void>();
 
   list(): Session[] {
-    return [...this.#sessions.values()]
-      .map(cloneSession)
-      .sort((left, right) => right.lastActivity.localeCompare(left.lastActivity));
+    return [...this.#sessions.values()].map(cloneSession).sort(compareSessionsByCreation);
   }
 
   get(sessionId: string): Session | undefined {
