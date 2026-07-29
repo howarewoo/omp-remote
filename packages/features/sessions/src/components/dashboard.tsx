@@ -26,58 +26,96 @@ type SessionSection = {
   sessions: Session[];
 };
 
-type TranscriptLineKind = "text" | "meta" | "context" | "removed" | "added";
+type DiffLineKind = "meta" | "context" | "removed" | "added";
 
-type TranscriptLine = {
-  kind: TranscriptLineKind;
+type DiffLine = {
+  kind: DiffLineKind;
   text: string;
 };
+
+type TranscriptBlock =
+  | { kind: "text"; text: string }
+  | { kind: "code"; text: string; language: string | null }
+  | { kind: "diff"; lines: DiffLine[] };
 
 const DIFF_META_PATTERN =
   /^(?:diff --git |index |--- |\+\+\+ |@@ |new file mode |deleted file mode |similarity index |rename from |rename to |Binary files |\\ No newline at end of file)/;
 
-export function parseTranscriptText(text: string): TranscriptLine[] {
+function classifyDiffLine(line: string): DiffLine {
+  if (DIFF_META_PATTERN.test(line)) return { kind: "meta", text: line };
+  if (line.startsWith("+")) return { kind: "added", text: line };
+  if (line.startsWith("-")) return { kind: "removed", text: line };
+  return { kind: "context", text: line };
+}
+
+function startsRawDiff(lines: string[], index: number): boolean {
+  const line = lines[index] ?? "";
+  return (
+    line.startsWith("diff --git ") ||
+    line.startsWith("@@ ") ||
+    (line.startsWith("--- ") && lines[index + 1]?.startsWith("+++ ") === true)
+  );
+}
+
+function continuesRawDiff(line: string): boolean {
+  return line === "" || DIFF_META_PATTERN.test(line) || /^[ +\\-]/.test(line);
+}
+
+export function parseTranscriptBlocks(text: string): TranscriptBlock[] {
   const sourceLines = text.split("\n");
-  const lines: TranscriptLine[] = [];
-  let fencedDiff = false;
-  let rawDiff = false;
+  const blocks: TranscriptBlock[] = [];
+  let textLines: string[] = [];
+  let index = 0;
 
-  for (let index = 0; index < sourceLines.length; index += 1) {
+  const flushText = () => {
+    if (textLines.length === 0) return;
+    blocks.push({ kind: "text", text: textLines.join("\n") });
+    textLines = [];
+  };
+
+  while (index < sourceLines.length) {
     const line = sourceLines[index] ?? "";
+    const fence = line.match(/^```([A-Za-z0-9_+#.-]*)\s*$/);
 
-    if (!fencedDiff && /^```(?:diff|patch)\s*$/i.test(line)) {
-      fencedDiff = true;
+    if (fence) {
+      flushText();
+      const language = fence[1] || null;
+      const normalizedLanguage = language?.toLowerCase();
+      const codeLines: string[] = [];
+      index += 1;
+      while (index < sourceLines.length && !/^```\s*$/.test(sourceLines[index] ?? "")) {
+        codeLines.push(sourceLines[index] ?? "");
+        index += 1;
+      }
+      if (index < sourceLines.length) index += 1;
+
+      if (normalizedLanguage === "diff" || normalizedLanguage === "patch") {
+        blocks.push({ kind: "diff", lines: codeLines.map(classifyDiffLine) });
+      } else {
+        blocks.push({ kind: "code", text: codeLines.join("\n"), language });
+      }
       continue;
     }
-    if (fencedDiff && /^```\s*$/.test(line)) {
-      fencedDiff = false;
+
+    if (startsRawDiff(sourceLines, index)) {
+      flushText();
+      const diffLines: DiffLine[] = [];
+      while (index < sourceLines.length) {
+        const diffLine = sourceLines[index] ?? "";
+        if (diffLines.length > 0 && !continuesRawDiff(diffLine)) break;
+        diffLines.push(classifyDiffLine(diffLine));
+        index += 1;
+      }
+      blocks.push({ kind: "diff", lines: diffLines });
       continue;
     }
 
-    const startsRawDiff =
-      line.startsWith("diff --git ") ||
-      line.startsWith("@@ ") ||
-      (line.startsWith("--- ") && sourceLines[index + 1]?.startsWith("+++ "));
-    if (!fencedDiff && !rawDiff && startsRawDiff) rawDiff = true;
-
-    if (!fencedDiff && rawDiff && line && !DIFF_META_PATTERN.test(line) && !/^[ +\\-]/.test(line)) {
-      rawDiff = false;
-    }
-
-    if (!fencedDiff && !rawDiff) {
-      lines.push({ kind: "text", text: line });
-    } else if (DIFF_META_PATTERN.test(line)) {
-      lines.push({ kind: "meta", text: line });
-    } else if (line.startsWith("+")) {
-      lines.push({ kind: "added", text: line });
-    } else if (line.startsWith("-")) {
-      lines.push({ kind: "removed", text: line });
-    } else {
-      lines.push({ kind: "context", text: line });
-    }
+    textLines.push(line);
+    index += 1;
   }
 
-  return lines;
+  flushText();
+  return blocks;
 }
 
 export function groupSessionsByConnection(sessions: Session[]): SessionSection[] {
@@ -123,20 +161,42 @@ export function Dashboard(props: DashboardProps) {
 }
 
 const TranscriptText = memo(function TranscriptText({ text }: { text: string }) {
-  const lines = useMemo(() => parseTranscriptText(text || "…"), [text]);
-  const hasDiff = lines.some((line) => line.kind !== "text");
+  const blocks = useMemo(() => parseTranscriptBlocks(text || "…"), [text]);
 
   return (
-    <p className={cn("transcript-message", hasDiff && "transcript-message-diff")}>
-      {lines.map((line, index) => (
-        <span
-          className={line.kind === "text" ? undefined : cn("diff-line", `diff-${line.kind}`)}
-          key={`${index}:${line.kind}`}
-        >
-          {line.text}
-        </span>
-      ))}
-    </p>
+    <div className="transcript-message">
+      {blocks.map((block, index) => {
+        if (block.kind === "text") {
+          return (
+            <p className="transcript-prose" key={`${index}:text`}>
+              {block.text}
+            </p>
+          );
+        }
+        if (block.kind === "code") {
+          return (
+            <figure className="code-block" key={`${index}:code`}>
+              <figcaption>
+                <span aria-hidden="true" />
+                {block.language ?? "code"}
+              </figcaption>
+              <pre>
+                <code>{block.text}</code>
+              </pre>
+            </figure>
+          );
+        }
+        return (
+          <div className="transcript-message-diff" key={`${index}:diff`}>
+            {block.lines.map((line, lineIndex) => (
+              <span className={cn("diff-line", `diff-${line.kind}`)} key={`${lineIndex}:${line.kind}`}>
+                {line.text}
+              </span>
+            ))}
+          </div>
+        );
+      })}
+    </div>
   );
 });
 

@@ -930,18 +930,21 @@ textarea:disabled {
   font-size: 0.5625rem;
 }
 
-.transcript-entry > p {
+.transcript-entry > .transcript-message {
   max-width: 74ch;
-  margin: 0;
   padding-left: 2.1rem;
   color: oklch(86% 0.012 286);
   font-size: 0.875rem;
   line-height: 1.7;
+}
+
+.transcript-prose {
+  margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.transcript-message > span {
+.transcript-message-diff > span {
   display: block;
   min-height: 1lh;
 }
@@ -949,6 +952,53 @@ textarea:disabled {
 .transcript-message-diff {
   max-width: 100%;
   overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.transcript-message
+  > :where(.transcript-prose, .code-block, .transcript-message-diff)
+  + :where(.transcript-prose, .code-block, .transcript-message-diff) {
+  margin-top: 0.85rem;
+}
+
+.code-block {
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid oklch(81% 0.14 200 / 0.2);
+  border-radius: calc(var(--radius) + 0.125rem);
+  background: oklch(81% 0.14 200 / 0.055);
+}
+
+.code-block figcaption {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.7rem;
+  border-bottom: 1px solid oklch(81% 0.14 200 / 0.14);
+  color: var(--cyan);
+  background: oklch(81% 0.14 200 / 0.055);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.code-block figcaption span {
+  width: 0.45rem;
+  height: 0.45rem;
+  flex: none;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.code-block pre {
+  margin: 0;
+  overflow-x: auto;
+  padding: 0.8rem 0.9rem;
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
@@ -984,12 +1034,23 @@ textarea:disabled {
   background: oklch(100% 0 0 / 0.025);
 }
 
-.transcript-user > p {
+.code-block code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  color: oklch(88% 0.08 200);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.65;
+  white-space: pre;
+}
+
+.transcript-user > .transcript-message {
   color: var(--foreground);
 }
 
-.transcript-tool > p,
-.transcript-system > p {
+.transcript-tool > .transcript-message,
+.transcript-system > .transcript-message {
   color: var(--muted-foreground);
   font-family: var(--font-mono);
   font-size: 0.75rem;
@@ -1357,7 +1418,7 @@ textarea:disabled {
     padding: 0.9rem 0;
   }
 
-  .transcript-entry > p {
+  .transcript-entry > .transcript-message {
     padding-left: 0;
     font-size: 0.8125rem;
   }
