@@ -168,9 +168,7 @@ describe("ExtensionRegisterSchema", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error.issues.map((issue) => issue.path)).toEqual([
-        ["session", "sessionPath"],
-      ]);
+      expect(result.error.issues.map((issue) => issue.path)).toEqual([["session", "sessionPath"]]);
     }
   });
 

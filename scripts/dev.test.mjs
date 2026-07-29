@@ -37,9 +37,7 @@ async function listenWithRejectedConnections() {
 }
 
 async function close(server) {
-  await new Promise((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve())),
-  );
+  await new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
 }
 
 async function waitForProcessExit(pid) {
@@ -113,11 +111,10 @@ if (process.env.TURBO_EXIT_CODE) process.exit(Number(process.env.TURBO_EXIT_CODE
   let watchdogError;
   try {
     try {
-      const execution = execFileAsync(
-        process.execPath,
-        [launcherPath, ...launcherArguments],
-        { env, timeout: 5_000 },
-      );
+      const execution = execFileAsync(process.execPath, [launcherPath, ...launcherArguments], {
+        env,
+        timeout: 5_000,
+      });
       if (env.TURBO_HARD_WATCHDOG_MS) {
         hardWatchdog = setTimeout(async () => {
           try {
@@ -234,9 +231,7 @@ test("a malformed health response selects the full development graph", async () 
 test("a generic impostor health response selects the full development graph", async () => {
   const { server, port } = await listen((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
-    response.end(
-      JSON.stringify({ status: "ok", sessions: 1, timestamp: new Date().toISOString() }),
-    );
+    response.end(JSON.stringify({ status: "ok", sessions: 1, timestamp: new Date().toISOString() }));
   });
 
   try {
@@ -372,51 +367,53 @@ test("a signal sent to the launcher terminates Turbo and is preserved", async ()
   }
 });
 
-test(
-  "launcher shutdown escalates across the detached Turbo process group",
-  { skip: process.platform === "win32", timeout: 7_000 },
-  async () => {
-    const { server, port } = await listenWithRejectedConnections();
-    let launcherError;
+test("launcher shutdown escalates across the detached Turbo process group", {
+  skip: process.platform === "win32",
+  timeout: 7_000,
+}, async () => {
+  const { server, port } = await listenWithRejectedConnections();
+  let launcherError;
+  let cleanupError;
 
+  try {
     try {
-      try {
-        await runLauncher({
-          OMP_REMOTE_HOST: "127.0.0.1",
-          OMP_REMOTE_PORT: String(port),
-          TURBO_SIGNAL_GROUP: "1",
-          TURBO_HARD_WATCHDOG_MS: "4000",
-        });
-        assert.fail("expected the launcher to terminate from SIGTERM");
-      } catch (error) {
-        launcherError = error;
-      }
-
-      assert.equal(launcherError.signal, "SIGTERM");
-      assert.equal(launcherError.invocation.receivedSignal, "SIGTERM");
-      assert.equal(launcherError.descendantSignal, "SIGTERM");
-      assert.equal(launcherError.watchdogError, undefined);
-      const escalationElapsed = Date.now() - launcherError.invocation.forwardedAt;
-      assert(
-        escalationElapsed >= 750 && escalationElapsed < 2_500,
-        `process group exited ${escalationElapsed}ms after SIGTERM; expected the 1s grace window`,
-      );
-      assertFullDevelopmentGraph(launcherError.invocation);
-      await waitForProcessExit(launcherError.invocation.turboPid);
-      await waitForProcessExit(launcherError.invocation.descendantPid);
-    } finally {
-      const turboPid = launcherError?.invocation?.turboPid;
-      if (Number.isInteger(turboPid)) {
-        try {
-          process.kill(-turboPid, "SIGKILL");
-        } catch (error) {
-          if (error.code !== "ESRCH") throw error;
-        }
-      }
-      await close(server);
+      await runLauncher({
+        OMP_REMOTE_HOST: "127.0.0.1",
+        OMP_REMOTE_PORT: String(port),
+        TURBO_SIGNAL_GROUP: "1",
+        TURBO_HARD_WATCHDOG_MS: "4000",
+      });
+      assert.fail("expected the launcher to terminate from SIGTERM");
+    } catch (error) {
+      launcherError = error;
     }
-  },
-);
+
+    assert.equal(launcherError.signal, "SIGTERM");
+    assert.equal(launcherError.invocation.receivedSignal, "SIGTERM");
+    assert.equal(launcherError.descendantSignal, "SIGTERM");
+    assert.equal(launcherError.watchdogError, undefined);
+    const escalationElapsed = Date.now() - launcherError.invocation.forwardedAt;
+    assert(
+      escalationElapsed >= 750 && escalationElapsed < 2_500,
+      `process group exited ${escalationElapsed}ms after SIGTERM; expected the 1s grace window`,
+    );
+    assertFullDevelopmentGraph(launcherError.invocation);
+    await waitForProcessExit(launcherError.invocation.turboPid);
+    await waitForProcessExit(launcherError.invocation.descendantPid);
+  } finally {
+    const turboPid = launcherError?.invocation?.turboPid;
+    if (Number.isInteger(turboPid)) {
+      try {
+        process.kill(-turboPid, "SIGKILL");
+      } catch (error) {
+        if (error.code !== "ESRCH") cleanupError = error;
+      }
+    }
+    await close(server);
+  }
+
+  if (cleanupError) throw cleanupError;
+});
 
 for (const [name, overrides, expectedMessage] of [
   ["host", { OMP_REMOTE_HOST: "0.0.0.0" }, /OMP_REMOTE_HOST/],
