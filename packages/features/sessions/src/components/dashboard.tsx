@@ -543,6 +543,18 @@ export function TranscriptCodeBlock({ code, language }: { code: string; language
   );
 }
 
+const SYSTEM_TEXT_PREVIEW_LENGTH = 180;
+
+export function formatSystemTextPreview(text: string): string {
+  const preview = text
+    .slice(0, SYSTEM_TEXT_PREVIEW_LENGTH + 1)
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!preview) return "System message";
+  if (text.length <= SYSTEM_TEXT_PREVIEW_LENGTH) return preview;
+  return `${preview.slice(0, SYSTEM_TEXT_PREVIEW_LENGTH).trimEnd()}…`;
+}
+
 const TranscriptText = memo(function TranscriptText({ text }: { text: string }) {
   const blocks = useMemo(() => parseTranscriptBlocks(text || "…"), [text]);
 
@@ -568,6 +580,23 @@ const TranscriptText = memo(function TranscriptText({ text }: { text: string }) 
     </div>
   );
 });
+
+export function SystemTranscriptText({ text }: { text: string }) {
+  return (
+    <details className="system-message-disclosure">
+      <summary>
+        <span className="system-message-preview">{formatSystemTextPreview(text)}</span>
+        <span className="system-message-action">
+          <span className="system-message-action-collapsed">Show full text</span>
+          <span className="system-message-action-expanded">Hide full text</span>
+        </span>
+      </summary>
+      <TranscriptText text={text} />
+    </details>
+  );
+}
+
+const MemoizedSystemTranscriptText = memo(SystemTranscriptText);
 
 function DashboardContent({
   sessions,
@@ -1004,7 +1033,11 @@ function DashboardContent({
                       <time dateTime={entry.timestamp}>{formatTime(entry.timestamp)}</time>
                       {entry.streaming ? <Badge className="streaming-badge">Streaming</Badge> : null}
                     </header>
-                    <TranscriptText text={entry.text} />
+                    {entry.role === "system" ? (
+                      <MemoizedSystemTranscriptText text={entry.text} />
+                    ) : (
+                      <TranscriptText text={entry.text} />
+                    )}
                   </article>
                 ))
               )}
