@@ -1,4 +1,5 @@
 import type { Session } from "@omp-remote/protocol";
+import { isValidElement, type ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import {
   formatSubagentActivityLabel,
@@ -9,6 +10,7 @@ import {
   tokenizeCode,
   TranscriptCodeBlock,
   SystemTranscriptText,
+  TranscriptEntry,
 } from "./dashboard.js";
 
 const BASE_SESSION: Session = {
@@ -184,6 +186,76 @@ describe("parseTranscriptBlocks", () => {
     expect(parseTranscriptBlocks("Run `pnpm test` next.")).toEqual([
       { kind: "text", text: "Run `pnpm test` next." },
     ]);
+  });
+});
+
+interface RenderedNode {
+  className?: string;
+  text: string;
+}
+
+function renderTranscriptNodes(node: ReactNode): RenderedNode[] {
+  if (node === null || node === undefined || typeof node === "boolean") return [];
+  if (typeof node === "string" || typeof node === "number") return [{ text: String(node) }];
+  if (Array.isArray(node)) return node.flatMap(renderTranscriptNodes);
+  if (!isValidElement(node)) return [];
+
+  const element = node as { type: unknown; props: Record<string, unknown> };
+  if (typeof element.type === "function") {
+    return renderTranscriptNodes(element.type(element.props) as ReactNode);
+  }
+  if (
+    typeof element.type === "object" &&
+    element.type !== null &&
+    "type" in element.type &&
+    typeof element.type.type === "function"
+  ) {
+    if (element.type.type.name === "InlineTranscript") {
+      return [{ text: String(element.props.text ?? "") }];
+    }
+    return renderTranscriptNodes(element.type.type(element.props) as ReactNode);
+  }
+  if (typeof element.type !== "string") return [];
+
+  const rawChildren = element.props.children as ReactNode;
+  const childGroups = (Array.isArray(rawChildren) ? rawChildren : [rawChildren]).map(renderTranscriptNodes);
+  return [
+    {
+      ...(typeof element.props.className === "string" ? { className: element.props.className } : {}),
+      text: childGroups.map((children) => children[0]?.text ?? "").join(""),
+    },
+    ...childGroups.flat(),
+  ];
+}
+
+describe("structured transcript presentation", () => {
+  it("renders a canonical numbered edit diff with tool identity", () => {
+    const nodes = renderTranscriptNodes(
+      TranscriptEntry({
+        entry: {
+          id: "edit-result-1",
+          role: "tool",
+          text: "-1|before\n+1|after",
+          timestamp: "2026-07-29T12:00:00.000Z",
+          streaming: false,
+          presentation: "diff",
+          toolName: "edit",
+        },
+      }),
+    );
+
+    expect({
+      author: nodes.find((node) => node.className === "message-author")?.text,
+      diffRows: nodes
+        .filter((node) => node.className?.startsWith("diff-line diff-"))
+        .map(({ className, text }) => ({ className, text })),
+    }).toEqual({
+      author: "·edit",
+      diffRows: [
+        { className: "diff-line diff-removed", text: "-1|before" },
+        { className: "diff-line diff-added", text: "+1|after" },
+      ],
+    });
   });
 });
 

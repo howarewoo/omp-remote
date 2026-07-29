@@ -5,6 +5,7 @@ import {
   SessionCatalogPageSchema,
   SessionSchema,
   SessionTranscriptResponseSchema,
+  TranscriptMessageSchema,
   ServerFrameSchema,
 } from "./index.js";
 
@@ -62,6 +63,49 @@ describe("BrowserCommandSchema", () => {
         text: " ",
       }),
     ).toThrow();
+  });
+});
+
+describe("TranscriptMessageSchema", () => {
+  it("preserves structured edit diff presentation and tool identity", () => {
+    expect(
+      TranscriptMessageSchema.parse({
+        id: "edit-result-1",
+        role: "tool",
+        text: "-1|before\n+1|after",
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "diff",
+        toolName: "edit",
+      }),
+    ).toEqual({
+      id: "edit-result-1",
+      role: "tool",
+      text: "-1|before\n+1|after",
+      timestamp: "2026-07-29T12:00:00.000Z",
+      streaming: false,
+      presentation: "diff",
+      toolName: "edit",
+    });
+  });
+
+  it("defaults legacy transcript frames to text presentation", () => {
+    expect(
+      TranscriptMessageSchema.parse({
+        id: "legacy-message-1",
+        role: "system",
+        text: "Legacy extension output",
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+      }),
+    ).toEqual({
+      id: "legacy-message-1",
+      role: "system",
+      text: "Legacy extension output",
+      timestamp: "2026-07-29T12:00:00.000Z",
+      streaming: false,
+      presentation: "text",
+    });
   });
 });
 

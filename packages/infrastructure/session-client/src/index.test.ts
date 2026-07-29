@@ -21,6 +21,7 @@ const SESSION: Session = {
       text: "Starting",
       timestamp: "2026-07-28T22:01:00.000Z",
       streaming: true,
+      presentation: "text",
     },
   ],
   sessionPath: "/tmp/session.jsonl",
@@ -35,6 +36,7 @@ describe("upsertTranscriptMessage", () => {
       text: "Streaming complete",
       timestamp: "2026-07-28T22:01:02.000Z",
       streaming: false,
+      presentation: "text",
     });
 
     expect(sessions[0]).toMatchObject({
@@ -42,6 +44,31 @@ describe("upsertTranscriptMessage", () => {
       messages: [{ id: "message-1", text: "Streaming complete", streaming: false }],
     });
     expect(SESSION.messages[0]?.text).toBe("Starting");
+  });
+
+  it("preserves tool presentation metadata when replacing a streaming message", () => {
+    const sessions = upsertTranscriptMessage([SESSION], "session-1", {
+      id: "message-1",
+      role: "tool",
+      text: "-1|before\n+1|after",
+      timestamp: "2026-07-29T12:00:01.000Z",
+      streaming: false,
+      presentation: "diff",
+      toolName: "edit",
+    });
+
+    expect(sessions[0]?.messages).toEqual([
+      {
+        id: "message-1",
+        role: "tool",
+        text: "-1|before\n+1|after",
+        timestamp: "2026-07-29T12:00:01.000Z",
+        streaming: false,
+        presentation: "diff",
+        toolName: "edit",
+      },
+    ]);
+    expect(SESSION.messages[0]).toEqual(expect.objectContaining({ text: "Starting", streaming: true }));
   });
 
   it("leaves unrelated sessions referentially stable", () => {
@@ -52,6 +79,7 @@ describe("upsertTranscriptMessage", () => {
       text: "Next chunk",
       timestamp: "2026-07-28T22:01:03.000Z",
       streaming: true,
+      presentation: "text",
     });
 
     expect(sessions[1]).toBe(other);

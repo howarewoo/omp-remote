@@ -58,6 +58,7 @@ describe("SessionRegistry", () => {
       text: "Work",
       timestamp: "2026-07-28T17:01:00.000Z",
       streaming: true,
+      presentation: "text",
     });
     registry.appendMessage("session-1", {
       id: "message-1",
@@ -65,10 +66,46 @@ describe("SessionRegistry", () => {
       text: "Work complete",
       timestamp: "2026-07-28T17:01:01.000Z",
       streaming: false,
+      presentation: "text",
     });
 
     expect(registry.get("session-1")?.messages).toEqual([
       expect.objectContaining({ id: "message-1", text: "Work complete", streaming: false }),
+    ]);
+  });
+
+  it("preserves tool presentation metadata when replacing a streaming message", () => {
+    const registry = new SessionRegistry();
+    registry.upsert(BASE_SESSION);
+
+    registry.appendMessage("session-1", {
+      id: "edit-result-1",
+      role: "tool",
+      text: "-1|before",
+      timestamp: "2026-07-29T12:00:00.000Z",
+      streaming: true,
+      presentation: "diff",
+      toolName: "edit",
+    });
+    registry.appendMessage("session-1", {
+      id: "edit-result-1",
+      role: "tool",
+      text: "-1|before\n+1|after",
+      timestamp: "2026-07-29T12:00:01.000Z",
+      streaming: false,
+      presentation: "diff",
+      toolName: "edit",
+    });
+
+    expect(registry.get("session-1")?.messages).toEqual([
+      expect.objectContaining({
+        id: "edit-result-1",
+        role: "tool",
+        text: "-1|before\n+1|after",
+        streaming: false,
+        presentation: "diff",
+        toolName: "edit",
+      }),
     ]);
   });
 
@@ -84,6 +121,7 @@ describe("SessionRegistry", () => {
       text: "Live text",
       timestamp: "2026-07-28T17:01:00.000Z",
       streaming: true,
+      presentation: "text",
     });
 
     expect(events).toEqual([
@@ -105,6 +143,7 @@ describe("SessionRegistry", () => {
       text: "mutated",
       timestamp: "2026-07-28T17:02:00.000Z",
       streaming: false,
+      presentation: "text",
     });
     const activeSubagent = snapshot?.activeSubagents[0];
     if (activeSubagent) activeSubagent.name = "mutated";

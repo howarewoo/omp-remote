@@ -3,6 +3,7 @@ import { type FileHandle, open, opendir, readdir, stat } from "node:fs/promises"
 import { basename, dirname, extname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { compareSessionsByCreation, type Session, type TranscriptMessage } from "@omp-remote/protocol";
+import { normalizeRawMessage } from "./message-normalizer.js";
 
 const METADATA_READ_BYTES = 16 * 1024;
 const MAX_TRANSCRIPT_MESSAGES = 200;
@@ -287,31 +288,18 @@ async function readTranscript(path: string): Promise<TranscriptMessage[]> {
 
 function normalizeTranscriptMessage(record: Record<string, unknown>): TranscriptMessage | null {
   if (record.type !== "message" || !isRecord(record.message)) return null;
-  const rawMessage = record.message;
-  const content = rawMessage.content;
-  const text =
-    typeof content === "string"
-      ? content
-      : Array.isArray(content)
-        ? content
-            .filter((part): part is Record<string, unknown> => isRecord(part))
-            .filter((part) => part.type === "text" && typeof part.text === "string")
-            .map((part) => String(part.text))
-            .join("")
-        : "";
-  if (!text) return null;
-  const role =
-    rawMessage.role === "user" || rawMessage.role === "assistant" || rawMessage.role === "tool"
-      ? rawMessage.role
-      : "system";
-  const timestamp = normalizeTimestamp(record.timestamp ?? rawMessage.timestamp);
-  return {
-    id: typeof record.id === "string" ? record.id : `${timestamp}-${messageHash(text)}`,
-    role,
-    text: text.length > MAX_TRANSCRIPT_TEXT ? `${text.slice(0, MAX_TRANSCRIPT_TEXT)}…` : text,
-    timestamp,
-    streaming: false,
-  };
+  const timestamp = normalizeTimestamp(record.timestamp ?? record.message.timestamp);
+  return normalizeRawMessage(
+    record.message,
+    false,
+    typeof record.id === "string" ? record.id : (text) => `${timestamp}-${messageHash(text)}`,
+    {
+      timestamp,
+      omitEmptyText: true,
+      maxTextLength: MAX_TRANSCRIPT_TEXT,
+      ignoreRawId: true,
+    },
+  );
 }
 
 function normalizeTimestamp(value: unknown, fallback?: Date): string {

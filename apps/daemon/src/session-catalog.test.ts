@@ -318,6 +318,81 @@ describe("SessionCatalog", () => {
     expect(removed.removed).toEqual(["session-1"]);
   });
 
+  it("uses a persisted edit result's canonical diff instead of its snapshot", async () => {
+    const root = await makeTemporaryDirectory();
+    const sessionPath = join(root, "project", "edit-session.jsonl");
+    await writeSession(
+      sessionPath,
+      {
+        id: "session-edit",
+        title: "Edit session",
+        cwd: "/workspace/project",
+        timestamp: "2026-07-29T12:00:00.000Z",
+      },
+      [
+        {
+          type: "message",
+          id: "edit-result-1",
+          timestamp: "2026-07-29T12:01:00.000Z",
+          message: {
+            role: "toolResult",
+            toolName: "edit",
+            content: [{ type: "text", text: "*** Begin Patch\n*** End Patch" }],
+            details: { diff: "-1|before\n+1|after" },
+            isError: false,
+          },
+        },
+      ],
+    );
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    await expect(catalog.transcript("session-edit")).resolves.toEqual([
+      {
+        id: "edit-result-1",
+        role: "tool",
+        text: "-1|before\n+1|after",
+        timestamp: "2026-07-29T12:01:00.000Z",
+        streaming: false,
+        presentation: "diff",
+        toolName: "edit",
+      },
+    ]);
+  });
+
+  it("derives id-less message identities from full text before display truncation", async () => {
+    const root = await makeTemporaryDirectory();
+    const sessionPath = join(root, "project", "long-idless-session.jsonl");
+    const commonPrefix = "x".repeat(20_000);
+    await writeSession(
+      sessionPath,
+      {
+        id: "session-long-idless",
+        title: "Long id-less messages",
+        cwd: "/workspace/project",
+        timestamp: "2026-07-29T12:00:00.000Z",
+      },
+      [
+        {
+          type: "message",
+          timestamp: "2026-07-29T12:01:00.000Z",
+          message: { role: "assistant", content: `${commonPrefix}a` },
+        },
+        {
+          type: "message",
+          timestamp: "2026-07-29T12:01:00.000Z",
+          message: { role: "assistant", content: `${commonPrefix}b` },
+        },
+      ],
+    );
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    const messages = await catalog.transcript("session-long-idless");
+    expect(messages.map(({ text }) => text)).toEqual([`${commonPrefix}…`, `${commonPrefix}…`]);
+    expect(messages[0]?.id).not.toBe(messages[1]?.id);
+  });
+
   it("streams the latest 200 meaningful transcript messages on demand", async () => {
     const root = await makeTemporaryDirectory();
     const sessionPath = join(root, "project", "long-session.jsonl");

@@ -1,6 +1,6 @@
 ---
 type: fix
-status: hardened
+status: executing
 branch: fix/edit-tool-diff-colors
 ---
 
@@ -38,21 +38,21 @@ No new dependency, migration, logging, or CSS token is required.
 
 ## 3. Implementation Plan
 
-- [ ] **Step 1: Reproduce with failing contract and ingress tests**
+- [x] **Step 1: Reproduce with failing contract and ingress tests**
   - In `packages/infrastructure/protocol/src/index.test.ts`, prove a structured edit-diff transcript message parses while a legacy text-only frame defaults to text presentation.
   - Add a pure extension-normalizer test using `{ role: "toolResult", toolName: "edit", content: [snapshot text], details: { diff: "-1|before\n+1|after" } }`; require role `tool`, canonical diff payload, diff presentation, tool identity, and the supplied streaming state.
   - Add daemon normalizer coverage with the same fixture for RPC input, plus `apps/daemon/src/session-catalog.test.ts` coverage proving persisted history uses `details.diff` rather than snapshot content.
   - Extend registry and session-client replacement tests to prove tool presentation metadata survives streaming updates.
   - In `packages/features/sessions/src/components/dashboard.test.ts`, require the canonical numbered diff to render `diff-removed` before `diff-added` and the tool author label to use `edit`.
 
-- [ ] **Step 2: Apply the minimal shared-root fix**
+- [x] **Step 2: Apply the minimal shared-root fix**
   - Add the backward-compatible presentation discriminator and optional tool identity to the protocol schema.
   - Extract and use one daemon raw-message normalizer for RPC and history; preserve existing ID, timestamp, empty-message, and history-truncation behavior.
   - Extract the extension's pure normalizer without adding a runtime dependency on the independently deployed protocol package; emit the new fields while retaining old-frame compatibility at daemon ingress.
   - Render structured diff presentation through the existing diff component/classifier and use `toolName` for the author label. Leave existing prose parsing and CSS colors unchanged.
   - Keep unsuccessful edits and edit results without a string `details.diff` as text so error output is never hidden or misclassified.
 
-- [ ] **Step 3: Verification**
+- [x] **Step 3: Verification**
   - Run focused tests for protocol, extension, daemon, session client, session registry, and sessions renderer packages.
   - Run the affected package typechecks and the web production build.
   - Smoke-test a transcript fixture containing a structured OMP edit result and verify the rendered tool block is labeled `edit`, remains visible as a tool block, and shows removed rows red and added rows green.
