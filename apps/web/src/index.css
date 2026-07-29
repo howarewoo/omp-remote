@@ -426,6 +426,29 @@ textarea:disabled {
   padding: 0 0.5rem 0.75rem;
 }
 
+.session-group {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.session-group + .session-group {
+  margin-top: 0.75rem;
+}
+
+.session-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0;
+  padding: 0.4rem 0.7rem 0.25rem;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .session-item {
   position: relative;
   display: grid;
@@ -594,6 +617,7 @@ textarea:disabled {
 [data-sidebar-collapsed="true"] .sidebar-actions span,
 [data-sidebar-collapsed="true"] .session-search,
 [data-sidebar-collapsed="true"] .session-list-heading,
+[data-sidebar-collapsed="true"] .session-group-heading,
 [data-sidebar-collapsed="true"] .session-copy,
 [data-sidebar-collapsed="true"] .session-item time,
 [data-sidebar-collapsed="true"] .sidebar-empty,
@@ -1122,6 +1146,7 @@ textarea:disabled {
   [data-sidebar-collapsed="true"] .sidebar-actions span,
   [data-sidebar-collapsed="true"] .session-search,
   [data-sidebar-collapsed="true"] .session-list-heading,
+  [data-sidebar-collapsed="true"] .session-group-heading,
   [data-sidebar-collapsed="true"] .session-copy,
   [data-sidebar-collapsed="true"] .session-item time,
   [data-sidebar-collapsed="true"] .sidebar-empty,
