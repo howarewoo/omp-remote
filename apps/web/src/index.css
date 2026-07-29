@@ -895,6 +895,8 @@ textarea:disabled {
 }
 
 .transcript {
+  --transcript-body-size: clamp(0.8125rem, 0.775rem + 0.2vw, 0.9375rem);
+  --transcript-mono-size: clamp(0.75rem, 0.72rem + 0.15vw, 0.8125rem);
   min-height: 12rem;
   flex: 1;
   overflow-y: auto;
@@ -957,9 +959,10 @@ textarea:disabled {
 }
 
 .transcript-entry > .transcript-message {
-  max-width: 74ch;
+  max-width: min(100%, 74ch);
+  min-width: 0;
   color: #d4d4d4;
-  font-size: 0.875rem;
+  font-size: var(--transcript-body-size);
   line-height: 1.7;
 }
 
@@ -1000,7 +1003,7 @@ textarea:disabled {
 
 .transcript-heading[data-level="1"],
 .transcript-heading[data-level="2"] {
-  font-size: 1rem;
+  font-size: clamp(0.9375rem, 0.9rem + 0.18vw, 1.0625rem);
 }
 
 .transcript-prose a {
@@ -1155,7 +1158,7 @@ textarea:disabled {
   min-width: 100%;
   padding: 0.05rem 0.65rem;
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: var(--transcript-mono-size, 0.75rem);
   line-height: 1.75;
   white-space: pre;
   overflow-wrap: normal;
@@ -1185,7 +1188,7 @@ textarea:disabled {
   min-width: 100%;
   color: var(--omp-code-text);
   font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: var(--transcript-mono-size, 0.75rem);
   line-height: 1.65;
   white-space: pre;
 }
@@ -1234,42 +1237,26 @@ textarea:disabled {
   background: var(--omp-tool-message);
 }
 
-.transcript-tool > .transcript-message {
+.transcript-entry > :is(.system-message-disclosure, .tool-message-disclosure) {
+  width: min(100%, 74ch);
+  min-width: 0;
   color: var(--omp-gray);
   font-family: var(--font-mono);
-  font-size: 0.75rem;
-}
-
-.transcript-entry > .system-message-disclosure {
-  max-width: 74ch;
-  color: var(--omp-gray);
-  font-family: var(--font-mono);
-  font-size: 0.75rem;
+  font-size: var(--transcript-mono-size);
   line-height: 1.7;
 }
 
-.system-message-disclosure summary {
+:is(.system-message-disclosure, .tool-message-disclosure) > summary {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 0.75rem;
+  gap: 0.45rem;
   min-height: 2.75rem;
   color: var(--omp-gray);
   list-style: none;
   cursor: pointer;
 }
 
-.system-message-disclosure summary::-webkit-details-marker {
+:is(.system-message-disclosure, .tool-message-disclosure) > summary::-webkit-details-marker {
   display: none;
-}
-
-.system-message-disclosure summary:hover .system-message-preview {
-  color: var(--foreground);
-}
-
-.system-message-disclosure summary:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
 }
 
 .system-message-preview {
@@ -1280,39 +1267,58 @@ textarea:disabled {
   -webkit-line-clamp: 2;
 }
 
-.system-message-action {
-  align-self: start;
-  color: var(--muted-foreground);
-  font-size: 0.625rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  line-height: 1.6;
-  text-transform: lowercase;
-  white-space: nowrap;
+.tool-message-preview {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--omp-gray);
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.system-message-action-expanded {
-  display: none;
+:is(.system-message-disclosure, .tool-message-disclosure)
+  > :where(summary:hover)
+  > :where(.system-message-preview, .tool-message-preview) {
+  color: var(--foreground);
 }
 
-.system-message-disclosure[open] summary {
-  grid-template-columns: 1fr;
-  justify-items: end;
+:is(.system-message-disclosure, .tool-message-disclosure) > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.message-disclosure-chevron {
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: none;
+  border-right: 1.5px solid var(--omp-blue);
+  border-bottom: 1.5px solid var(--omp-blue);
+  transform: translateY(-0.08rem) rotate(45deg);
+  transition: transform 140ms ease;
+}
+
+.system-message-disclosure[open] .message-disclosure-chevron,
+.tool-message-disclosure[open] .message-disclosure-chevron {
+  transform: translateY(0.08rem) rotate(225deg);
+}
+
+:is(.system-message-disclosure, .tool-message-disclosure)[open] > summary {
   margin-bottom: 0.65rem;
   padding-bottom: 0.65rem;
   border-bottom: 1px solid var(--omp-dark-gray);
 }
 
-.system-message-disclosure[open] .system-message-preview,
-.system-message-disclosure[open] .system-message-action-collapsed {
+:is(.system-message-disclosure, .tool-message-disclosure)[open]
+  > :where(summary)
+  > :where(.system-message-preview, .tool-message-preview) {
   display: none;
 }
 
-.system-message-disclosure[open] .system-message-action-expanded {
-  display: inline;
-}
-
-.system-message-disclosure > .transcript-message {
+:is(.system-message-disclosure, .tool-message-disclosure) > .transcript-message {
+  max-width: 100%;
   color: var(--omp-gray);
 }
 
@@ -1680,7 +1686,6 @@ textarea:disabled {
 
   .transcript-entry > .transcript-message {
     padding-left: 0;
-    font-size: 0.8125rem;
   }
 
   .mode-switch {
