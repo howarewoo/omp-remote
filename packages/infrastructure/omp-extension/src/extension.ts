@@ -29,9 +29,7 @@ export function normalizeExtensionMessage(
   if ("id" in raw && raw.id !== undefined && typeof raw.id !== "string") return null;
 
   const toolName =
-    "toolName" in raw && typeof raw.toolName === "string" && raw.toolName.trim()
-      ? raw.toolName
-      : undefined;
+    "toolName" in raw && typeof raw.toolName === "string" && raw.toolName.trim() ? raw.toolName : undefined;
   const canonicalDiff =
     raw.role === "toolResult" &&
     toolName === "edit" &&
@@ -127,11 +125,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
   };
 
   const normalizeMessage = (raw: unknown, streaming: boolean, fallbackId?: string) =>
-    normalizeExtensionMessage(
-      raw,
-      streaming,
-      fallbackId ?? (() => `extension-message-${++messageSequence}`),
-    );
+    normalizeExtensionMessage(raw, streaming, fallbackId ?? (() => `extension-message-${++messageSequence}`));
 
   const send = (frame: object): void => {
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(frame));

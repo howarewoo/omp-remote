@@ -83,11 +83,7 @@ describe("normalizeExtensionMessage", () => {
 
   it("rejects a present non-string message id", () => {
     expect(
-      normalizeExtensionMessage(
-        { id: 42, role: "assistant", content: "invalid id" },
-        false,
-        "fallback-id",
-      ),
+      normalizeExtensionMessage({ id: 42, role: "assistant", content: "invalid id" }, false, "fallback-id"),
     ).toBeNull();
   });
 });

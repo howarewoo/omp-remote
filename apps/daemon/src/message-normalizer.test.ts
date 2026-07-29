@@ -107,11 +107,7 @@ describe("normalizeRawMessage", () => {
 
   it("rejects a present non-string message id", () => {
     expect(
-      normalizeRawMessage(
-        { id: 42, role: "assistant", content: "invalid id" },
-        false,
-        "fallback-id",
-      ),
+      normalizeRawMessage({ id: 42, role: "assistant", content: "invalid id" }, false, "fallback-id"),
     ).toBeNull();
   });
 });

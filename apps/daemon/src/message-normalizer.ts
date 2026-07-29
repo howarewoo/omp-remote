@@ -35,8 +35,7 @@ export function normalizeRawMessage(
   if (!parsed.success) return null;
 
   const { data } = parsed;
-  const toolName =
-    typeof data.toolName === "string" && data.toolName.trim() ? data.toolName : undefined;
+  const toolName = typeof data.toolName === "string" && data.toolName.trim() ? data.toolName : undefined;
   const canonicalDiff =
     data.role === "toolResult" &&
     toolName === "edit" &&
@@ -52,8 +51,7 @@ export function normalizeRawMessage(
   if (options.omitEmptyText && !fullText) return null;
 
   const timestamp = options.timestamp ?? normalizeRawTimestamp(data.timestamp);
-  const resolvedFallbackId =
-    typeof fallbackId === "function" ? fallbackId(fullText, timestamp) : fallbackId;
+  const resolvedFallbackId = typeof fallbackId === "function" ? fallbackId(fullText, timestamp) : fallbackId;
   const id = options.ignoreRawId ? resolvedFallbackId : (data.id ?? resolvedFallbackId);
   const text =
     options.maxTextLength !== undefined && fullText.length > options.maxTextLength
@@ -90,4 +88,3 @@ function normalizeRawTimestamp(timestamp: string | number | undefined): string {
   if (typeof timestamp === "number") return new Date(timestamp).toISOString();
   return typeof timestamp === "string" ? timestamp : new Date().toISOString();
 }
-
