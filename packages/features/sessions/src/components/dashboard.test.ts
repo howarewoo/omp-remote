@@ -1,6 +1,10 @@
 import type { Session } from "@omp-remote/protocol";
 import { describe, expect, it } from "vitest";
-import { formatSubagentActivityLabel, groupSessionsByConnection, parseTranscriptText } from "./dashboard.js";
+import {
+  formatSubagentActivityLabel,
+  groupSessionsByConnection,
+  parseTranscriptBlocks,
+} from "./dashboard.js";
 
 const BASE_SESSION: Session = {
   id: "session-1",
@@ -62,10 +66,10 @@ describe("formatSubagentActivityLabel", () => {
   });
 });
 
-describe("parseTranscriptText", () => {
+describe("parseTranscriptBlocks", () => {
   it("marks additions and deletions inside fenced diffs", () => {
     expect(
-      parseTranscriptText(
+      parseTranscriptBlocks(
         [
           "Updated the component:",
           "```diff",
@@ -77,15 +81,20 @@ describe("parseTranscriptText", () => {
       ),
     ).toEqual([
       { kind: "text", text: "Updated the component:" },
-      { kind: "context", text: " const stable = true;" },
-      { kind: "removed", text: "-const tone = 'blue';" },
-      { kind: "added", text: "+const tone = 'green';" },
+      {
+        kind: "diff",
+        lines: [
+          { kind: "context", text: " const stable = true;" },
+          { kind: "removed", text: "-const tone = 'blue';" },
+          { kind: "added", text: "+const tone = 'green';" },
+        ],
+      },
     ]);
   });
 
-  it("keeps unified diff metadata distinct from changed lines", () => {
+  it("keeps unified diff metadata distinct from following prose", () => {
     expect(
-      parseTranscriptText(
+      parseTranscriptBlocks(
         [
           "diff --git a/source.ts b/source.ts",
           "--- a/source.ts",
@@ -97,20 +106,48 @@ describe("parseTranscriptText", () => {
         ].join("\n"),
       ),
     ).toEqual([
-      { kind: "meta", text: "diff --git a/source.ts b/source.ts" },
-      { kind: "meta", text: "--- a/source.ts" },
-      { kind: "meta", text: "+++ b/source.ts" },
-      { kind: "meta", text: "@@ -1 +1 @@" },
-      { kind: "removed", text: "-const before = true;" },
-      { kind: "added", text: "+const after = true;" },
+      {
+        kind: "diff",
+        lines: [
+          { kind: "meta", text: "diff --git a/source.ts b/source.ts" },
+          { kind: "meta", text: "--- a/source.ts" },
+          { kind: "meta", text: "+++ b/source.ts" },
+          { kind: "meta", text: "@@ -1 +1 @@" },
+          { kind: "removed", text: "-const before = true;" },
+          { kind: "added", text: "+const after = true;" },
+        ],
+      },
       { kind: "text", text: "Finished." },
     ]);
   });
 
   it("does not color ordinary prose that starts with plus or minus", () => {
-    expect(parseTranscriptText("- Removed clutter\n+ Added clarity")).toEqual([
-      { kind: "text", text: "- Removed clutter" },
-      { kind: "text", text: "+ Added clarity" },
+    expect(parseTranscriptBlocks("- Removed clutter\n+ Added clarity")).toEqual([
+      { kind: "text", text: "- Removed clutter\n+ Added clarity" },
+    ]);
+  });
+
+  it("extracts a labeled fenced code block between prose", () => {
+    expect(
+      parseTranscriptBlocks(
+        ["Use this helper:", "```ts", "const tone = 'cyan';", "```", "Then render it."].join("\n"),
+      ),
+    ).toEqual([
+      { kind: "text", text: "Use this helper:" },
+      { kind: "code", language: "ts", text: "const tone = 'cyan';" },
+      { kind: "text", text: "Then render it." },
+    ]);
+  });
+
+  it("keeps an unfinished streaming fence as code", () => {
+    expect(parseTranscriptBlocks("```\nconst pending = true;")).toEqual([
+      { kind: "code", language: null, text: "const pending = true;" },
+    ]);
+  });
+
+  it("leaves inline backticks in ordinary transcript text", () => {
+    expect(parseTranscriptBlocks("Run `pnpm test` next.")).toEqual([
+      { kind: "text", text: "Run `pnpm test` next." },
     ]);
   });
 });
