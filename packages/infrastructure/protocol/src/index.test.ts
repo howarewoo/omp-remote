@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BrowserCommandSchema,
+  ExtensionRegisterSchema,
   SessionCatalogPageSchema,
   SessionSchema,
   SessionTranscriptResponseSchema,
@@ -109,6 +110,75 @@ describe("historical session schemas", () => {
         ],
       }),
     ).toMatchObject({ sessionId: "session-history" });
+  });
+});
+
+describe("ExtensionRegisterSchema", () => {
+  const previousExtensionSession = {
+    id: "session-extension",
+    source: "extension",
+    name: "Active investigation",
+    cwd: "/workspace/project",
+    status: "running",
+    connected: true,
+    model: "anthropic/claude-sonnet-4",
+    contextPercent: 42,
+    lastActivity: "2026-07-29T10:00:00.000Z",
+    capabilities: ["prompt", "steer", "follow_up", "abort"],
+    messages: [],
+  };
+
+  it("normalizes the previous extension register without synthesizing resume", () => {
+    expect(
+      ExtensionRegisterSchema.parse({
+        type: "register",
+        session: previousExtensionSession,
+      }),
+    ).toEqual({
+      type: "register",
+      session: {
+        ...previousExtensionSession,
+        sessionPath: null,
+      },
+    });
+  });
+
+  it("preserves a current extension register with a nonempty sessionPath", () => {
+    const sessionPath = "/home/user/.omp/agent/sessions/project/session.jsonl";
+
+    expect(
+      ExtensionRegisterSchema.parse({
+        type: "register",
+        session: { ...previousExtensionSession, sessionPath },
+      }),
+    ).toEqual({
+      type: "register",
+      session: { ...previousExtensionSession, sessionPath },
+    });
+  });
+
+  it.each([
+    ["an empty string", ""],
+    ["the wrong type", 42],
+  ])("rejects sessionPath with %s", (_label, sessionPath) => {
+    const result = ExtensionRegisterSchema.safeParse({
+      type: "register",
+      session: { ...previousExtensionSession, sessionPath },
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.map((issue) => issue.path)).toEqual([["session", "sessionPath"]]);
+    }
+  });
+
+  it("keeps canonical sessions strict about omitted sessionPath", () => {
+    const result = SessionSchema.safeParse(previousExtensionSession);
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.map((issue) => issue.path)).toEqual([["sessionPath"]]);
+    }
   });
 });
 
