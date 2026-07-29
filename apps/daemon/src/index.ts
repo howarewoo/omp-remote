@@ -271,7 +271,7 @@ if (existsSync(webDist)) {
   });
 }
 
-registry.subscribe((session) => broadcast({ type: "session_upsert", session }));
+registry.subscribe((event) => broadcast(event));
 await app.listen({ host: environment.OMP_REMOTE_HOST, port: environment.OMP_REMOTE_PORT });
 logger.info("OMP Remote daemon listening", {
   host: environment.OMP_REMOTE_HOST,

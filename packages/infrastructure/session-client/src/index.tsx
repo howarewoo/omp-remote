@@ -71,6 +71,8 @@ export function useSessionClient(): SessionClient {
         if (frame.type === "snapshot") setLiveSessions(frame.sessions);
         else if (frame.type === "session_upsert") {
           setLiveSessions((current) => upsertSession(current, frame.session));
+        } else if (frame.type === "transcript_upsert") {
+          setLiveSessions((current) => upsertTranscriptMessage(current, frame.sessionId, frame.message));
         } else if (frame.type === "session_removed") {
           setLiveSessions((current) => current.filter((session) => session.id !== frame.sessionId));
         } else if (frame.type === "command_result") {
@@ -261,6 +263,21 @@ function sessionMatchesQuery(session: Session, query: string): boolean {
   return [session.id, session.name, session.cwd, session.sessionPath]
     .filter((value): value is string => typeof value === "string")
     .some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
+}
+
+export function upsertTranscriptMessage(
+  sessions: Session[],
+  sessionId: string,
+  message: Session["messages"][number],
+): Session[] {
+  return sessions.map((session) => {
+    if (session.id !== sessionId) return session;
+    const existingIndex = session.messages.findIndex((current) => current.id === message.id);
+    const messages = [...session.messages];
+    if (existingIndex >= 0) messages[existingIndex] = message;
+    else messages.push(message);
+    return { ...session, messages: messages.slice(-200), lastActivity: message.timestamp };
+  });
 }
 
 function upsertSession(sessions: Session[], session: Session): Session[] {

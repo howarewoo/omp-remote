@@ -4,6 +4,7 @@ import {
   SessionCatalogPageSchema,
   SessionSchema,
   SessionTranscriptResponseSchema,
+  ServerFrameSchema,
 } from "./index.js";
 
 describe("BrowserCommandSchema", () => {
@@ -108,5 +109,27 @@ describe("historical session schemas", () => {
         ],
       }),
     ).toMatchObject({ sessionId: "session-history" });
+  });
+});
+
+describe("ServerFrameSchema", () => {
+  it("accepts incremental transcript updates", () => {
+    expect(
+      ServerFrameSchema.parse({
+        type: "transcript_upsert",
+        sessionId: "session-1",
+        message: {
+          id: "message-1",
+          role: "assistant",
+          text: "Streaming now",
+          timestamp: "2026-07-28T22:30:00.000Z",
+          streaming: true,
+        },
+      }),
+    ).toMatchObject({
+      type: "transcript_upsert",
+      sessionId: "session-1",
+      message: { text: "Streaming now", streaming: true },
+    });
   });
 });

@@ -1,8 +1,24 @@
 import type { Session } from "@omp-remote/protocol";
 import { SESSION_STATUS_LABEL, SESSION_STATUS_TONE } from "@omp-remote/ui";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Badge } from "./ui/badge.js";
+import { Button } from "./ui/button.js";
+import { Dialog } from "./ui/dialog.js";
+import { Input } from "./ui/input.js";
+import { Separator } from "./ui/separator.js";
+import { Textarea } from "./ui/textarea.js";
+import { cn } from "./ui/utils.js";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+  useSidebar,
+} from "./ui/sidebar.js";
 
-const ABORT_THRESHOLD = 88;
 type ComposerMode = "prompt" | "steer" | "follow_up";
 
 export interface DashboardProps {
@@ -20,7 +36,15 @@ export interface DashboardProps {
   onLoadTranscript(sessionId: string): Promise<void>;
 }
 
-export function Dashboard({
+export function Dashboard(props: DashboardProps) {
+  return (
+    <SidebarProvider>
+      <DashboardContent {...props} />
+    </SidebarProvider>
+  );
+}
+
+function DashboardContent({
   sessions,
   totalSessions,
   historyLoading,
@@ -41,12 +65,14 @@ export function Dashboard({
   const [commandError, setCommandError] = useState<string | null>(null);
   const [launchOpen, setLaunchOpen] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
-  const [abortPull, setAbortPull] = useState(0);
+  const [abortOpen, setAbortOpen] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
   const [activeHistoryQuery, setActiveHistoryQuery] = useState("");
   const [transcriptLoadingId, setTranscriptLoadingId] = useState<string | null>(null);
   const loadedTranscriptIdRef = useRef<string | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
+  const followTranscriptRef = useRef(true);
+  const { closeMobile } = useSidebar();
 
   const selectedSession = useMemo(
     () => sessions.find((session) => session.id === selectedId) ?? sessions[0] ?? null,
@@ -58,8 +84,12 @@ export function Dashboard({
   }, [selectedId, selectedSession]);
 
   useEffect(() => {
+    followTranscriptRef.current = true;
+  }, [selectedSession?.id]);
+
+  useEffect(() => {
     const transcript = transcriptRef.current;
-    if (transcript) transcript.scrollTop = transcript.scrollHeight;
+    if (transcript && followTranscriptRef.current) transcript.scrollTop = transcript.scrollHeight;
   }, [selectedSession?.messages.length, selectedSession?.messages.at(-1)?.text]);
 
   useEffect(() => {
@@ -82,9 +112,9 @@ export function Dashboard({
     try {
       await onCommand(selectedSession.id, composerMode, message.trim());
       setMessage("");
-    } catch (submissionError) {
+    } catch (commandFailure) {
       setCommandError(
-        submissionError instanceof Error ? submissionError.message : "The command did not reach OMP",
+        commandFailure instanceof Error ? commandFailure.message : "The instruction could not be sent",
       );
     } finally {
       setCommandState("idle");
@@ -95,425 +125,532 @@ export function Dashboard({
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const cwd = String(form.get("cwd") ?? "").trim();
-    const resume = String(form.get("resume") ?? "").trim() || null;
+    const resume = String(form.get("resume") ?? "").trim();
     if (!cwd) return;
     setLaunchError(null);
     try {
-      await onLaunch(cwd, resume);
+      await onLaunch(cwd, resume || null);
       setLaunchOpen(false);
       event.currentTarget.reset();
-    } catch (submissionError) {
+    } catch (launchFailure) {
       setLaunchError(
-        submissionError instanceof Error ? submissionError.message : "OMP could not start this route",
+        launchFailure instanceof Error ? launchFailure.message : "OMP could not start the session",
       );
     }
   };
 
   const submitHistorySearch = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const query = historyQuery.trim();
     try {
-      await onSearchHistory(historyQuery);
-      setActiveHistoryQuery(historyQuery.trim());
+      await onSearchHistory(query);
+      setActiveHistoryQuery(query);
     } catch {
-      return;
+      // The shared client exposes the actionable request error above the session list.
     }
   };
 
   const resumeSelectedSession = async () => {
-    if (selectedSession?.source !== "history") return;
-    setCommandError(null);
+    if (!selectedSession?.sessionPath || commandState === "sending") return;
     setCommandState("sending");
+    setCommandError(null);
     try {
-      await onLaunch(selectedSession.cwd, selectedSession.sessionPath ?? selectedSession.id);
-    } catch (resumeError) {
+      await onLaunch(selectedSession.cwd, selectedSession.sessionPath);
+    } catch (resumeFailure) {
       setCommandError(
-        resumeError instanceof Error ? resumeError.message : "OMP could not resume this session",
+        resumeFailure instanceof Error ? resumeFailure.message : "The session could not be resumed",
       );
     } finally {
       setCommandState("idle");
     }
   };
 
-  const commitAbort = async () => {
-    if (!selectedSession || abortPull < ABORT_THRESHOLD) {
-      setAbortPull(0);
-      return;
-    }
+  const abortSelectedSession = async () => {
+    if (!selectedSession) return;
+    setCommandState("sending");
     setCommandError(null);
     try {
       await onAbort(selectedSession.id);
-    } catch (abortError) {
+      setAbortOpen(false);
+    } catch (abortFailure) {
       setCommandError(
-        abortError instanceof Error ? abortError.message : "OMP did not acknowledge the interrupt",
+        abortFailure instanceof Error ? abortFailure.message : "The active run could not be interrupted",
       );
     } finally {
-      setAbortPull(0);
+      setCommandState("idle");
     }
   };
 
   return (
-    <main className="dashboard-shell">
-      <header className="control-header">
-        <div>
-          <p className="plate-label">OMP Remote · Interlocking panel</p>
-          <h1>Session routes</h1>
-        </div>
-        <div className="header-actions">
-          <span className={`connection-state connection-${connection}`}>
-            <span aria-hidden="true" className="connection-lamp" />
-            {connection === "connected"
-              ? "Tailnet link clear"
-              : connection === "connecting"
-                ? "Finding host"
-                : "Host link lost"}
-          </span>
-          <button className="route-action" type="button" onClick={() => setLaunchOpen((open) => !open)}>
-            {launchOpen ? "Close route desk" : "New route"}
-          </button>
-        </div>
-      </header>
-
-      {launchOpen ? (
-        <form className="launch-bay" onSubmit={submitLaunch}>
-          <div className="launch-copy">
-            <strong>Open an RPC route</strong>
-            <span>Start in a working directory, or resume a saved OMP session.</span>
+    <div className="app-shell">
+      <Sidebar>
+        <SidebarHeader>
+          <div className="brand-lockup">
+            <span className="brand-mark" aria-hidden="true">
+              π
+            </span>
+            <span className="brand-word">omp</span>
+            <span className="brand-remote">remote</span>
           </div>
-          <label>
-            Working directory
-            <input name="cwd" required placeholder="/Users/you/project" autoComplete="off" />
-          </label>
-          <label>
-            Resume ID or path <span>(optional)</span>
-            <input name="resume" placeholder="Session ID or .jsonl path" autoComplete="off" />
-          </label>
-          <button className="primary-control" type="submit">
-            Set route
-          </button>
-          {launchError ? (
-            <p className="inline-error" role="alert">
-              {launchError}
-            </p>
-          ) : null}
-        </form>
-      ) : null}
+          <SidebarTrigger />
+        </SidebarHeader>
 
-      {error ? (
-        <p className="system-alert" role="alert">
-          {error}
-        </p>
-      ) : null}
-
-      <search>
-        <form className="catalog-tools" onSubmit={submitHistorySearch}>
-          <label>
-            <span className="sr-only">Search all local OMP sessions</span>
-            <input
-              type="search"
-              value={historyQuery}
-              onChange={(event) => setHistoryQuery(event.target.value)}
-              placeholder="Search every session by name or path"
-              maxLength={200}
-            />
-          </label>
-          <button className="route-action" type="submit" disabled={historyLoading}>
-            {historyLoading ? "Searching…" : "Search history"}
-          </button>
-          <output>
-            {totalSessions.toLocaleString()} {totalSessions === 1 ? "session" : "sessions"}
-          </output>
-        </form>
-      </search>
-      <section className="route-board" aria-label="Registered OMP sessions">
-        <div className="board-legend" aria-hidden="true">
-          <span>
-            <i className="legend-lamp lamp-running" />
-            Running
-          </span>
-          <span>
-            <i className="legend-lamp lamp-waiting" />
-            Waiting
-          </span>
-          <span>
-            <i className="legend-lamp lamp-clear" />
-            Clear
-          </span>
+        <div className="sidebar-actions">
+          <Button type="button" onClick={() => setLaunchOpen(true)} className="new-session-button">
+            <Icon name="plus" />
+            <span>New session</span>
+          </Button>
+          <form className="session-search" onSubmit={submitHistorySearch}>
+            <div className="session-search-field">
+              <label className="sr-only" htmlFor="session-search-input">
+                Search all local OMP sessions
+              </label>
+              <Icon name="search" />
+              <Input
+                id="session-search-input"
+                type="search"
+                value={historyQuery}
+                onChange={(event) => setHistoryQuery(event.target.value)}
+                placeholder="Search sessions"
+                maxLength={200}
+              />
+            </div>
+          </form>
         </div>
-        {sessions.length === 0 ? (
-          <div className="empty-routes">
-            <div className="empty-signal" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-            </div>
-            <div>
-              <h2>
-                {historyLoading
-                  ? "Reading the session archive"
-                  : activeHistoryQuery
-                    ? "No sessions match this search"
-                    : "No routes on the panel"}
-              </h2>
-              <p>
-                {historyLoading
-                  ? "Session metadata stays on the host and is being indexed now."
-                  : activeHistoryQuery
-                    ? "Try a session name, ID, or working-directory path."
-                    : "Start a route here or run any terminal OMP session after installing the registration extension."}
-              </p>
-              {!historyLoading ? (
-                <button
-                  className="primary-control"
-                  type="button"
-                  onClick={() => {
-                    if (activeHistoryQuery) {
-                      setHistoryQuery("");
-                      setActiveHistoryQuery("");
-                      void onSearchHistory("").catch(() => undefined);
-                    } else {
-                      setLaunchOpen(true);
-                    }
-                  }}
-                >
-                  {activeHistoryQuery ? "Clear search" : "Open first route"}
-                </button>
-              ) : null}
-            </div>
+
+        <SidebarContent>
+          <div className="session-list-heading">
+            <span>Sessions</span>
+            <span>{totalSessions.toLocaleString()}</span>
           </div>
-        ) : (
-          <>
-            <div className="routes">
-              {sessions.map((session, index) => {
-                const selected = session.id === selectedSession?.id;
-                const tone = SESSION_STATUS_TONE[session.status];
-                return (
-                  <button
-                    className={`route-line${selected ? " route-selected" : ""}`}
+          <nav className="session-list" aria-label="Registered OMP sessions">
+            {sessions.length === 0 ? (
+              <div className="sidebar-empty" role="status">
+                <span className="status-orbit" aria-hidden="true" />
+                <strong>{historyLoading ? "Reading session history" : "No sessions found"}</strong>
+                <p>
+                  {activeHistoryQuery
+                    ? "Try another name, ID, or working directory."
+                    : "Start a session here or connect a terminal session."}
+                </p>
+                {!historyLoading ? (
+                  <Button
                     type="button"
-                    key={session.id}
-                    aria-pressed={selected}
-                    onClick={() => setSelectedId(session.id)}
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      if (activeHistoryQuery) {
+                        setHistoryQuery("");
+                        setActiveHistoryQuery("");
+                        void onSearchHistory("").catch(() => undefined);
+                      } else {
+                        setLaunchOpen(true);
+                      }
+                    }}
                   >
-                    <span className="route-number">{String(index + 1).padStart(2, "0")}</span>
-                    <span className="route-rail" aria-hidden="true">
-                      <i />
-                      <i />
-                    </span>
-                    <span className={`signal signal-${tone}`} aria-hidden="true">
-                      <i />
-                      <i />
-                      <i />
-                    </span>
-                    <span className="route-identity">
-                      <strong>
-                        {session.name ?? session.cwd.split("/").filter(Boolean).at(-1) ?? "Untitled session"}
-                      </strong>
-                      <small>{session.cwd}</small>
-                    </span>
-                    <span className="route-meta">
-                      <b>{SESSION_STATUS_LABEL[session.status]}</b>
-                      <small>
-                        {session.source === "rpc"
-                          ? "Remote route"
-                          : session.source === "extension"
-                            ? "Terminal route"
-                            : "Saved session"}
-                      </small>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            {hasMoreHistory ? (
-              <button
-                className="load-more-control"
-                type="button"
-                disabled={historyLoading}
-                onClick={() => void onLoadMoreHistory().catch(() => undefined)}
-              >
-                {historyLoading ? "Reading archive…" : "Load older sessions"}
-              </button>
-            ) : null}
-          </>
-        )}
-      </section>
-
-      {selectedSession ? (
-        <section
-          className="working-bay"
-          aria-label={`Controls for ${selectedSession.name ?? selectedSession.cwd}`}
-        >
-          <div className="session-instruments">
-            <div>
-              <span>Selected route</span>
-              <strong>{selectedSession.name ?? "Untitled session"}</strong>
-            </div>
-            <div>
-              <span>Model</span>
-              <strong>{selectedSession.model ?? "Default model"}</strong>
-            </div>
-            <div>
-              <span>Context</span>
-              <strong>
-                {selectedSession.contextPercent === null
-                  ? "—"
-                  : `${Math.round(selectedSession.contextPercent)}%`}
-              </strong>
-            </div>
-            <div>
-              <span>Last movement</span>
-              <strong>
-                <time dateTime={selectedSession.lastActivity}>
-                  {formatTime(selectedSession.lastActivity)}
-                </time>
-              </strong>
-            </div>
-          </div>
-
-          <div
-            ref={transcriptRef}
-            className="transcript"
-            role="log"
-            aria-live="polite"
-            aria-label="Session transcript"
-          >
-            {transcriptLoadingId === selectedSession.id ? (
-              <div className="empty-transcript" role="status">
-                <strong>Reading session log…</strong>
-                <span>Large transcripts stay on the host and load only when selected.</span>
-              </div>
-            ) : selectedSession.messages.length === 0 ? (
-              <div className="empty-transcript">
-                <strong>
-                  {selectedSession.source === "history"
-                    ? "No text messages in this session."
-                    : "Route is clear."}
-                </strong>
-                <span>
-                  {selectedSession.source === "history"
-                    ? "Resume it to continue working."
-                    : "Send the first instruction when you are ready."}
-                </span>
+                    {activeHistoryQuery ? "Clear search" : "Start session"}
+                  </Button>
+                ) : null}
               </div>
             ) : (
-              selectedSession.messages.map((entry) => (
-                <article className={`transcript-entry transcript-${entry.role}`} key={entry.id}>
-                  <header>
-                    <span>
-                      {entry.role === "assistant" ? "OMP" : entry.role === "user" ? "You" : entry.role}
+              sessions.map((session) => {
+                const selected = session.id === selectedSession?.id;
+                const displayName =
+                  session.name ?? session.cwd.split("/").filter(Boolean).at(-1) ?? "Untitled session";
+                return (
+                  <button
+                    className={cn("session-item", selected && "session-item-selected")}
+                    type="button"
+                    key={session.id}
+                    aria-current={selected ? "page" : undefined}
+                    aria-label={`${displayName}, ${SESSION_STATUS_LABEL[session.status]}`}
+                    title={displayName}
+                    onClick={() => {
+                      setSelectedId(session.id);
+                      closeMobile();
+                    }}
+                  >
+                    <span
+                      className={cn(
+                        "session-state-dot",
+                        `session-state-${SESSION_STATUS_TONE[session.status]}`,
+                      )}
+                    />
+                    <span className="session-copy">
+                      <strong>{displayName}</strong>
+                      <small>{compactPath(session.cwd)}</small>
                     </span>
-                    <time dateTime={entry.timestamp}>{formatTime(entry.timestamp)}</time>
-                    {entry.streaming ? <i className="streaming-mark">Receiving</i> : null}
-                  </header>
-                  <p>{entry.text || "…"}</p>
-                </article>
-              ))
+                    <time dateTime={session.lastActivity}>{formatTime(session.lastActivity)}</time>
+                  </button>
+                );
+              })
+            )}
+          </nav>
+          {hasMoreHistory ? (
+            <Button
+              className="load-more-button"
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={historyLoading}
+              onClick={() => void onLoadMoreHistory().catch(() => undefined)}
+            >
+              {historyLoading ? "Reading history…" : "Load older sessions"}
+            </Button>
+          ) : null}
+        </SidebarContent>
+
+        <SidebarFooter>
+          <span className={cn("connection-dot", `connection-${connection}`)} aria-hidden="true" />
+          <span>
+            {connection === "connected"
+              ? "Host connected"
+              : connection === "connecting"
+                ? "Connecting"
+                : "Host offline"}
+          </span>
+        </SidebarFooter>
+      </Sidebar>
+
+      <SidebarInset>
+        <header className="session-header">
+          <div className="session-header-primary">
+            <SidebarTrigger />
+            {selectedSession ? (
+              <>
+                <div>
+                  <h1>{selectedSession.name ?? "Untitled session"}</h1>
+                  <p>{selectedSession.cwd}</p>
+                </div>
+                <Badge
+                  className={cn("status-badge", `status-${SESSION_STATUS_TONE[selectedSession.status]}`)}
+                >
+                  <span aria-hidden="true" />
+                  {SESSION_STATUS_LABEL[selectedSession.status]}
+                </Badge>
+              </>
+            ) : (
+              <h1>OMP Remote</h1>
             )}
           </div>
+          <Button type="button" variant="outline" onClick={() => setLaunchOpen(true)}>
+            <Icon name="plus" />
+            New session
+          </Button>
+        </header>
 
-          {selectedSession.source === "history" ? (
-            <div className="history-controls">
-              <div>
-                <span>Archived session</span>
-                <strong>Resume this session to send new instructions.</strong>
+        {error ? (
+          <div className="system-alert" role="alert">
+            <strong>Live connection needs attention.</strong>
+            <span>{error}</span>
+          </div>
+        ) : null}
+
+        {selectedSession ? (
+          <section
+            className="session-workspace"
+            aria-label={`Controls for ${selectedSession.name ?? selectedSession.cwd}`}
+          >
+            <div className="session-overview">
+              <div className="session-title-block">
+                <span className="session-source">
+                  {selectedSession.source === "rpc"
+                    ? "Remote session"
+                    : selectedSession.source === "extension"
+                      ? "Terminal session"
+                      : "Saved session"}
+                </span>
+                <h2>
+                  {selectedSession.name ??
+                    selectedSession.cwd.split("/").filter(Boolean).at(-1) ??
+                    "Untitled session"}
+                </h2>
               </div>
-              <button
-                className="primary-control"
-                type="button"
-                disabled={connection !== "connected" || commandState === "sending"}
-                onClick={() => void resumeSelectedSession()}
-              >
-                Resume session
-              </button>
-              {commandError ? (
-                <p className="inline-error" role="alert">
-                  {commandError}
-                </p>
-              ) : null}
+              <dl className="session-metadata">
+                <div>
+                  <dt>Model</dt>
+                  <dd>{selectedSession.model ?? "Default"}</dd>
+                </div>
+                <div>
+                  <dt>Context</dt>
+                  <dd>
+                    {selectedSession.contextPercent === null
+                      ? "—"
+                      : `${Math.round(selectedSession.contextPercent)}%`}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Updated</dt>
+                  <dd>
+                    <time dateTime={selectedSession.lastActivity}>
+                      {formatTime(selectedSession.lastActivity)}
+                    </time>
+                  </dd>
+                </div>
+              </dl>
             </div>
-          ) : (
-            <div className="control-desk">
+
+            <Separator />
+
+            <div
+              ref={transcriptRef}
+              className="transcript"
+              role="log"
+              aria-live="polite"
+              aria-label="Session transcript"
+              onScroll={(event) => {
+                const target = event.currentTarget;
+                followTranscriptRef.current =
+                  target.scrollHeight - target.scrollTop - target.clientHeight < 80;
+              }}
+            >
+              {transcriptLoadingId === selectedSession.id ? (
+                <div className="empty-transcript" role="status">
+                  <span className="status-orbit" aria-hidden="true" />
+                  <strong>Reading session transcript</strong>
+                  <p>Large transcripts stay on the host and load only when selected.</p>
+                </div>
+              ) : selectedSession.messages.length === 0 ? (
+                <div className="empty-transcript">
+                  <span className="terminal-prompt" aria-hidden="true">
+                    π
+                  </span>
+                  <strong>
+                    {selectedSession.source === "history"
+                      ? "No text messages in this session"
+                      : "Ready for an instruction"}
+                  </strong>
+                  <p>
+                    {selectedSession.source === "history"
+                      ? "Resume the session to continue working."
+                      : "Prompt OMP below. Live output will appear here as it arrives."}
+                  </p>
+                </div>
+              ) : (
+                selectedSession.messages.map((entry) => (
+                  <article className={cn("transcript-entry", `transcript-${entry.role}`)} key={entry.id}>
+                    <header>
+                      <span className="message-author">
+                        <i aria-hidden="true">
+                          {entry.role === "assistant" ? "π" : entry.role === "user" ? "›" : "·"}
+                        </i>
+                        {entry.role === "assistant" ? "OMP" : entry.role === "user" ? "You" : entry.role}
+                      </span>
+                      <time dateTime={entry.timestamp}>{formatTime(entry.timestamp)}</time>
+                      {entry.streaming ? <Badge className="streaming-badge">Streaming</Badge> : null}
+                    </header>
+                    <p>{entry.text || "…"}</p>
+                  </article>
+                ))
+              )}
+            </div>
+
+            {selectedSession.source === "history" ? (
+              <div className="history-controls">
+                <div>
+                  <strong>Saved session</strong>
+                  <span>Resume this transcript to send new instructions.</span>
+                </div>
+                <Button
+                  type="button"
+                  disabled={connection !== "connected" || commandState === "sending"}
+                  onClick={() => void resumeSelectedSession()}
+                >
+                  Resume session
+                </Button>
+              </div>
+            ) : (
               <form className="composer" onSubmit={submitMessage}>
-                <fieldset className="mode-switch" aria-label="Command delivery mode">
-                  {(["prompt", "steer", "follow_up"] as const).map((mode) => (
-                    <button
-                      type="button"
-                      key={mode}
-                      aria-pressed={composerMode === mode}
-                      onClick={() => setComposerMode(mode)}
-                      disabled={!selectedSession.capabilities.includes(mode)}
-                    >
-                      {mode === "follow_up" ? "Follow up" : mode[0]?.toUpperCase() + mode.slice(1)}
-                    </button>
-                  ))}
-                </fieldset>
-                <label className="composer-field">
-                  <span>
+                <div className="composer-toolbar">
+                  <fieldset className="mode-switch" aria-label="Command delivery mode">
+                    {(["prompt", "steer", "follow_up"] as const).map((mode) => (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        key={mode}
+                        aria-pressed={composerMode === mode}
+                        onClick={() => setComposerMode(mode)}
+                        disabled={!selectedSession.capabilities.includes(mode)}
+                      >
+                        {mode === "follow_up" ? "Follow up" : mode[0]?.toUpperCase() + mode.slice(1)}
+                      </Button>
+                    ))}
+                  </fieldset>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="abort-button"
+                    disabled={
+                      !selectedSession.capabilities.includes("abort") || selectedSession.status !== "running"
+                    }
+                    onClick={() => setAbortOpen(true)}
+                  >
+                    <Icon name="stop" />
+                    Abort
+                  </Button>
+                </div>
+                <div className="composer-field">
+                  <label className="sr-only" htmlFor="composer-message">
                     {composerMode === "prompt"
                       ? "New instruction"
                       : composerMode === "steer"
                         ? "Steer current run"
                         : "Queue after run"}
-                  </span>
-                  <textarea
+                  </label>
+                  <Textarea
+                    id="composer-message"
                     value={message}
                     onChange={(event) => setMessage(event.target.value)}
-                    placeholder="Tell OMP what to do next"
-                    rows={3}
-                  />
-                </label>
-                <button
-                  className="send-control"
-                  type="submit"
-                  disabled={!message.trim() || commandState === "sending"}
-                >
-                  {commandState === "sending"
-                    ? "Sending…"
-                    : composerMode === "steer"
-                      ? "Steer now"
-                      : composerMode === "follow_up"
-                        ? "Queue follow-up"
-                        : "Send prompt"}
-                </button>
-                {commandError ? (
-                  <p className="inline-error" role="alert">
-                    {commandError}
-                  </p>
-                ) : null}
-              </form>
-
-              <div className="abort-control">
-                <div>
-                  <span>Emergency interrupt</span>
-                  <small>Pull past the marked release point</small>
-                </div>
-                <div className={`abort-track${abortPull >= ABORT_THRESHOLD ? " abort-armed" : ""}`}>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={abortPull}
-                    aria-label="Pull to interrupt the selected OMP session"
-                    disabled={
-                      !selectedSession.capabilities.includes("abort") || selectedSession.status !== "running"
+                    placeholder={
+                      composerMode === "steer"
+                        ? "Redirect the current run…"
+                        : composerMode === "follow_up"
+                          ? "Queue the next instruction…"
+                          : "Ask OMP to build, investigate, or change something…"
                     }
-                    onChange={(event) => setAbortPull(Number(event.target.value))}
-                    onPointerUp={commitAbort}
-                    onKeyUp={(event) => {
-                      if (event.key === "Enter" || event.key === " ") void commitAbort();
+                    rows={3}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
+                        event.currentTarget.form?.requestSubmit();
                     }}
                   />
-                  <span className="abort-threshold" aria-hidden="true">
-                    Release
-                  </span>
+                  <Button
+                    className="send-button"
+                    type="submit"
+                    size="icon"
+                    disabled={!message.trim() || commandState === "sending"}
+                    aria-label={commandState === "sending" ? "Sending instruction" : "Send instruction"}
+                  >
+                    <Icon name="send" />
+                  </Button>
                 </div>
-              </div>
-            </div>
-          )}
-        </section>
-      ) : null}
-    </main>
+                <div className="composer-footer">
+                  <span>⌘ ↵ to send</span>
+                  {selectedSession.status === "running" ? (
+                    <span className="live-copy">Live output connected</span>
+                  ) : null}
+                </div>
+              </form>
+            )}
+
+            {commandError ? (
+              <p className="inline-error" role="alert">
+                {commandError}
+              </p>
+            ) : null}
+          </section>
+        ) : (
+          <section className="no-session">
+            <span className="terminal-prompt" aria-hidden="true">
+              π
+            </span>
+            <h2>Start a session from anywhere.</h2>
+            <p>
+              Launch OMP here or connect a terminal session on this host. Updates stream into this workspace
+              live.
+            </p>
+            <Button type="button" onClick={() => setLaunchOpen(true)}>
+              <Icon name="plus" />
+              Start session
+            </Button>
+          </section>
+        )}
+      </SidebarInset>
+
+      <Dialog
+        open={launchOpen}
+        onOpenChange={setLaunchOpen}
+        title="Start an OMP session"
+        description="Choose a working directory. Add a saved session ID or JSONL path to resume it."
+      >
+        <form className="launch-form" onSubmit={submitLaunch}>
+          <label htmlFor="launch-cwd">
+            <span>Working directory</span>
+            <Input
+              id="launch-cwd"
+              name="cwd"
+              required
+              placeholder="/Users/you/project"
+              autoComplete="off"
+              autoFocus
+            />
+          </label>
+          <label htmlFor="launch-resume">
+            <span>
+              Resume ID or path <small>Optional</small>
+            </span>
+            <Input
+              id="launch-resume"
+              name="resume"
+              placeholder="Session ID or .jsonl path"
+              autoComplete="off"
+            />
+          </label>
+          {launchError ? (
+            <p className="inline-error" role="alert">
+              {launchError}
+            </p>
+          ) : null}
+          <footer className="dialog-actions">
+            <Button type="button" variant="ghost" onClick={() => setLaunchOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit">Start session</Button>
+          </footer>
+        </form>
+      </Dialog>
+
+      <Dialog
+        open={abortOpen}
+        onOpenChange={setAbortOpen}
+        title="Abort this run?"
+        description="OMP will stop the active run. The session and transcript stay available."
+      >
+        <footer className="dialog-actions">
+          <Button type="button" variant="ghost" onClick={() => setAbortOpen(false)}>
+            Keep running
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={commandState === "sending"}
+            onClick={() => void abortSelectedSession()}
+          >
+            Abort run
+          </Button>
+        </footer>
+      </Dialog>
+    </div>
   );
+}
+
+function Icon({ name }: { name: "plus" | "search" | "send" | "stop" }) {
+  const paths = {
+    plus: <path d="M12 5v14M5 12h14" />,
+    search: <path d="m21 21-4.4-4.4m2.4-5.1a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" />,
+    send: <path d="m4 4 17 8-17 8 3-8-3-8Zm3 8h14" />,
+    stop: <rect x="7" y="7" width="10" height="10" rx="1" />,
+  } as const;
+  return (
+    <svg
+      className="icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      aria-hidden="true"
+    >
+      {paths[name]}
+    </svg>
+  );
+}
+
+function compactPath(path: string): string {
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length <= 2) return path;
+  return `…/${segments.slice(-2).join("/")}`;
 }
 
 function formatTime(timestamp: string): string {
