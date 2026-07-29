@@ -2,9 +2,13 @@ import type { Session, TranscriptMessage } from "@omp-remote/protocol";
 
 const MAX_TRANSCRIPT_MESSAGES = 200;
 
+export type SessionRegistryEvent =
+  | { type: "session_upsert"; session: Session }
+  | { type: "transcript_upsert"; sessionId: string; message: TranscriptMessage };
+
 export class SessionRegistry {
   readonly #sessions = new Map<string, Session>();
-  readonly #listeners = new Set<(session: Session) => void>();
+  readonly #listeners = new Set<(event: SessionRegistryEvent) => void>();
 
   list(): Session[] {
     return [...this.#sessions.values()]
@@ -20,7 +24,7 @@ export class SessionRegistry {
   upsert(session: Session): Session {
     const next = cloneSession(session);
     this.#sessions.set(session.id, next);
-    this.#emit(next);
+    this.#emit({ type: "session_upsert", session: next });
     return cloneSession(next);
   }
 
@@ -29,7 +33,7 @@ export class SessionRegistry {
     if (!current) return undefined;
     const next = { ...current, ...patch, messages: [...current.messages] };
     this.#sessions.set(sessionId, next);
-    this.#emit(next);
+    this.#emit({ type: "session_upsert", session: next });
     return cloneSession(next);
   }
 
@@ -43,7 +47,7 @@ export class SessionRegistry {
     const boundedMessages = messages.slice(-MAX_TRANSCRIPT_MESSAGES);
     const next = { ...current, messages: boundedMessages, lastActivity: message.timestamp };
     this.#sessions.set(sessionId, next);
-    this.#emit(next);
+    this.#emit({ type: "transcript_upsert", sessionId, message });
     return cloneSession(next);
   }
 
@@ -51,13 +55,19 @@ export class SessionRegistry {
     return this.#sessions.delete(sessionId);
   }
 
-  subscribe(listener: (session: Session) => void): () => void {
+  subscribe(listener: (event: SessionRegistryEvent) => void): () => void {
     this.#listeners.add(listener);
     return () => this.#listeners.delete(listener);
   }
 
-  #emit(session: Session): void {
-    for (const listener of this.#listeners) listener(cloneSession(session));
+  #emit(event: SessionRegistryEvent): void {
+    for (const listener of this.#listeners) {
+      listener(
+        event.type === "session_upsert"
+          ? { type: event.type, session: cloneSession(event.session) }
+          : { type: event.type, sessionId: event.sessionId, message: { ...event.message } },
+      );
+    }
   }
 }
 

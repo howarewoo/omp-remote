@@ -1,11 +1,11 @@
 import type { SessionStatus } from "@omp-remote/protocol";
 
 export const SESSION_STATUS_LABEL: Record<SessionStatus, string> = {
-  idle: "Route clear",
-  running: "Train running",
-  waiting: "Held for input",
-  disconnected: "Signal lost",
-  history: "Session history",
+  idle: "Idle",
+  running: "Running",
+  waiting: "Waiting",
+  disconnected: "Disconnected",
+  history: "History",
 };
 
 export const SESSION_STATUS_TONE: Record<SessionStatus, string> = {

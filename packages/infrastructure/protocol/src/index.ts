@@ -65,6 +65,11 @@ export const BrowserCommandSchema = z.union([
 export const ServerFrameSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("snapshot"), sessions: z.array(SessionSchema) }),
   z.object({ type: z.literal("session_upsert"), session: SessionSchema }),
+  z.object({
+    type: z.literal("transcript_upsert"),
+    sessionId: z.string().min(1),
+    message: TranscriptMessageSchema,
+  }),
   z.object({ type: z.literal("session_removed"), sessionId: z.string() }),
   z.object({
     type: z.literal("command_result"),

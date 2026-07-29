@@ -32,8 +32,8 @@ export default defineConfig({
         name: "OMP Remote",
         short_name: "OMP Remote",
         description: "Private multi-session control for OMP",
-        theme_color: "#173630",
-        background_color: "#dfe5d8",
+        theme_color: "#0d0c13",
+        background_color: "#0d0c13",
         display: "standalone",
         start_url: "/",
         icons: [
