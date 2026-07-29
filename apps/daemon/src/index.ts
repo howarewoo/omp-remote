@@ -9,7 +9,6 @@ import {
   SessionTranscriptResponseSchema,
   type ServerFrame,
   type Session,
-  type TranscriptMessage,
 } from "@omp-remote/protocol";
 import { SessionRegistry } from "@omp-remote/sessions/services";
 import Fastify from "fastify";
@@ -19,6 +18,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { z } from "zod";
+import { normalizeRawMessage } from "./message-normalizer.js";
 import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
 
 const MAX_MESSAGES = 200;
@@ -47,17 +47,6 @@ const RpcMessageFrameSchema = z.object({
   type: z.enum(["message_start", "message_update", "message_end"]),
   message: z.unknown(),
 });
-const RpcMessageSchema = z
-  .object({
-    id: z.string().optional(),
-    role: z.string(),
-    content: z.union([
-      z.string(),
-      z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()),
-    ]),
-    timestamp: z.union([z.string(), z.number()]).optional(),
-  })
-  .passthrough();
 const RpcMessagesResponseSchema = z.object({
   type: z.literal("response"),
   command: z.literal("get_messages"),
@@ -320,7 +309,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
       if (parsed.data.type === "message_start") {
         activeMessageId = `rpc-message-${sessionId}-${++messageSequence}`;
       }
-      const message = normalizeRpcMessage(
+      const message = normalizeRawMessage(
         parsed.data.message,
         parsed.data.type !== "message_end",
         activeMessageId ?? `rpc-message-${sessionId}-${++messageSequence}`,
@@ -367,7 +356,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
       ? messagesResponse.data
       : messagesResponse.data.messages;
     for (const [index, rawMessage] of messages.slice(-MAX_MESSAGES).entries()) {
-      const message = normalizeRpcMessage(rawMessage, false, `rpc-history-${sessionId}-${index}`);
+      const message = normalizeRawMessage(rawMessage, false, `rpc-history-${sessionId}-${index}`);
       if (message) registry.appendMessage(sessionId, message);
     }
   } catch (error) {
@@ -388,36 +377,6 @@ async function refreshRpcState(sessionId: string, rpc: RpcSession): Promise<void
   } catch (error) {
     logger.error("Could not refresh OMP RPC state", error, { sessionId });
   }
-}
-
-function normalizeRpcMessage(raw: unknown, streaming: boolean, fallbackId: string): TranscriptMessage | null {
-  const parsed = RpcMessageSchema.safeParse(raw);
-  if (!parsed.success) return null;
-  const content = parsed.data.content;
-  const text =
-    typeof content === "string"
-      ? content
-      : content
-          .filter((part) => part.type === "text" && typeof part.text === "string")
-          .map((part) => part.text)
-          .join("");
-  const role =
-    parsed.data.role === "user" || parsed.data.role === "assistant" || parsed.data.role === "tool"
-      ? parsed.data.role
-      : "system";
-  const rawTimestamp = parsed.data.timestamp;
-  return {
-    id: parsed.data.id ?? fallbackId,
-    role,
-    text,
-    timestamp:
-      typeof rawTimestamp === "number"
-        ? new Date(rawTimestamp).toISOString()
-        : typeof rawTimestamp === "string"
-          ? rawTimestamp
-          : new Date().toISOString(),
-    streaming,
-  };
 }
 
 function syncActiveSubagents(catalogSession: Session): void {

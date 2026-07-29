@@ -542,6 +542,17 @@ export function TranscriptCodeBlock({ code, language }: { code: string; language
     </details>
   );
 }
+function TranscriptDiff({ lines }: { lines: DiffLine[] }) {
+  return (
+    <div className="transcript-message-diff">
+      {lines.map((line, index) => (
+        <span className={cn("diff-line", `diff-${line.kind}`)} key={`${index}:${line.kind}`}>
+          {line.text}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 const SYSTEM_TEXT_PREVIEW_LENGTH = 180;
 
@@ -555,7 +566,7 @@ export function formatSystemTextPreview(text: string): string {
   return `${preview.slice(0, SYSTEM_TEXT_PREVIEW_LENGTH).trimEnd()}…`;
 }
 
-const TranscriptText = memo(function TranscriptText({ text }: { text: string }) {
+export const TranscriptText = memo(function TranscriptText({ text }: { text: string }) {
   const blocks = useMemo(() => parseTranscriptBlocks(text || "…"), [text]);
 
   return (
@@ -567,15 +578,7 @@ const TranscriptText = memo(function TranscriptText({ text }: { text: string }) 
         if (block.kind === "code") {
           return <TranscriptCodeBlock code={block.text} key={`${index}:code`} language={block.language} />;
         }
-        return (
-          <div className="transcript-message-diff" key={`${index}:diff`}>
-            {block.lines.map((line, lineIndex) => (
-              <span className={cn("diff-line", `diff-${line.kind}`)} key={`${lineIndex}:${line.kind}`}>
-                {line.text}
-              </span>
-            ))}
-          </div>
-        );
+        return <TranscriptDiff key={`${index}:diff`} lines={block.lines} />;
       })}
     </div>
   );
@@ -598,6 +601,33 @@ export function SystemTranscriptText({ text }: { text: string }) {
 
 const MemoizedSystemTranscriptText = memo(SystemTranscriptText);
 
+export function TranscriptEntry({ entry }: { entry: Session["messages"][number] }) {
+  return (
+    <article className={cn("transcript-entry", `transcript-${entry.role}`)}>
+      <header>
+        <span className="message-author">
+          <i aria-hidden="true">{entry.role === "assistant" ? "π" : entry.role === "user" ? "›" : "·"}</i>
+          {entry.role === "assistant"
+            ? "OMP"
+            : entry.role === "user"
+              ? "You"
+              : (entry.toolName ?? entry.role)}
+        </span>
+        <time dateTime={entry.timestamp}>{formatTime(entry.timestamp)}</time>
+        {entry.streaming ? <Badge className="streaming-badge">Streaming</Badge> : null}
+      </header>
+      {entry.presentation === "diff" ? (
+        <div className="transcript-message">
+          <TranscriptDiff lines={entry.text.split("\n").map(classifyDiffLine)} />
+        </div>
+      ) : entry.role === "system" ? (
+        <MemoizedSystemTranscriptText text={entry.text} />
+      ) : (
+        <TranscriptText text={entry.text} />
+      )}
+    </article>
+  );
+}
 function DashboardContent({
   sessions,
   totalSessions,
@@ -1021,25 +1051,7 @@ function DashboardContent({
                   </p>
                 </div>
               ) : (
-                selectedSession.messages.map((entry) => (
-                  <article className={cn("transcript-entry", `transcript-${entry.role}`)} key={entry.id}>
-                    <header>
-                      <span className="message-author">
-                        <i aria-hidden="true">
-                          {entry.role === "assistant" ? "π" : entry.role === "user" ? "›" : "·"}
-                        </i>
-                        {entry.role === "assistant" ? "OMP" : entry.role === "user" ? "You" : entry.role}
-                      </span>
-                      <time dateTime={entry.timestamp}>{formatTime(entry.timestamp)}</time>
-                      {entry.streaming ? <Badge className="streaming-badge">Streaming</Badge> : null}
-                    </header>
-                    {entry.role === "system" ? (
-                      <MemoizedSystemTranscriptText text={entry.text} />
-                    ) : (
-                      <TranscriptText text={entry.text} />
-                    )}
-                  </article>
-                ))
+                selectedSession.messages.map((entry) => <TranscriptEntry entry={entry} key={entry.id} />)
               )}
             </div>
 

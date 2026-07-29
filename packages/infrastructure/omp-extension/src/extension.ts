@@ -4,6 +4,99 @@ const DEFAULT_EXTENSION_URL = "ws://127.0.0.1:4387/extension";
 const RECONNECT_DELAY_MS = 2_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
 
+type TranscriptRole = "user" | "assistant" | "tool" | "system";
+type TranscriptPresentation = "text" | "diff";
+
+type ExtensionTranscriptMessage = {
+  id: string;
+  role: TranscriptRole;
+  text: string;
+  timestamp: string;
+  streaming: boolean;
+  presentation: TranscriptPresentation;
+  toolName?: string;
+};
+
+type FallbackId = string | (() => string);
+
+export function normalizeExtensionMessage(
+  raw: unknown,
+  streaming: boolean,
+  fallbackId: FallbackId,
+): ExtensionTranscriptMessage | null {
+  if (typeof raw !== "object" || raw === null || !("role" in raw) || !("content" in raw)) return null;
+  if (typeof raw.role !== "string" || !isContent(raw.content)) return null;
+  if ("id" in raw && raw.id !== undefined && typeof raw.id !== "string") return null;
+
+  const toolName =
+    "toolName" in raw && typeof raw.toolName === "string" && raw.toolName.trim() ? raw.toolName : undefined;
+  const canonicalDiff =
+    raw.role === "toolResult" &&
+    toolName === "edit" &&
+    "isError" in raw &&
+    raw.isError === false &&
+    "details" in raw &&
+    typeof raw.details === "object" &&
+    raw.details !== null &&
+    "diff" in raw.details &&
+    typeof raw.details.diff === "string"
+      ? raw.details.diff
+      : undefined;
+  const rawTimestamp = "timestamp" in raw ? raw.timestamp : undefined;
+  if (rawTimestamp !== undefined && typeof rawTimestamp !== "string" && typeof rawTimestamp !== "number") {
+    return null;
+  }
+
+  return {
+    id:
+      "id" in raw && typeof raw.id === "string"
+        ? raw.id
+        : typeof fallbackId === "function"
+          ? fallbackId()
+          : fallbackId,
+    role: normalizeRole(raw.role),
+    text: canonicalDiff ?? extractText(raw.content),
+    timestamp:
+      typeof rawTimestamp === "number"
+        ? new Date(rawTimestamp).toISOString()
+        : typeof rawTimestamp === "string"
+          ? rawTimestamp
+          : new Date().toISOString(),
+    streaming,
+    presentation: canonicalDiff !== undefined ? "diff" : "text",
+    ...(toolName ? { toolName } : {}),
+  };
+}
+
+function isContent(value: unknown): value is string | Array<{ type: string; text?: string }> {
+  return (
+    typeof value === "string" ||
+    (Array.isArray(value) &&
+      value.every(
+        (part) =>
+          typeof part === "object" &&
+          part !== null &&
+          "type" in part &&
+          typeof part.type === "string" &&
+          (!("text" in part) || part.text === undefined || typeof part.text === "string"),
+      ))
+  );
+}
+
+function extractText(content: string | Array<{ type: string; text?: string }>): string {
+  if (typeof content === "string") return content;
+  let text = "";
+  for (const part of content) {
+    if (part.type === "text" && typeof part.text === "string") text += part.text;
+  }
+  return text;
+}
+
+function normalizeRole(role: string): TranscriptRole {
+  if (role === "toolResult") return "tool";
+  return role === "user" || role === "assistant" || role === "tool" ? role : "system";
+}
+
 export default function ompRemoteExtension(pi: ExtensionAPI): void {
   const { z } = pi.zod;
   const CommandSchema = z.discriminatedUnion("command", [
@@ -14,17 +107,6 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
     }),
     z.object({ requestId: z.string(), command: z.literal("abort") }),
   ]);
-  const MessageSchema = z
-    .object({
-      id: z.string().optional(),
-      role: z.string(),
-      content: z.union([
-        z.string(),
-        z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()),
-      ]),
-      timestamp: z.union([z.string(), z.number()]).optional(),
-    })
-    .passthrough();
   const SessionEntrySchema = z
     .object({ id: z.string(), type: z.literal("message"), message: z.unknown() })
     .passthrough();
@@ -42,34 +124,8 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
     return Math.max(0, Math.min(100, percent <= 1 ? percent * 100 : percent));
   };
 
-  const normalizeMessage = (raw: unknown, streaming: boolean, fallbackId?: string) => {
-    const parsed = MessageSchema.safeParse(raw);
-    if (!parsed.success) return null;
-    const text =
-      typeof parsed.data.content === "string"
-        ? parsed.data.content
-        : parsed.data.content
-            .filter((part) => part.type === "text" && typeof part.text === "string")
-            .map((part) => part.text)
-            .join("");
-    const role = ["user", "assistant", "tool", "system"].includes(parsed.data.role)
-      ? parsed.data.role
-      : "system";
-    const rawTimestamp = parsed.data.timestamp;
-    const timestamp =
-      typeof rawTimestamp === "number"
-        ? new Date(rawTimestamp).toISOString()
-        : typeof rawTimestamp === "string"
-          ? rawTimestamp
-          : new Date().toISOString();
-    return {
-      id: parsed.data.id ?? fallbackId ?? `extension-message-${++messageSequence}`,
-      role,
-      text,
-      timestamp,
-      streaming,
-    } as const;
-  };
+  const normalizeMessage = (raw: unknown, streaming: boolean, fallbackId?: string) =>
+    normalizeExtensionMessage(raw, streaming, fallbackId ?? (() => `extension-message-${++messageSequence}`));
 
   const send = (frame: object): void => {
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(frame));

@@ -4,12 +4,16 @@ export const SessionSourceSchema = z.enum(["rpc", "extension", "history"]);
 export const SessionStatusSchema = z.enum(["idle", "running", "waiting", "disconnected", "history"]);
 export const SessionCapabilitySchema = z.enum(["prompt", "steer", "follow_up", "abort", "resume"]);
 
+export const TranscriptPresentationSchema = z.enum(["text", "diff"]);
+
 export const TranscriptMessageSchema = z.object({
   id: z.string().min(1),
   role: z.enum(["user", "assistant", "tool", "system"]),
   text: z.string(),
   timestamp: z.string(),
   streaming: z.boolean(),
+  presentation: TranscriptPresentationSchema.default("text"),
+  toolName: z.string().min(1).optional(),
 });
 
 export const ActiveSubagentSchema = z.object({
