@@ -20,6 +20,26 @@ import {
 } from "./ui/sidebar.js";
 
 type ComposerMode = "prompt" | "steer" | "follow_up";
+type SessionSection = {
+  id: "connected" | "disconnected";
+  label: "Connected" | "Disconnected";
+  sessions: Session[];
+};
+
+export function groupSessionsByConnection(sessions: Session[]): SessionSection[] {
+  const connected: Session[] = [];
+  const disconnected: Session[] = [];
+
+  for (const session of sessions) {
+    (session.connected ? connected : disconnected).push(session);
+  }
+
+  const sections: SessionSection[] = [
+    { id: "connected", label: "Connected", sessions: connected },
+    { id: "disconnected", label: "Disconnected", sessions: disconnected },
+  ];
+  return sections.filter((section) => section.sessions.length > 0);
+}
 
 export interface DashboardProps {
   sessions: Session[];
@@ -74,9 +94,10 @@ function DashboardContent({
   const followTranscriptRef = useRef(true);
   const { closeMobile } = useSidebar();
 
+  const sessionSections = useMemo(() => groupSessionsByConnection(sessions), [sessions]);
   const selectedSession = useMemo(
-    () => sessions.find((session) => session.id === selectedId) ?? sessions[0] ?? null,
-    [selectedId, sessions],
+    () => sessions.find((session) => session.id === selectedId) ?? sessionSections[0]?.sessions[0] ?? null,
+    [selectedId, sessionSections, sessions],
   );
 
   useEffect(() => {
@@ -253,37 +274,55 @@ function DashboardContent({
                 ) : null}
               </div>
             ) : (
-              sessions.map((session) => {
-                const selected = session.id === selectedSession?.id;
-                const displayName =
-                  session.name ?? session.cwd.split("/").filter(Boolean).at(-1) ?? "Untitled session";
-                return (
-                  <button
-                    className={cn("session-item", selected && "session-item-selected")}
-                    type="button"
-                    key={session.id}
-                    aria-current={selected ? "page" : undefined}
-                    aria-label={`${displayName}, ${SESSION_STATUS_LABEL[session.status]}`}
-                    title={displayName}
-                    onClick={() => {
-                      setSelectedId(session.id);
-                      closeMobile();
-                    }}
-                  >
-                    <span
-                      className={cn(
-                        "session-state-dot",
-                        `session-state-${SESSION_STATUS_TONE[session.status]}`,
-                      )}
-                    />
-                    <span className="session-copy">
-                      <strong>{displayName}</strong>
-                      <small>{compactPath(session.cwd)}</small>
+              sessionSections.map((section) => (
+                <section
+                  className="session-group"
+                  aria-labelledby={`session-group-${section.id}`}
+                  key={section.id}
+                >
+                  <h2 className="session-group-heading" id={`session-group-${section.id}`}>
+                    <span>{section.label}</span>
+                    <span>
+                      {section.sessions.length.toLocaleString()}
+                      <span className="sr-only">
+                        {" "}
+                        {section.sessions.length === 1 ? "session" : "sessions"}
+                      </span>
                     </span>
-                    <time dateTime={session.lastActivity}>{formatTime(session.lastActivity)}</time>
-                  </button>
-                );
-              })
+                  </h2>
+                  {section.sessions.map((session) => {
+                    const selected = session.id === selectedSession?.id;
+                    const displayName =
+                      session.name ?? session.cwd.split("/").filter(Boolean).at(-1) ?? "Untitled session";
+                    return (
+                      <button
+                        className={cn("session-item", selected && "session-item-selected")}
+                        type="button"
+                        key={session.id}
+                        aria-current={selected ? "page" : undefined}
+                        aria-label={`${displayName}, ${SESSION_STATUS_LABEL[session.status]}`}
+                        title={displayName}
+                        onClick={() => {
+                          setSelectedId(session.id);
+                          closeMobile();
+                        }}
+                      >
+                        <span
+                          className={cn(
+                            "session-state-dot",
+                            `session-state-${SESSION_STATUS_TONE[session.status]}`,
+                          )}
+                        />
+                        <span className="session-copy">
+                          <strong>{displayName}</strong>
+                          <small>{compactPath(session.cwd)}</small>
+                        </span>
+                        <time dateTime={session.lastActivity}>{formatTime(session.lastActivity)}</time>
+                      </button>
+                    );
+                  })}
+                </section>
+              ))
             )}
           </nav>
           {hasMoreHistory ? (
