@@ -184,7 +184,7 @@ async function readSessionMetadata(path: string): Promise<Session | null> {
     return {
       id: header.id,
       source: "history",
-      name: title ?? (headerTitle || fallbackSessionName(path)),
+      name: title ?? (headerTitle || fallbackSessionName(path, header.id, header.cwd, header.timestamp)),
       cwd: header.cwd,
       status: "history",
       connected: false,
@@ -253,8 +253,13 @@ function normalizeTimestamp(value: unknown): string {
   return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
 }
 
-function fallbackSessionName(path: string): string {
-  return basename(path, extname(path));
+function fallbackSessionName(path: string, id: string, cwd: string, rawTimestamp: unknown): string | null {
+  const stem = basename(path, extname(path));
+  if (typeof rawTimestamp !== "string" && typeof rawTimestamp !== "number") return stem;
+  const timestamp = new Date(rawTimestamp);
+  if (Number.isNaN(timestamp.getTime())) return stem;
+  const generatedStem = `${timestamp.toISOString().replace(/[:.]/g, "-")}_${id}`;
+  return stem === generatedStem ? basename(cwd) || null : stem;
 }
 
 function sessionMatches(session: Session, query: string): boolean {
