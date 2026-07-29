@@ -4,13 +4,15 @@ import { describe, expect, it } from "vitest";
 import {
   formatSubagentActivityLabel,
   formatSystemTextPreview,
+  formatToolTextPreview,
   groupSessionsByConnection,
   parseInlineTranscript,
   parseTranscriptBlocks,
-  tokenizeCode,
-  TranscriptCodeBlock,
   SystemTranscriptText,
+  ToolTranscriptText,
+  TranscriptCodeBlock,
   TranscriptEntry,
+  tokenizeCode,
 } from "./dashboard.js";
 
 const BASE_SESSION: Session = {
@@ -83,16 +85,57 @@ describe("TranscriptCodeBlock", () => {
   });
 });
 
+describe("ToolTranscriptText", () => {
+  it("renders the last ten output lines in a closed disclosure", () => {
+    const text = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n");
+    const entry = {
+      id: "tool-1",
+      role: "tool" as const,
+      toolName: "bash",
+      text,
+      timestamp: "2026-07-29T12:00:00.000Z",
+      streaming: false,
+      presentation: "text" as const,
+    };
+    const block = ToolTranscriptText({ entry });
+
+    expect(formatToolTextPreview(`${text}\n`)).toBe(
+      Array.from({ length: 10 }, (_, index) => `line ${index + 3}`).join("\n"),
+    );
+    expect(block.type).toBe("details");
+    expect(block.props.open).toBeUndefined();
+    expect(block.props.children[0].type).toBe("summary");
+    expect(block.props.children[0].props.children[1].props.children).toBe(formatToolTextPreview(text));
+  });
+
+  it("labels an empty tool result", () => {
+    expect(formatToolTextPreview("")).toBe("No tool output");
+  });
+});
+
 describe("SystemTranscriptText", () => {
-  it("renders a truncated preview in a closed disclosure", () => {
+  it("renders a truncated preview with a chevron in the closed system header", () => {
     const text = `${"x".repeat(180)}tail`;
-    const block = SystemTranscriptText({ text });
+    const entry = {
+      id: "system-1",
+      role: "system" as const,
+      text,
+      timestamp: "2026-07-29T12:00:00.000Z",
+      streaming: false,
+      presentation: "text" as const,
+    };
+    const block = SystemTranscriptText({ entry });
 
     expect(formatSystemTextPreview(text)).toBe(`${"x".repeat(180)}…`);
     expect(block.type).toBe("details");
     expect(block.props.open).toBeUndefined();
     expect(block.props.children[0].type).toBe("summary");
-    expect(block.props.children[0].props.children[0].props.children).toBe(`${"x".repeat(180)}…`);
+    expect(block.props.children[0].props.children[1].props.children).toBe(`${"x".repeat(180)}…`);
+    expect(
+      renderTranscriptNodes(block.props.children[0]).some(
+        (node) => node.className === "message-disclosure-chevron",
+      ),
+    ).toBe(true);
   });
 
   it.each([

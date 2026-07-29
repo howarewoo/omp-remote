@@ -566,6 +566,31 @@ export function formatSystemTextPreview(text: string): string {
   return `${preview.slice(0, SYSTEM_TEXT_PREVIEW_LENGTH).trimEnd()}…`;
 }
 
+const TOOL_TEXT_PREVIEW_LINES = 10;
+
+export function formatToolTextPreview(text: string): string {
+  let end = text.length;
+  if (text.charCodeAt(end - 1) === 10) {
+    end -= 1;
+    if (text.charCodeAt(end - 1) === 13) end -= 1;
+  }
+  if (end === 0) return "No tool output";
+
+  let start = end;
+  for (let line = 0; line < TOOL_TEXT_PREVIEW_LINES && start > 0; line += 1) {
+    const newline = text.lastIndexOf("\n", start - 1);
+    if (newline === -1) {
+      start = 0;
+      break;
+    }
+    start = newline;
+  }
+  if (start > 0) start += 1;
+
+  const preview = text.slice(start, end);
+  return /\S/.test(preview) ? preview : "No tool output";
+}
+
 export const TranscriptText = memo(function TranscriptText({ text }: { text: string }) {
   const blocks = useMemo(() => parseTranscriptBlocks(text || "…"), [text]);
 
@@ -584,46 +609,77 @@ export const TranscriptText = memo(function TranscriptText({ text }: { text: str
   );
 });
 
-export function SystemTranscriptText({ text }: { text: string }) {
+function TranscriptEntryHeader({
+  entry,
+  collapsible = false,
+}: {
+  entry: Session["messages"][number];
+  collapsible?: boolean;
+}) {
+  return (
+    <header>
+      <span className="message-author">
+        <i aria-hidden="true">{entry.role === "assistant" ? "π" : entry.role === "user" ? "›" : "·"}</i>
+        {entry.role === "assistant" ? "OMP" : entry.role === "user" ? "You" : (entry.toolName ?? entry.role)}
+        {collapsible ? <span className="message-disclosure-chevron" aria-hidden="true" /> : null}
+      </span>
+      <time dateTime={entry.timestamp}>{formatTime(entry.timestamp)}</time>
+      {entry.streaming ? <Badge className="streaming-badge">Streaming</Badge> : null}
+    </header>
+  );
+}
+
+export function SystemTranscriptText({ entry }: { entry: Session["messages"][number] }) {
   return (
     <details className="system-message-disclosure">
       <summary>
-        <span className="system-message-preview">{formatSystemTextPreview(text)}</span>
-        <span className="system-message-action">
-          <span className="system-message-action-collapsed">Show full text</span>
-          <span className="system-message-action-expanded">Hide full text</span>
-        </span>
+        <TranscriptEntryHeader entry={entry} collapsible />
+        <span className="system-message-preview">{formatSystemTextPreview(entry.text)}</span>
       </summary>
-      <TranscriptText text={text} />
+      <TranscriptText text={entry.text} />
     </details>
   );
 }
 
 const MemoizedSystemTranscriptText = memo(SystemTranscriptText);
 
+function TranscriptEntryContent({ entry }: { entry: Session["messages"][number] }) {
+  return entry.presentation === "diff" ? (
+    <div className="transcript-message">
+      <TranscriptDiff lines={entry.text.split("\n").map(classifyDiffLine)} />
+    </div>
+  ) : (
+    <TranscriptText text={entry.text} />
+  );
+}
+
+export function ToolTranscriptText({ entry }: { entry: Session["messages"][number] }) {
+  return (
+    <details className="tool-message-disclosure">
+      <summary>
+        <TranscriptEntryHeader entry={entry} collapsible />
+        <pre className="tool-message-preview">{formatToolTextPreview(entry.text)}</pre>
+      </summary>
+      <TranscriptEntryContent entry={entry} />
+    </details>
+  );
+}
+
+const MemoizedToolTranscriptText = memo(ToolTranscriptText);
+
 export function TranscriptEntry({ entry }: { entry: Session["messages"][number] }) {
+  const isCollapsibleSystem = entry.role === "system" && entry.presentation !== "diff";
+  const isCollapsibleTool = entry.role === "tool";
+
   return (
     <article className={cn("transcript-entry", `transcript-${entry.role}`)}>
-      <header>
-        <span className="message-author">
-          <i aria-hidden="true">{entry.role === "assistant" ? "π" : entry.role === "user" ? "›" : "·"}</i>
-          {entry.role === "assistant"
-            ? "OMP"
-            : entry.role === "user"
-              ? "You"
-              : (entry.toolName ?? entry.role)}
-        </span>
-        <time dateTime={entry.timestamp}>{formatTime(entry.timestamp)}</time>
-        {entry.streaming ? <Badge className="streaming-badge">Streaming</Badge> : null}
-      </header>
-      {entry.presentation === "diff" ? (
-        <div className="transcript-message">
-          <TranscriptDiff lines={entry.text.split("\n").map(classifyDiffLine)} />
-        </div>
-      ) : entry.role === "system" ? (
-        <MemoizedSystemTranscriptText text={entry.text} />
+      {isCollapsibleSystem || isCollapsibleTool ? null : <TranscriptEntryHeader entry={entry} />}
+      {isCollapsibleSystem ? (
+        <MemoizedSystemTranscriptText entry={entry} />
+      ) : isCollapsibleTool ? (
+        <MemoizedToolTranscriptText entry={entry} />
       ) : (
-        <TranscriptText text={entry.text} />
+        <TranscriptEntryContent entry={entry} />
       )}
     </article>
   );
