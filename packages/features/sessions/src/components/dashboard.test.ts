@@ -1,6 +1,6 @@
 import type { Session } from "@omp-remote/protocol";
 import { describe, expect, it } from "vitest";
-import { formatSubagentActivityLabel, groupSessionsByConnection } from "./dashboard.js";
+import { formatSubagentActivityLabel, groupSessionsByConnection, parseTranscriptText } from "./dashboard.js";
 
 const BASE_SESSION: Session = {
   id: "session-1",
@@ -59,5 +59,58 @@ describe("formatSubagentActivityLabel", () => {
     [3, "3 subagents running"],
   ])("formats %i active subagents", (count, expected) => {
     expect(formatSubagentActivityLabel(count)).toBe(expected);
+  });
+});
+
+describe("parseTranscriptText", () => {
+  it("marks additions and deletions inside fenced diffs", () => {
+    expect(
+      parseTranscriptText(
+        [
+          "Updated the component:",
+          "```diff",
+          " const stable = true;",
+          "-const tone = 'blue';",
+          "+const tone = 'green';",
+          "```",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { kind: "text", text: "Updated the component:" },
+      { kind: "context", text: " const stable = true;" },
+      { kind: "removed", text: "-const tone = 'blue';" },
+      { kind: "added", text: "+const tone = 'green';" },
+    ]);
+  });
+
+  it("keeps unified diff metadata distinct from changed lines", () => {
+    expect(
+      parseTranscriptText(
+        [
+          "diff --git a/source.ts b/source.ts",
+          "--- a/source.ts",
+          "+++ b/source.ts",
+          "@@ -1 +1 @@",
+          "-const before = true;",
+          "+const after = true;",
+          "Finished.",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { kind: "meta", text: "diff --git a/source.ts b/source.ts" },
+      { kind: "meta", text: "--- a/source.ts" },
+      { kind: "meta", text: "+++ b/source.ts" },
+      { kind: "meta", text: "@@ -1 +1 @@" },
+      { kind: "removed", text: "-const before = true;" },
+      { kind: "added", text: "+const after = true;" },
+      { kind: "text", text: "Finished." },
+    ]);
+  });
+
+  it("does not color ordinary prose that starts with plus or minus", () => {
+    expect(parseTranscriptText("- Removed clutter\n+ Added clarity")).toEqual([
+      { kind: "text", text: "- Removed clutter" },
+      { kind: "text", text: "+ Added clarity" },
+    ]);
   });
 });

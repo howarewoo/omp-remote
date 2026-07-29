@@ -941,6 +941,49 @@ textarea:disabled {
   overflow-wrap: anywhere;
 }
 
+.transcript-message > span {
+  display: block;
+  min-height: 1lh;
+}
+
+.transcript-message-diff {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.diff-line {
+  width: max-content;
+  min-width: 100%;
+  padding: 0.05rem 0.65rem;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  line-height: 1.75;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.diff-added {
+  color: oklch(90% 0.1 150);
+  background: oklch(78% 0.16 150 / 0.13);
+}
+
+.diff-removed {
+  color: oklch(90% 0.09 25);
+  background: oklch(70% 0.18 25 / 0.14);
+}
+
+.diff-meta {
+  color: var(--cyan);
+  background: oklch(81% 0.14 200 / 0.07);
+}
+
+.diff-context {
+  color: oklch(76% 0.012 286);
+  background: oklch(100% 0 0 / 0.025);
+}
+
 .transcript-user > p {
   color: var(--foreground);
 }

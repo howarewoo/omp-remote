@@ -1,13 +1,11 @@
 import type { Session } from "@omp-remote/protocol";
 import { SESSION_STATUS_LABEL, SESSION_STATUS_TONE } from "@omp-remote/ui";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, memo, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "./ui/badge.js";
 import { Button } from "./ui/button.js";
 import { Dialog } from "./ui/dialog.js";
 import { Input } from "./ui/input.js";
 import { Separator } from "./ui/separator.js";
-import { Textarea } from "./ui/textarea.js";
-import { cn } from "./ui/utils.js";
 import {
   Sidebar,
   SidebarContent,
@@ -18,6 +16,8 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "./ui/sidebar.js";
+import { Textarea } from "./ui/textarea.js";
+import { cn } from "./ui/utils.js";
 
 type ComposerMode = "prompt" | "steer" | "follow_up";
 type SessionSection = {
@@ -25,6 +25,60 @@ type SessionSection = {
   label: "Connected" | "Disconnected";
   sessions: Session[];
 };
+
+type TranscriptLineKind = "text" | "meta" | "context" | "removed" | "added";
+
+type TranscriptLine = {
+  kind: TranscriptLineKind;
+  text: string;
+};
+
+const DIFF_META_PATTERN =
+  /^(?:diff --git |index |--- |\+\+\+ |@@ |new file mode |deleted file mode |similarity index |rename from |rename to |Binary files |\\ No newline at end of file)/;
+
+export function parseTranscriptText(text: string): TranscriptLine[] {
+  const sourceLines = text.split("\n");
+  const lines: TranscriptLine[] = [];
+  let fencedDiff = false;
+  let rawDiff = false;
+
+  for (let index = 0; index < sourceLines.length; index += 1) {
+    const line = sourceLines[index] ?? "";
+
+    if (!fencedDiff && /^```(?:diff|patch)\s*$/i.test(line)) {
+      fencedDiff = true;
+      continue;
+    }
+    if (fencedDiff && /^```\s*$/.test(line)) {
+      fencedDiff = false;
+      continue;
+    }
+
+    const startsRawDiff =
+      line.startsWith("diff --git ") ||
+      line.startsWith("@@ ") ||
+      (line.startsWith("--- ") && sourceLines[index + 1]?.startsWith("+++ "));
+    if (!fencedDiff && !rawDiff && startsRawDiff) rawDiff = true;
+
+    if (!fencedDiff && rawDiff && line && !DIFF_META_PATTERN.test(line) && !/^[ +\\-]/.test(line)) {
+      rawDiff = false;
+    }
+
+    if (!fencedDiff && !rawDiff) {
+      lines.push({ kind: "text", text: line });
+    } else if (DIFF_META_PATTERN.test(line)) {
+      lines.push({ kind: "meta", text: line });
+    } else if (line.startsWith("+")) {
+      lines.push({ kind: "added", text: line });
+    } else if (line.startsWith("-")) {
+      lines.push({ kind: "removed", text: line });
+    } else {
+      lines.push({ kind: "context", text: line });
+    }
+  }
+
+  return lines;
+}
 
 export function groupSessionsByConnection(sessions: Session[]): SessionSection[] {
   const connected: Session[] = [];
@@ -67,6 +121,24 @@ export function Dashboard(props: DashboardProps) {
     </SidebarProvider>
   );
 }
+
+const TranscriptText = memo(function TranscriptText({ text }: { text: string }) {
+  const lines = useMemo(() => parseTranscriptText(text || "…"), [text]);
+  const hasDiff = lines.some((line) => line.kind !== "text");
+
+  return (
+    <p className={cn("transcript-message", hasDiff && "transcript-message-diff")}>
+      {lines.map((line, index) => (
+        <span
+          className={line.kind === "text" ? undefined : cn("diff-line", `diff-${line.kind}`)}
+          key={`${index}:${line.kind}`}
+        >
+          {line.text}
+        </span>
+      ))}
+    </p>
+  );
+});
 
 function DashboardContent({
   sessions,
@@ -503,7 +575,7 @@ function DashboardContent({
                       <time dateTime={entry.timestamp}>{formatTime(entry.timestamp)}</time>
                       {entry.streaming ? <Badge className="streaming-badge">Streaming</Badge> : null}
                     </header>
-                    <p>{entry.text || "…"}</p>
+                    <TranscriptText text={entry.text} />
                   </article>
                 ))
               )}
