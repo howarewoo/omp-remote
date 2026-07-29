@@ -2,11 +2,13 @@ import type { Session } from "@omp-remote/protocol";
 import { describe, expect, it } from "vitest";
 import {
   formatSubagentActivityLabel,
+  formatSystemTextPreview,
   groupSessionsByConnection,
   parseInlineTranscript,
   parseTranscriptBlocks,
   tokenizeCode,
   TranscriptCodeBlock,
+  SystemTranscriptText,
 } from "./dashboard.js";
 
 const BASE_SESSION: Session = {
@@ -76,6 +78,26 @@ describe("TranscriptCodeBlock", () => {
     expect(block.type).toBe("details");
     expect(block.props.open).toBeUndefined();
     expect(block.props.children[0].type).toBe("summary");
+  });
+});
+
+describe("SystemTranscriptText", () => {
+  it("renders a truncated preview in a closed disclosure", () => {
+    const text = `${"x".repeat(180)}tail`;
+    const block = SystemTranscriptText({ text });
+
+    expect(formatSystemTextPreview(text)).toBe(`${"x".repeat(180)}…`);
+    expect(block.type).toBe("details");
+    expect(block.props.open).toBeUndefined();
+    expect(block.props.children[0].type).toBe("summary");
+    expect(block.props.children[0].props.children[0].props.children).toBe(`${"x".repeat(180)}…`);
+  });
+
+  it.each([
+    ["", "System message"],
+    ["  Build finished.\nNo errors.  ", "Build finished. No errors."],
+  ])("formats the preview for %j", (text, expected) => {
+    expect(formatSystemTextPreview(text)).toBe(expected);
   });
 });
 
