@@ -12,6 +12,12 @@ export const TranscriptMessageSchema = z.object({
   streaming: z.boolean(),
 });
 
+export const ActiveSubagentSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  lastActivity: z.string(),
+});
+
 export const SessionSchema = z.object({
   id: z.string().min(1),
   source: SessionSourceSchema,
@@ -25,6 +31,7 @@ export const SessionSchema = z.object({
   capabilities: z.array(SessionCapabilitySchema),
   messages: z.array(TranscriptMessageSchema),
   sessionPath: z.string().min(1).nullable(),
+  activeSubagents: z.array(ActiveSubagentSchema).default([]),
 });
 
 export const SessionCatalogPageSchema = z.object({
@@ -131,6 +138,7 @@ export const ExtensionCommandSchema = z.discriminatedUnion("command", [
 ]);
 
 export type BrowserCommand = z.infer<typeof BrowserCommandSchema>;
+export type ActiveSubagent = z.infer<typeof ActiveSubagentSchema>;
 export type ExtensionCommand = z.infer<typeof ExtensionCommandSchema>;
 export type ExtensionFrame = z.infer<typeof ExtensionFrameSchema>;
 export type ServerFrame = z.infer<typeof ServerFrameSchema>;

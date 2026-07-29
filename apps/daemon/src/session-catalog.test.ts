@@ -31,10 +31,11 @@ describe("resolveSessionRoots", () => {
 });
 
 describe("SessionCatalog", () => {
-  it("indexes every nested session and supports bounded search pages", async () => {
+  it("nests active subagents under their main session instead of listing them as sessions", async () => {
     const root = await makeTemporaryDirectory();
     const firstPath = join(root, "project-a", "first.jsonl");
     const nestedPath = join(root, "project-a", "first", "ResearchAgent.jsonl");
+    const completedPath = join(root, "project-a", "first", "CompletedAgent.jsonl");
     await writeSession(firstPath, {
       id: "session-first",
       title: "Primary planning session",
@@ -47,40 +48,102 @@ describe("SessionCatalog", () => {
       cwd: "/workspace/alpha",
       timestamp: "2026-07-28T10:00:00.000Z",
     });
+    await writeSession(
+      completedPath,
+      {
+        id: "session-completed-agent",
+        title: "",
+        cwd: "/workspace/alpha",
+        timestamp: "2026-07-28T09:00:00.000Z",
+      },
+      [
+        {
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolName: "yield",
+            details: { status: "success" },
+            isError: false,
+          },
+        },
+      ],
+    );
     await writeFile(join(root, "project-a", "invalid.jsonl"), "not json\n", "utf8");
     await setModifiedTime(firstPath, "2026-07-27T11:00:00.000Z");
     await setModifiedTime(nestedPath, "2026-07-28T11:00:00.000Z");
+    await setModifiedTime(completedPath, "2026-07-28T10:00:00.000Z");
 
     const catalog = new SessionCatalog([root]);
     const diff = await catalog.refresh();
 
-    expect(diff.upserted.map((session) => session.id).sort()).toEqual(["session-agent", "session-first"]);
+    expect(diff.upserted.map((session) => session.id)).toEqual(["session-first"]);
     expect(diff.removed).toEqual([]);
     expect(catalog.list({ offset: 0, limit: 1, query: "" })).toEqual({
       sessions: [
         expect.objectContaining({
-          id: "session-agent",
-          name: "ResearchAgent",
+          id: "session-first",
+          name: "Primary planning session",
           source: "history",
           status: "history",
           connected: false,
-          sessionPath: nestedPath,
+          sessionPath: firstPath,
           capabilities: ["resume"],
           messages: [],
+          activeSubagents: [
+            {
+              id: "session-agent",
+              name: "ResearchAgent",
+              lastActivity: "2026-07-28T11:00:00.000Z",
+            },
+          ],
         }),
       ],
-      total: 2,
-      nextOffset: 1,
+      total: 1,
+      nextOffset: null,
     });
     expect(catalog.list({ offset: 0, limit: 20, query: "planning" }).sessions).toEqual([
       expect.objectContaining({ id: "session-first", name: "Primary planning session" }),
     ]);
-    expect(catalog.list({ offset: 0, limit: 20, query: "SESSION-AGENT" }).sessions).toHaveLength(1);
+    expect(catalog.list({ offset: 0, limit: 20, query: "RESEARCHAGENT" }).sessions).toEqual([
+      expect.objectContaining({ id: "session-first" }),
+    ]);
     expect(catalog.list({ offset: 20, limit: 20, query: "" })).toEqual({
       sessions: [],
-      total: 2,
+      total: 1,
       nextOffset: null,
     });
+  });
+
+  it("updates the main session when an active subagent exits", async () => {
+    const root = await makeTemporaryDirectory();
+    const mainPath = join(root, "project-a", "main.jsonl");
+    const subagentPath = join(root, "project-a", "main", "Worker.jsonl");
+    const mainHeader = {
+      id: "session-main",
+      title: "Main session",
+      cwd: "/workspace/alpha",
+      timestamp: "2026-07-28T10:00:00.000Z",
+    };
+    const subagentHeader = {
+      id: "session-worker",
+      title: "",
+      cwd: "/workspace/alpha",
+      timestamp: "2026-07-28T10:01:00.000Z",
+    };
+    await writeSession(mainPath, mainHeader);
+    await writeSession(subagentPath, subagentHeader);
+
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    await writeSession(subagentPath, subagentHeader, [
+      { type: "custom", customType: "session_exit", data: { reason: "dispose" } },
+    ]);
+    const diff = await catalog.refresh();
+
+    expect(diff.upserted).toEqual([expect.objectContaining({ id: "session-main", activeSubagents: [] })]);
+    expect(diff.removed).toEqual([]);
+    expect(catalog.list({ offset: 0, limit: 20, query: "" }).sessions[0]?.activeSubagents).toEqual([]);
   });
 
   it("uses the cwd leaf for generated session filenames without a title", async () => {

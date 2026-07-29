@@ -41,6 +41,10 @@ export function groupSessionsByConnection(sessions: Session[]): SessionSection[]
   return sections.filter((section) => section.sessions.length > 0);
 }
 
+export function formatSubagentActivityLabel(count: number): string {
+  return `${count} ${count === 1 ? "subagent" : "subagents"} running`;
+}
+
 export interface DashboardProps {
   sessions: Session[];
   totalSessions: number;
@@ -428,6 +432,27 @@ function DashboardContent({
                 </div>
               </dl>
             </div>
+
+            {selectedSession.activeSubagents.length > 0 ? (
+              <section className="subagent-activity" aria-label="Active subagents" aria-live="polite">
+                <strong className="subagent-activity-heading">
+                  {formatSubagentActivityLabel(selectedSession.activeSubagents.length)}
+                </strong>
+                <ul className="subagent-list">
+                  {selectedSession.activeSubagents.slice(0, 5).map((subagent) => (
+                    <li key={subagent.id}>
+                      <span>{subagent.name}</span>
+                      <time dateTime={subagent.lastActivity}>{formatTime(subagent.lastActivity)}</time>
+                    </li>
+                  ))}
+                  {selectedSession.activeSubagents.length > 5 ? (
+                    <li className="subagent-overflow">
+                      <span>+{selectedSession.activeSubagents.length - 5} more</span>
+                    </li>
+                  ) : null}
+                </ul>
+              </section>
+            ) : null}
 
             <Separator />
 

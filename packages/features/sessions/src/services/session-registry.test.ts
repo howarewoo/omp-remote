@@ -15,6 +15,13 @@ const BASE_SESSION: Session = {
   capabilities: ["prompt", "steer", "follow_up", "abort", "resume"],
   messages: [],
   sessionPath: "/work/.omp/session.jsonl",
+  activeSubagents: [
+    {
+      id: "subagent-1",
+      name: "ResearchAgent",
+      lastActivity: "2026-07-28T17:01:00.000Z",
+    },
+  ],
 };
 
 describe("SessionRegistry", () => {
@@ -76,7 +83,10 @@ describe("SessionRegistry", () => {
       timestamp: "2026-07-28T17:02:00.000Z",
       streaming: false,
     });
+    const activeSubagent = snapshot?.activeSubagents[0];
+    if (activeSubagent) activeSubagent.name = "mutated";
 
     expect(registry.get("session-1")?.messages).toHaveLength(0);
+    expect(registry.get("session-1")?.activeSubagents[0]?.name).toBe("ResearchAgent");
   });
 });

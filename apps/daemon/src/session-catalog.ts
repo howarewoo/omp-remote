@@ -1,6 +1,6 @@
 import { createReadStream, type Dir } from "node:fs";
 import { type FileHandle, open, opendir, readdir, stat } from "node:fs/promises";
-import { basename, extname, join } from "node:path";
+import { basename, dirname, extname, join } from "node:path";
 import { createInterface } from "node:readline";
 import type { Session, TranscriptMessage } from "@omp-remote/protocol";
 
@@ -9,10 +9,16 @@ const MAX_TRANSCRIPT_MESSAGES = 200;
 const MAX_TRANSCRIPT_TEXT = 20_000;
 const METADATA_READ_CONCURRENCY = 32;
 
+interface SessionMetadata {
+  exited: boolean;
+  session: Session;
+}
+
 interface CatalogEntry {
   fingerprint: string;
   path: string;
   session: Session;
+  exited: boolean;
 }
 
 export interface CatalogDiff {
@@ -53,6 +59,7 @@ export class SessionCatalog {
   readonly #roots: string[];
   #entriesByPath = new Map<string, CatalogEntry>();
   #entriesBySessionId = new Map<string, CatalogEntry>();
+  #rootEntriesBySessionId = new Map<string, CatalogEntry>();
   #sortedSessions: Session[] = [];
 
   constructor(roots: string[]) {
@@ -80,36 +87,77 @@ export class SessionCatalog {
       uncachedPaths,
       METADATA_READ_CONCURRENCY,
       async ({ fingerprint, path }) => {
-        const session = await readSessionMetadata(path);
-        return session ? { fingerprint, path, session } : null;
+        const metadata = await readSessionMetadata(path);
+        return metadata ? { fingerprint, path, ...metadata } : null;
       },
     );
     for (const entry of parsedEntries) {
       if (entry) nextEntriesByPath.set(entry.path, entry);
     }
 
+    const sessionPaths = new Set(nextEntriesByPath.keys());
+    const rootPaths = new Set<string>();
+    const activeSubagentsByRoot = new Map<string, Session["activeSubagents"]>();
+    for (const entry of nextEntriesByPath.values()) {
+      const rootPath = findRootSessionPath(entry.path, sessionPaths);
+      if (rootPath === entry.path) {
+        rootPaths.add(rootPath);
+      } else if (!entry.exited) {
+        const activeSubagents = activeSubagentsByRoot.get(rootPath) ?? [];
+        activeSubagents.push({
+          id: entry.session.id,
+          name: entry.session.name ?? basename(entry.path, extname(entry.path)),
+          lastActivity: entry.session.lastActivity,
+        });
+        activeSubagentsByRoot.set(rootPath, activeSubagents);
+      }
+    }
+
+    for (const rootPath of rootPaths) {
+      const entry = nextEntriesByPath.get(rootPath);
+      if (!entry) continue;
+      const activeSubagents = (activeSubagentsByRoot.get(rootPath) ?? []).sort((left, right) =>
+        right.lastActivity.localeCompare(left.lastActivity),
+      );
+      nextEntriesByPath.set(rootPath, {
+        ...entry,
+        session: { ...entry.session, activeSubagents },
+      });
+    }
+
     const nextEntriesBySessionId = new Map<string, CatalogEntry>();
+    const nextRootEntriesBySessionId = new Map<string, CatalogEntry>();
     for (const entry of nextEntriesByPath.values()) {
       const existing = nextEntriesBySessionId.get(entry.session.id);
       if (!existing || entry.session.lastActivity > existing.session.lastActivity) {
         nextEntriesBySessionId.set(entry.session.id, entry);
       }
+      if (!rootPaths.has(entry.path)) continue;
+      const existingRoot = nextRootEntriesBySessionId.get(entry.session.id);
+      if (!existingRoot || entry.session.lastActivity > existingRoot.session.lastActivity) {
+        nextRootEntriesBySessionId.set(entry.session.id, entry);
+      }
     }
 
     const upserted: Session[] = [];
-    for (const [sessionId, entry] of nextEntriesBySessionId) {
-      const previous = this.#entriesBySessionId.get(sessionId);
-      if (previous?.path !== entry.path || previous.fingerprint !== entry.fingerprint) {
+    for (const [sessionId, entry] of nextRootEntriesBySessionId) {
+      const previous = this.#rootEntriesBySessionId.get(sessionId);
+      if (
+        previous?.path !== entry.path ||
+        previous.fingerprint !== entry.fingerprint ||
+        !sessionsEqual(previous.session, entry.session)
+      ) {
         upserted.push(cloneSession(entry.session));
       }
     }
-    const removed = [...this.#entriesBySessionId.keys()].filter(
-      (sessionId) => !nextEntriesBySessionId.has(sessionId),
+    const removed = [...this.#rootEntriesBySessionId.keys()].filter(
+      (sessionId) => !nextRootEntriesBySessionId.has(sessionId),
     );
 
     this.#entriesByPath = nextEntriesByPath;
     this.#entriesBySessionId = nextEntriesBySessionId;
-    this.#sortedSessions = [...nextEntriesBySessionId.values()]
+    this.#rootEntriesBySessionId = nextRootEntriesBySessionId;
+    this.#sortedSessions = [...nextRootEntriesBySessionId.values()]
       .map((entry) => entry.session)
       .sort((left, right) => right.lastActivity.localeCompare(left.lastActivity));
 
@@ -159,7 +207,7 @@ async function collectSessionFiles(directory: string, paths: string[]): Promise<
   }
 }
 
-async function readSessionMetadata(path: string): Promise<Session | null> {
+async function readSessionMetadata(path: string): Promise<SessionMetadata | null> {
   let handle: FileHandle | undefined;
   try {
     handle = await open(path, "r");
@@ -180,20 +228,34 @@ async function readSessionMetadata(path: string): Promise<Session | null> {
     if (!header || typeof header.id !== "string" || typeof header.cwd !== "string" || !header.cwd)
       return null;
     const fileStats = await handle.stat();
+    const tailOffset = Math.max(0, fileStats.size - buffer.length);
+    const tailLength = fileStats.size - tailOffset;
+    const tailRead = await handle.read(buffer, 0, tailLength, tailOffset);
+    const tailRecords = buffer
+      .subarray(0, tailRead.bytesRead)
+      .toString("utf8")
+      .split("\n")
+      .map(parseRecord)
+      .filter((record): record is Record<string, unknown> => record !== null);
+    const exited = sessionHasEnded(tailRecords);
     const headerTitle = typeof header.title === "string" ? header.title.trim() : "";
     return {
-      id: header.id,
-      source: "history",
-      name: title ?? (headerTitle || fallbackSessionName(path, header.id, header.cwd, header.timestamp)),
-      cwd: header.cwd,
-      status: "history",
-      connected: false,
-      model: null,
-      contextPercent: null,
-      lastActivity: fileStats.mtime.toISOString(),
-      capabilities: ["resume"],
-      messages: [],
-      sessionPath: path,
+      exited,
+      session: {
+        id: header.id,
+        source: "history",
+        name: title ?? (headerTitle || fallbackSessionName(path, header.id, header.cwd, header.timestamp)),
+        cwd: header.cwd,
+        status: "history",
+        connected: false,
+        model: null,
+        contextPercent: null,
+        lastActivity: fileStats.mtime.toISOString(),
+        capabilities: ["resume"],
+        messages: [],
+        sessionPath: path,
+        activeSubagents: [],
+      },
     };
   } catch (error) {
     if (isMissingPathError(error)) return null;
@@ -262,8 +324,37 @@ function fallbackSessionName(path: string, id: string, cwd: string, rawTimestamp
   return stem === generatedStem ? basename(cwd) || null : stem;
 }
 
+function findRootSessionPath(path: string, sessionPaths: Set<string>): string {
+  let rootPath = path;
+  while (true) {
+    const parentPath = `${dirname(rootPath)}.jsonl`;
+    if (!sessionPaths.has(parentPath)) return rootPath;
+    rootPath = parentPath;
+  }
+}
+
+function sessionsEqual(left: Session, right: Session): boolean {
+  return (
+    left.activeSubagents.length === right.activeSubagents.length &&
+    left.activeSubagents.every((subagent, index) => {
+      const other = right.activeSubagents[index];
+      return (
+        subagent.id === other?.id &&
+        subagent.name === other.name &&
+        subagent.lastActivity === other.lastActivity
+      );
+    })
+  );
+}
+
 function sessionMatches(session: Session, query: string): boolean {
-  return [session.id, session.name, session.cwd, session.sessionPath]
+  return [
+    session.id,
+    session.name,
+    session.cwd,
+    session.sessionPath,
+    ...session.activeSubagents.flatMap((subagent) => [subagent.id, subagent.name]),
+  ]
     .filter((value): value is string => typeof value === "string")
     .some((value) => value.toLocaleLowerCase().includes(query));
 }
@@ -278,6 +369,31 @@ function parseRecord(line: string): Record<string, unknown> | null {
   }
 }
 
+function sessionHasEnded(records: Record<string, unknown>[]): boolean {
+  let ended = false;
+  for (const record of records) {
+    if (record.type === "custom" && record.customType === "session_exit") {
+      ended = true;
+      continue;
+    }
+    if (record.type !== "message" || !isRecord(record.message)) continue;
+    if (record.message.role === "user") {
+      ended = false;
+      continue;
+    }
+    if (
+      record.message.role === "toolResult" &&
+      record.message.toolName === "yield" &&
+      record.message.isError !== true &&
+      isRecord(record.message.details) &&
+      record.message.details.status === "success"
+    ) {
+      ended = true;
+    }
+  }
+  return ended;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -287,7 +403,12 @@ function isMissingPathError(error: unknown): boolean {
 }
 
 function cloneSession(session: Session): Session {
-  return { ...session, capabilities: [...session.capabilities], messages: [] };
+  return {
+    ...session,
+    capabilities: [...session.capabilities],
+    messages: [],
+    activeSubagents: session.activeSubagents.map((subagent) => ({ ...subagent })),
+  };
 }
 
 function messageHash(text: string): string {
