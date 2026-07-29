@@ -83,6 +83,116 @@ describe("SessionCatalog", () => {
     });
   });
 
+  it("uses the cwd leaf for generated session filenames without a title", async () => {
+    const root = await makeTemporaryDirectory();
+    const sessionPath = join(
+      root,
+      "project-a",
+      "2026-07-28T22-03-11-256Z_019faac0-d218-7000-a8f9-d1c5875c00e4.jsonl",
+    );
+    await writeSession(sessionPath, {
+      id: "019faac0-d218-7000-a8f9-d1c5875c00e4",
+      title: "",
+      cwd: "/workspace/alpha",
+      timestamp: "2026-07-28T22:03:11.256Z",
+    });
+
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    expect(catalog.get("019faac0-d218-7000-a8f9-d1c5875c00e4")?.name).toBe("alpha");
+  });
+
+  it("only replaces exact generated stems and returns null without a cwd leaf", async () => {
+    const root = await makeTemporaryDirectory();
+    await writeSession(join(root, "project-a", "2026-07-28T23-00-00-000Z_session-root.jsonl"), {
+      id: "session-root",
+      title: "",
+      cwd: "/",
+      timestamp: "2026-07-28T23:00:00.000Z",
+    });
+    await writeSession(join(root, "project-a", "timestamp-like_session-invalid.jsonl"), {
+      id: "session-invalid",
+      title: "",
+      cwd: "/workspace/alpha",
+      timestamp: "not-a-timestamp",
+    });
+    await writeSession(join(root, "project-a", "missing-timestamp.jsonl"), {
+      id: "session-missing",
+      title: "",
+      cwd: "/workspace/alpha",
+    });
+
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    expect(catalog.get("session-root")?.name).toBeNull();
+    expect(catalog.get("session-invalid")?.name).toBe("timestamp-like_session-invalid");
+    expect(catalog.get("session-missing")?.name).toBe("missing-timestamp");
+  });
+
+  it("prefers a non-empty mutable title over a different header title", async () => {
+    const root = await makeTemporaryDirectory();
+    await writeSession(join(root, "project-a", "custom-title.jsonl"), {
+      id: "session-mutable-title",
+      title: "Mutable title",
+      headerTitle: "Older header title",
+      cwd: "/workspace/alpha",
+      timestamp: "2026-07-28T20:00:00.000Z",
+    });
+
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    expect(catalog.get("session-mutable-title")?.name).toBe("Mutable title");
+  });
+
+  it("uses the header title when the mutable title is empty", async () => {
+    const root = await makeTemporaryDirectory();
+    await writeSession(join(root, "project-a", "header-title.jsonl"), {
+      id: "session-header-title",
+      title: "",
+      headerTitle: "Header title",
+      cwd: "/workspace/alpha",
+      timestamp: "2026-07-28T21:00:00.000Z",
+    });
+
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    expect(catalog.get("session-header-title")?.name).toBe("Header title");
+  });
+
+  it("preserves a custom filename stem despite a valid timestamp", async () => {
+    const root = await makeTemporaryDirectory();
+    await writeSession(join(root, "project-a", "2026-07-28T22-00-00-000Z_custom-session.jsonl"), {
+      id: "session-custom",
+      title: "",
+      cwd: "/workspace/alpha",
+      timestamp: "2026-07-28T22:00:00.000Z",
+    });
+
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    expect(catalog.get("session-custom")?.name).toBe("2026-07-28T22-00-00-000Z_custom-session");
+  });
+
+  it("derives an exact generated stem from a numeric timestamp", async () => {
+    const root = await makeTemporaryDirectory();
+    await writeSession(join(root, "project-a", "2026-07-28T22-03-11-256Z_session-numeric.jsonl"), {
+      id: "session-numeric",
+      title: "",
+      cwd: "/workspace/alpha",
+      timestamp: Date.UTC(2026, 6, 28, 22, 3, 11, 256),
+    });
+
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    expect(catalog.get("session-numeric")?.name).toBe("alpha");
+  });
+
   it("reports changed and removed session files", async () => {
     const root = await makeTemporaryDirectory();
     const sessionPath = join(root, "project", "session.jsonl");
@@ -154,8 +264,9 @@ describe("SessionCatalog", () => {
 interface SessionHeader {
   id: string;
   title: string;
+  headerTitle?: string;
   cwd: string;
-  timestamp: string;
+  timestamp?: string | number;
 }
 
 async function writeSession(path: string, header: SessionHeader, records: unknown[] = []): Promise<void> {
@@ -168,7 +279,7 @@ async function writeSession(path: string, header: SessionHeader, records: unknow
       id: header.id,
       timestamp: header.timestamp,
       cwd: header.cwd,
-      title: header.title || undefined,
+      title: (header.headerTitle ?? header.title) || undefined,
     }),
     ...records.map((record) => JSON.stringify(record)),
   ];
