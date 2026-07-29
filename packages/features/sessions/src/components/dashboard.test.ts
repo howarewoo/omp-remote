@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   formatSubagentActivityLabel,
   groupSessionsByConnection,
+  parseInlineTranscript,
   parseTranscriptBlocks,
+  tokenizeCode,
 } from "./dashboard.js";
 
 const BASE_SESSION: Session = {
@@ -149,5 +151,43 @@ describe("parseTranscriptBlocks", () => {
     expect(parseTranscriptBlocks("Run `pnpm test` next.")).toEqual([
       { kind: "text", text: "Run `pnpm test` next." },
     ]);
+  });
+});
+
+describe("OMP-style transcript formatting", () => {
+  it("parses the inline markdown roles used by the OMP stream", () => {
+    expect(parseInlineTranscript("Use **bold**, `pnpm test`, and [docs](https://omp.sh).")).toEqual([
+      { kind: "text", text: "Use " },
+      { kind: "strong", text: "bold" },
+      { kind: "text", text: ", " },
+      { kind: "code", text: "pnpm test" },
+      { kind: "text", text: ", and " },
+      { kind: "link", text: "docs", href: "https://omp.sh" },
+      { kind: "text", text: "." },
+    ]);
+  });
+
+  it("maps source tokens to OMP's semantic syntax categories", () => {
+    expect(tokenizeCode('const answer: Result = run("42"); // ready', "ts")).toEqual(
+      expect.arrayContaining([
+        { kind: "keyword", text: "const" },
+        { kind: "variable", text: "answer" },
+        { kind: "type", text: "Result" },
+        { kind: "operator", text: "=" },
+        { kind: "function", text: "run" },
+        { kind: "string", text: '"42"' },
+        { kind: "comment", text: "// ready" },
+      ]),
+    );
+  });
+
+  it("keeps arithmetic operators separate from adjacent numbers", () => {
+    expect(tokenizeCode("const total = 1+2;", "ts")).toEqual(
+      expect.arrayContaining([
+        { kind: "number", text: "1" },
+        { kind: "operator", text: "+" },
+        { kind: "number", text: "2" },
+      ]),
+    );
   });
 });

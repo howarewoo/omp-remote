@@ -38,6 +38,267 @@ type TranscriptBlock =
   | { kind: "code"; text: string; language: string | null }
   | { kind: "diff"; lines: DiffLine[] };
 
+export type InlineTranscriptToken =
+  | { kind: "text" | "strong" | "code"; text: string }
+  | { kind: "link"; text: string; href: string };
+
+export type SyntaxTokenKind =
+  | "plain"
+  | "comment"
+  | "keyword"
+  | "function"
+  | "variable"
+  | "string"
+  | "number"
+  | "type"
+  | "operator"
+  | "punctuation";
+
+export type SyntaxToken = {
+  kind: SyntaxTokenKind;
+  text: string;
+};
+
+const INLINE_MARKUP_PATTERN = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\))/g;
+const CODE_IDENTIFIER_PATTERN = /[$A-Za-z_]/;
+const CODE_IDENTIFIER_CONTINUATION_PATTERN = /[$\w]/;
+const CODE_OPERATOR_PATTERN = /[=+\-*/%!?&|<>^~]/;
+const CODE_PUNCTUATION_PATTERN = /[()[\]{},.;:]/;
+const HASH_COMMENT_LANGUAGES = new Set([
+  "bash",
+  "fish",
+  "make",
+  "makefile",
+  "py",
+  "python",
+  "rb",
+  "ruby",
+  "sh",
+  "shell",
+  "toml",
+  "yaml",
+  "yml",
+  "zsh",
+]);
+const CODE_KEYWORDS = new Set([
+  "as",
+  "async",
+  "await",
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "def",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "enum",
+  "export",
+  "extends",
+  "false",
+  "finally",
+  "for",
+  "from",
+  "function",
+  "if",
+  "implements",
+  "import",
+  "in",
+  "instanceof",
+  "interface",
+  "let",
+  "match",
+  "new",
+  "null",
+  "of",
+  "package",
+  "private",
+  "protected",
+  "public",
+  "raise",
+  "return",
+  "static",
+  "struct",
+  "super",
+  "switch",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "type",
+  "typeof",
+  "undefined",
+  "var",
+  "void",
+  "while",
+  "with",
+  "yield",
+]);
+
+export function parseInlineTranscript(text: string): InlineTranscriptToken[] {
+  const tokens: InlineTranscriptToken[] = [];
+  let cursor = 0;
+
+  for (const match of text.matchAll(INLINE_MARKUP_PATTERN)) {
+    const start = match.index;
+    if (start > cursor) tokens.push({ kind: "text", text: text.slice(cursor, start) });
+
+    const raw = match[0];
+    if (raw.startsWith("`")) {
+      tokens.push({ kind: "code", text: raw.slice(1, -1) });
+    } else if (raw.startsWith("**")) {
+      tokens.push({ kind: "strong", text: raw.slice(2, -2) });
+    } else {
+      const labelEnd = raw.indexOf("](");
+      tokens.push({
+        kind: "link",
+        text: raw.slice(1, labelEnd),
+        href: raw.slice(labelEnd + 2, -1),
+      });
+    }
+    cursor = start + raw.length;
+  }
+
+  if (cursor < text.length) tokens.push({ kind: "text", text: text.slice(cursor) });
+  return tokens.length > 0 ? tokens : [{ kind: "text", text }];
+}
+
+export function tokenizeCode(code: string, language?: string | null): SyntaxToken[] {
+  const tokens: SyntaxToken[] = [];
+  const normalizedLanguage = language?.toLowerCase() ?? "";
+  let cursor = 0;
+
+  const push = (kind: SyntaxTokenKind, text: string) => {
+    if (!text) return;
+    const previous = tokens.at(-1);
+    if (previous?.kind === kind) {
+      previous.text += text;
+    } else {
+      tokens.push({ kind, text });
+    }
+  };
+
+  while (cursor < code.length) {
+    const character = code[cursor] ?? "";
+    const next = code[cursor + 1] ?? "";
+
+    if (/\s/.test(character)) {
+      const start = cursor;
+      while (cursor < code.length && /\s/.test(code[cursor] ?? "")) cursor += 1;
+      push("plain", code.slice(start, cursor));
+      continue;
+    }
+
+    if (character === "/" && next === "/") {
+      const end = code.indexOf("\n", cursor);
+      const nextCursor = end === -1 ? code.length : end;
+      push("comment", code.slice(cursor, nextCursor));
+      cursor = nextCursor;
+      continue;
+    }
+
+    if (character === "/" && next === "*") {
+      const end = code.indexOf("*/", cursor + 2);
+      const nextCursor = end === -1 ? code.length : end + 2;
+      push("comment", code.slice(cursor, nextCursor));
+      cursor = nextCursor;
+      continue;
+    }
+
+    if (character === "#" && HASH_COMMENT_LANGUAGES.has(normalizedLanguage)) {
+      const end = code.indexOf("\n", cursor);
+      const nextCursor = end === -1 ? code.length : end;
+      push("comment", code.slice(cursor, nextCursor));
+      cursor = nextCursor;
+      continue;
+    }
+
+    if (code.startsWith("<!--", cursor)) {
+      const end = code.indexOf("-->", cursor + 4);
+      const nextCursor = end === -1 ? code.length : end + 3;
+      push("comment", code.slice(cursor, nextCursor));
+      cursor = nextCursor;
+      continue;
+    }
+
+    if (character === "'" || character === '"' || character === "`") {
+      const quote = character;
+      const start = cursor;
+      cursor += 1;
+      while (cursor < code.length) {
+        if (code[cursor] === "\\") {
+          cursor += 2;
+          continue;
+        }
+        const current = code[cursor];
+        cursor += 1;
+        if (current === quote) break;
+      }
+      push("string", code.slice(start, cursor));
+      continue;
+    }
+
+    if (/\d/.test(character)) {
+      const start = cursor;
+      cursor += 1;
+      while (cursor < code.length) {
+        const current = code[cursor] ?? "";
+        if (/[\dA-Fa-f_xXob.]/.test(current)) {
+          cursor += 1;
+          continue;
+        }
+        if ((current === "+" || current === "-") && /[eE]/.test(code[cursor - 1] ?? "")) {
+          cursor += 1;
+          continue;
+        }
+        break;
+      }
+      push("number", code.slice(start, cursor));
+      continue;
+    }
+
+    if (CODE_IDENTIFIER_PATTERN.test(character)) {
+      const start = cursor;
+      cursor += 1;
+      while (cursor < code.length && CODE_IDENTIFIER_CONTINUATION_PATTERN.test(code[cursor] ?? "")) {
+        cursor += 1;
+      }
+      const value = code.slice(start, cursor);
+      let lookahead = cursor;
+      while (/\s/.test(code[lookahead] ?? "")) lookahead += 1;
+      const kind = CODE_KEYWORDS.has(value)
+        ? "keyword"
+        : /^[A-Z]/.test(value)
+          ? "type"
+          : code[lookahead] === "("
+            ? "function"
+            : "variable";
+      push(kind, value);
+      continue;
+    }
+
+    if (CODE_OPERATOR_PATTERN.test(character)) {
+      const start = cursor;
+      cursor += 1;
+      while (cursor < code.length && CODE_OPERATOR_PATTERN.test(code[cursor] ?? "")) cursor += 1;
+      push("operator", code.slice(start, cursor));
+      continue;
+    }
+
+    if (CODE_PUNCTUATION_PATTERN.test(character)) {
+      push("punctuation", character);
+    } else {
+      push("plain", character);
+    }
+    cursor += 1;
+  }
+
+  return tokens;
+}
+
 const DIFF_META_PATTERN =
   /^(?:diff --git |index |--- |\+\+\+ |@@ |new file mode |deleted file mode |similarity index |rename from |rename to |Binary files |\\ No newline at end of file)/;
 
@@ -160,6 +421,110 @@ export function Dashboard(props: DashboardProps) {
   );
 }
 
+const InlineTranscript = memo(function InlineTranscript({ text }: { text: string }) {
+  const tokens = useMemo(() => parseInlineTranscript(text), [text]);
+
+  return tokens.map((token, index) => {
+    if (token.kind === "link") {
+      return (
+        <a href={token.href} key={`${index}:link`} rel="noreferrer" target="_blank">
+          {token.text}
+        </a>
+      );
+    }
+    if (token.kind === "code") {
+      return <code key={`${index}:code`}>{token.text}</code>;
+    }
+    if (token.kind === "strong") {
+      return <strong key={`${index}:strong`}>{token.text}</strong>;
+    }
+    return <span key={`${index}:text`}>{token.text}</span>;
+  });
+});
+
+const TranscriptProse = memo(function TranscriptProse({ text }: { text: string }) {
+  return (
+    <div className="transcript-prose">
+      {text.split("\n").map((line, index) => {
+        const heading = line.match(/^(#{1,6})\s+(.+)$/);
+        if (heading) {
+          const [, marks = "", content = ""] = heading;
+          return (
+            <span className="transcript-heading" data-level={marks.length} key={`${index}:heading`}>
+              <InlineTranscript text={content} />
+            </span>
+          );
+        }
+
+        const quote = line.match(/^>\s?(.*)$/);
+        if (quote) {
+          const [, content = ""] = quote;
+          return (
+            <span className="transcript-quote" key={`${index}:quote`}>
+              <InlineTranscript text={content} />
+            </span>
+          );
+        }
+
+        const listItem = line.match(/^(\s*)([-+*]|\d+[.)])\s+(.+)$/);
+        if (listItem) {
+          const [, indent = "", marker = "", content = ""] = listItem;
+          return (
+            <span
+              className="transcript-list-item"
+              key={`${index}:list`}
+              style={{ paddingInlineStart: `${Math.floor(indent.length / 2)}rem` }}
+            >
+              <i aria-hidden="true">{/^\d/.test(marker) ? marker : "•"}</i>
+              <span>
+                <InlineTranscript text={content} />
+              </span>
+            </span>
+          );
+        }
+
+        if (/^ {0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
+          return <span aria-hidden="true" className="transcript-rule" key={`${index}:rule`} />;
+        }
+
+        if (!line) {
+          return (
+            <span
+              aria-hidden="true"
+              className="transcript-line transcript-line-empty"
+              key={`${index}:empty`}
+            />
+          );
+        }
+        return (
+          <span className="transcript-line" key={`${index}:line`}>
+            <InlineTranscript text={line} />
+          </span>
+        );
+      })}
+    </div>
+  );
+});
+
+const HighlightedCode = memo(function HighlightedCode({
+  code,
+  language,
+}: {
+  code: string;
+  language: string | null;
+}) {
+  const tokens = useMemo(() => tokenizeCode(code, language), [code, language]);
+  return (
+    <code>
+      {tokens.map((token, index) => (
+        <span className={`syntax-${token.kind}`} key={`${index}:${token.kind}`}>
+          {token.text}
+        </span>
+      ))}
+    </code>
+  );
+});
+
 const TranscriptText = memo(function TranscriptText({ text }: { text: string }) {
   const blocks = useMemo(() => parseTranscriptBlocks(text || "…"), [text]);
 
@@ -167,11 +532,7 @@ const TranscriptText = memo(function TranscriptText({ text }: { text: string }) 
     <div className="transcript-message">
       {blocks.map((block, index) => {
         if (block.kind === "text") {
-          return (
-            <p className="transcript-prose" key={`${index}:text`}>
-              {block.text}
-            </p>
-          );
+          return <TranscriptProse key={`${index}:text`} text={block.text} />;
         }
         if (block.kind === "code") {
           return (
@@ -181,7 +542,7 @@ const TranscriptText = memo(function TranscriptText({ text }: { text: string }) 
                 {block.language ?? "code"}
               </figcaption>
               <pre>
-                <code>{block.text}</code>
+                <HighlightedCode code={block.text} language={block.language} />
               </pre>
             </figure>
           );
