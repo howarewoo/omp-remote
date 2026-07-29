@@ -1,6 +1,6 @@
 ---
 type: fix
-status: in-review
+status: hardened
 branch: fix/unify-daemon-endpoint
 ---
 
@@ -21,6 +21,15 @@ Observed evidence:
 
 The `4388` default was introduced to avoid `EADDRINUSE` when the installed service already owns `4387`. Simply deleting the override while still starting a second watched daemon would restore that earlier failure. Development must reuse a healthy authoritative daemon when one already owns the configured endpoint, and start the watched daemon on that same endpoint only when no authority is running.
 
+The endpoint fix removed the split authority but did not resolve the reported live session. A second, independently reproduced boundary failure prevents already-running sessions from registering at all:
+
+- With the corrected development stack healthy on `127.0.0.1:4387`, `/healthz` reported `sessions: 0` while the catalog exposed active Task worker `TimeoutProvenanceQualityReview` only as disconnected history with `capabilities: ["resume"]`.
+- A traced normal OMP session loaded the installed extension, opened `/extension`, and sent a registration snapshot without `sessionPath`. The daemon immediately closed the socket with code `1003` and reason `Invalid extension frame`; the extension retried every two seconds with the same rejected frame.
+- `SessionSchema` requires `sessionPath`, and `ExtensionRegisterSchema` embeds `SessionSchema` directly. Omission therefore rejects the complete registration before the daemon can retain the socket or populate `SessionRegistry`.
+- Current repository source already sends `sessionPath: ctx.sessionManager.getSessionFile() ?? null`, but the installed 2026-07-28 compiled extension predates that field. Its missing `resume` capability is valid and unrelated.
+- OMP Task workers inherit user extensions and emit child `session_start`, so the active parent and child can recover on their next retry once the daemon accepts the immediately previous registration shape. No OMP restart or session resume should be required.
+- The catalog separately classifies nested Task logs as resumable history. That representation defect explains the misleading fallback card, but it is not the cause of zero live registrations and is not a substitute for restoring the extension socket.
+
 ## 2. Proposed Fix
 
 - Replace the unconditional `4388` root development command with a small Node launcher that probes the configured daemon `/healthz` endpoint.
@@ -29,6 +38,9 @@ The `4388` default was introduced to avoid `EADDRINUSE` when the installed servi
 - Preserve explicit `OMP_REMOTE_HOST` and `OMP_REMOTE_PORT` overrides. Validate the same loopback host and port bounds used by the daemon, require the OMP Remote health response shape rather than accepting any HTTP 200 response, bound the probe with a short timeout, and leave real startup or proxy failures visible.
 - Update development documentation to describe one authoritative endpoint and remove the instruction that ordinary terminal sessions must opt into port `4388`.
 - Add no dependency and do not add cross-daemon federation, UI fallbacks, catalog merging, or per-command routing patches.
+- Make only the extension registration input backward-compatible: accept an omitted `sessionPath` and normalize it to explicit `null` before the frame reaches canonical session state.
+- Keep `SessionSchema` strict everywhere else, preserve valid nonempty paths unchanged, reject empty strings and wrong types, and do not synthesize the missing `resume` capability.
+- Preserve current extension output. Compatibility is limited to the immediately previous installed frame shape so already-running extensions recover through their existing retry loop.
 
 ## 3. Implementation Plan
 
@@ -43,3 +55,13 @@ The `4388` default was introduced to avoid `EADDRINUSE` when the installed servi
   - Run the focused launcher tests, root test command, and root typecheck.
   - With a temporary valid daemon health server on a non-default loopback port, run `pnpm dev --dry=json` and verify Turbo selects only web development against that endpoint; with the server absent, verify the same finite command selects the full graph on the same endpoint.
   - Exercise the session path against one daemon: register an extension session before the browser connects, verify the browser snapshot marks it `source: "extension"`, `status: "running"`, and `connected: true`, verify a later transcript event streams to the browser, route `steer` to the extension, and return `command_result` to the browser.
+- [ ] **Step 4: Reproduce the rejected installed-extension frame**
+  - Add protocol tests proving the immediately previous registration frame without `sessionPath` is normalized to `sessionPath: null`, while canonical `SessionSchema` still rejects omission.
+  - Cover current nonempty paths unchanged plus empty-string and wrong-type rejection; run the focused test before implementation and capture the failure.
+- [ ] **Step 5: Apply boundary-local compatibility**
+  - Give `ExtensionRegisterSchema` a registration-only session schema whose omitted `sessionPath` defaults to `null`.
+  - Keep canonical session parsing and current extension snapshots unchanged; add no fallback command route and no synthetic resume capability.
+- [ ] **Step 6: Verify the reported active session**
+  - Run focused protocol tests, root tests, and root typecheck under supported Node.
+  - Start the corrected daemon against the currently installed previous extension and verify its retry stays open, increments live health, and upserts the same session ID without duplication.
+  - Without restarting or resuming `TimeoutProvenanceQualityReview`, verify the dashboard replaces the saved-session fallback with connected live state, streams a subsequent event, routes `steer` to that child socket, and returns `command_result`.
