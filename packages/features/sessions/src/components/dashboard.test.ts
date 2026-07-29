@@ -6,6 +6,7 @@ import {
   parseInlineTranscript,
   parseTranscriptBlocks,
   tokenizeCode,
+  TranscriptCodeBlock,
 } from "./dashboard.js";
 
 const BASE_SESSION: Session = {
@@ -65,6 +66,16 @@ describe("formatSubagentActivityLabel", () => {
     [3, "3 subagents running"],
   ])("formats %i active subagents", (count, expected) => {
     expect(formatSubagentActivityLabel(count)).toBe(expected);
+  });
+});
+
+describe("TranscriptCodeBlock", () => {
+  it("renders code as a closed disclosure by default", () => {
+    const block = TranscriptCodeBlock({ code: "const ready = true;", language: "ts" });
+
+    expect(block.type).toBe("details");
+    expect(block.props.open).toBeUndefined();
+    expect(block.props.children[0].type).toBe("summary");
   });
 });
 
