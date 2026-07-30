@@ -1019,44 +1019,28 @@ function DashboardContent({
             className="session-workspace"
             aria-label={`Controls for ${selectedSession.name ?? selectedSession.cwd}`}
           >
-            <div className="session-overview">
-              <div className="session-title-block">
-                <span className="session-source">
-                  {selectedSession.source === "rpc"
-                    ? "Remote session"
-                    : selectedSession.source === "extension"
-                      ? "Terminal session"
-                      : "Saved session"}
-                </span>
-                <h2>
-                  {selectedSession.name ??
-                    selectedSession.cwd.split("/").filter(Boolean).at(-1) ??
-                    "Untitled session"}
-                </h2>
+            <dl className="session-metadata">
+              <div>
+                <dt>Model</dt>
+                <dd>{selectedSession.model ?? "Default"}</dd>
               </div>
-              <dl className="session-metadata">
-                <div>
-                  <dt>Model</dt>
-                  <dd>{selectedSession.model ?? "Default"}</dd>
-                </div>
-                <div>
-                  <dt>Context</dt>
-                  <dd>
-                    {selectedSession.contextPercent === null
-                      ? "—"
-                      : `${Math.round(selectedSession.contextPercent)}%`}
-                  </dd>
-                </div>
-                <div>
-                  <dt>Updated</dt>
-                  <dd>
-                    <time dateTime={selectedSession.lastActivity}>
-                      {formatTime(selectedSession.lastActivity)}
-                    </time>
-                  </dd>
-                </div>
-              </dl>
-            </div>
+              <div>
+                <dt>Context</dt>
+                <dd>
+                  {selectedSession.contextPercent === null
+                    ? "—"
+                    : `${Math.round(selectedSession.contextPercent)}%`}
+                </dd>
+              </div>
+              <div>
+                <dt>Updated</dt>
+                <dd>
+                  <time dateTime={selectedSession.lastActivity}>
+                    {formatTime(selectedSession.lastActivity)}
+                  </time>
+                </dd>
+              </div>
+            </dl>
 
             {selectedSession.activeSubagents.length > 0 ? (
               <section className="subagent-activity" aria-label="Active subagents" aria-live="polite">
