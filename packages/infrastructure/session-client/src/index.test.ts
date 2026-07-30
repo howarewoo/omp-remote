@@ -1,6 +1,13 @@
 import type { AskRequest, Session } from "@omp-remote/protocol";
 import { describe, expect, it } from "vitest";
-import { patchSession, removeAskRequest, upsertAskRequest, upsertTranscriptMessage } from "./index.js";
+import {
+  createCatalogLoadCoordinator,
+  patchSession,
+  removeAskRequest,
+  sessionSourcesReady,
+  upsertAskRequest,
+  upsertTranscriptMessage,
+} from "./index.js";
 
 const SESSION: Session = {
   id: "session-1",
@@ -29,6 +36,93 @@ const SESSION: Session = {
   activeSubagents: [],
   skillCommands: [],
 };
+
+describe("session readiness", () => {
+  it("waits for both the live snapshot and baseline catalog", () => {
+    expect(sessionSourcesReady(true, false)).toBe(false);
+    expect(sessionSourcesReady(false, true)).toBe(false);
+    expect(sessionSourcesReady(true, true)).toBe(true);
+  });
+
+  it("does not let an early search cancel or bypass the cached baseline", async () => {
+    let finishBaseline: (() => void) | undefined;
+    let baselineLoads = 0;
+    let searchLoads = 0;
+    const baseline = new Promise<void>((resolve) => {
+      finishBaseline = resolve;
+    });
+    const coordinator = createCatalogLoadCoordinator(() => {
+      baselineLoads += 1;
+      return baseline;
+    });
+
+    const baselineLoad = coordinator.loadBaseline();
+    const search = coordinator.afterBaseline(async () => {
+      searchLoads += 1;
+    });
+
+    expect(baselineLoads).toBe(1);
+    expect(searchLoads).toBe(0);
+    expect(coordinator.loadBaseline()).toBe(baselineLoad);
+
+    finishBaseline?.();
+    await search;
+
+    expect(searchLoads).toBe(1);
+    expect(baselineLoads).toBe(1);
+  });
+
+  it("retries a failed baseline before running a later search", async () => {
+    let baselineLoads = 0;
+    let searchLoads = 0;
+    const coordinator = createCatalogLoadCoordinator(() => {
+      baselineLoads += 1;
+      return baselineLoads === 1 ? Promise.reject(new Error("Catalog unavailable")) : Promise.resolve();
+    });
+    const loadSearch = async () => {
+      searchLoads += 1;
+    };
+
+    await expect(coordinator.afterBaseline(loadSearch)).rejects.toThrow("Catalog unavailable");
+    expect(searchLoads).toBe(0);
+
+    await coordinator.afterBaseline(loadSearch);
+
+    expect(baselineLoads).toBe(2);
+    expect(searchLoads).toBe(1);
+  });
+
+  it("invalidates a cleaned-up attempt without letting its late failure clear the replacement", async () => {
+    let rejectFirst: ((error: Error) => void) | undefined;
+    let resolveSecond: (() => void) | undefined;
+    let baselineLoads = 0;
+    const firstRequest = new Promise<void>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    const secondRequest = new Promise<void>((resolve) => {
+      resolveSecond = resolve;
+    });
+    const coordinator = createCatalogLoadCoordinator(() => {
+      baselineLoads += 1;
+      return baselineLoads === 1 ? firstRequest : secondRequest;
+    });
+
+    const firstAttempt = coordinator.loadBaseline();
+    coordinator.invalidateBaseline(firstAttempt);
+    const secondAttempt = coordinator.loadBaseline();
+
+    expect(secondAttempt).not.toBe(firstAttempt);
+    expect(baselineLoads).toBe(2);
+
+    rejectFirst?.(new Error("First StrictMode setup aborted"));
+    await expect(firstAttempt).rejects.toThrow("First StrictMode setup aborted");
+    expect(coordinator.loadBaseline()).toBe(secondAttempt);
+
+    resolveSecond?.();
+    await secondAttempt;
+    expect(coordinator.loadBaseline()).toBe(secondAttempt);
+  });
+});
 
 describe("upsertTranscriptMessage", () => {
   it("replaces a streaming message in place and advances session activity", () => {

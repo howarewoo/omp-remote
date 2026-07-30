@@ -469,11 +469,14 @@ export function getActiveAskRequest(
 export interface DashboardProps {
   sessions: Session[];
   askRequests: AskRequest[];
+  sessionsReady: boolean;
   historyLoading: boolean;
   hasMoreHistory: boolean;
   connection: "connecting" | "connected" | "disconnected";
   error: string | null;
   notificationState: NotificationState;
+  selectedSessionId: string | null;
+  onSelectedSessionChange(sessionId: string): void;
   onEnableNotifications(): Promise<void>;
   onLaunch(cwd: string, resume: string | null): Promise<void>;
   onCommand(sessionId: string, command: ComposerMode, text: string): Promise<void>;
@@ -757,6 +760,7 @@ export function TranscriptEntry({ entry }: { entry: Session["messages"][number] 
   );
 }
 function DashboardContent({
+  sessionsReady,
   sessions,
   askRequests,
   historyLoading,
@@ -764,6 +768,8 @@ function DashboardContent({
   connection,
   error,
   notificationState,
+  selectedSessionId,
+  onSelectedSessionChange,
   onEnableNotifications,
   onLaunch,
   onCommand,
@@ -774,7 +780,6 @@ function DashboardContent({
   onLoadMoreHistory,
   onLoadTranscript,
 }: DashboardProps) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [viewedSubagent, setViewedSubagent] = useState<ActiveSubagent | null>(null);
   const [message, setMessage] = useState("");
   const [activeSkillIndex, setActiveSkillIndex] = useState(0);
@@ -801,8 +806,10 @@ function DashboardContent({
   const sessionSections = useMemo(() => groupSessionsByConnection(mainSessions), [mainSessions]);
   const selectedSession = useMemo(
     () =>
-      mainSessions.find((session) => session.id === selectedId) ?? sessionSections[0]?.sessions[0] ?? null,
-    [mainSessions, selectedId, sessionSections],
+      mainSessions.find((session) => session.id === selectedSessionId) ??
+      sessionSections[0]?.sessions[0] ??
+      null,
+    [mainSessions, selectedSessionId, sessionSections],
   );
   const activeAskRequest = getActiveAskRequest(askRequests, selectedSession?.id ?? null);
   const activeAskSession = activeAskRequest
@@ -828,8 +835,10 @@ function DashboardContent({
   }, [message, selectedSession?.id]);
 
   useEffect(() => {
-    if (selectedSession && selectedSession.id !== selectedId) setSelectedId(selectedSession.id);
-  }, [selectedId, selectedSession]);
+    if (sessionsReady && selectedSession && selectedSession.id !== selectedSessionId) {
+      onSelectedSessionChange(selectedSession.id);
+    }
+  }, [onSelectedSessionChange, selectedSession, selectedSessionId, sessionsReady]);
 
   useEffect(() => {
     setAskDraft(activeAskRequest?.initialValue ?? "");
@@ -1079,7 +1088,7 @@ function DashboardContent({
                         aria-label={`${displayName}, ${SESSION_STATUS_LABEL[session.status]}`}
                         title={displayName}
                         onClick={() => {
-                          setSelectedId(session.id);
+                          onSelectedSessionChange(session.id);
                           setViewedSubagent(null);
                           setOpenMobile(false);
                         }}

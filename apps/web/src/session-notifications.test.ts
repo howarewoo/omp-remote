@@ -1,6 +1,23 @@
 import type { Session } from "@omp-remote/protocol";
-import { describe, expect, it } from "vitest";
-import { findSessionNotifications } from "./session-notifications.js";
+import type * as ReactModule from "react";
+import type { Mock } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { findSessionNotifications, useSessionNotifications } from "./session-notifications.js";
+
+const notificationHook = vi.hoisted(() => ({
+  previousSessions: { current: null as readonly Session[] | null },
+}));
+
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof ReactModule>();
+  return {
+    ...actual,
+    useCallback: <T extends (...args: never[]) => unknown>(callback: T) => callback,
+    useEffect: (effect: Parameters<typeof actual.useEffect>[0]) => void effect(),
+    useRef: () => notificationHook.previousSessions,
+    useState: () => ["enabled", vi.fn()],
+  };
+});
 
 const BASE_SESSION: Session = {
   id: "session-1",
@@ -41,6 +58,7 @@ describe("findSessionNotifications", () => {
         title: "Session idle",
         body: "Notification work finished and is idle.",
         tag: "session-session-1-idle",
+        url: "/?session=session-1",
       },
     ]);
   });
@@ -51,6 +69,7 @@ describe("findSessionNotifications", () => {
         title: "Input required",
         body: "Notification work is waiting for input.",
         tag: "session-session-1-waiting",
+        url: "/?session=session-1",
       },
     ]);
   });
@@ -98,8 +117,17 @@ describe("findSessionNotifications", () => {
         title: "Session idle",
         body: "Notification work finished and is idle.",
         tag: "session-session-1-idle",
+        url: "/?session=session-1",
       },
     ]);
+  });
+
+  it("encodes reserved and Unicode session ID characters exactly once", () => {
+    const session = { ...BASE_SESSION, id: "team/a?b=c & café%done" };
+
+    expect(findSessionNotifications([session], [{ ...session, status: "waiting" }])[0]?.url).toBe(
+      "/?session=team%2Fa%3Fb%3Dc+%26+caf%C3%A9%25done",
+    );
   });
 
   it("does not notify for snapshots, repeated states, new sessions, history, or disconnected sessions", () => {
@@ -128,5 +156,68 @@ describe("findSessionNotifications", () => {
     expect(findSessionNotifications([unnamed], [{ ...unnamed, status: "waiting" }])[0]?.body).toBe(
       "/work/omp-remote is waiting for input.",
     );
+  });
+});
+
+describe("direct Notification fallback", () => {
+  afterEach(() => {
+    notificationHook.previousSessions.current = null;
+    vi.unstubAllGlobals();
+  });
+
+  it("closes, navigates to the encoded session URL, and focuses the app window", async () => {
+    let browserNotification:
+      | {
+          close: Mock;
+          onclick: ((event: Event) => void) | null;
+        }
+      | undefined;
+    let href = "https://app.test/?view=compact";
+    const location = {
+      get href() {
+        return href;
+      },
+      set href(url: string) {
+        href = new URL(url, href).href;
+      },
+      assign(url: string) {
+        this.href = url;
+      },
+    };
+    const focus = vi.fn();
+    const notificationConstructor = vi.fn();
+    class NotificationMock {
+      static permission = "granted";
+      static requestPermission = vi.fn();
+      close = vi.fn();
+      onclick: ((event: Event) => void) | null = null;
+
+      constructor() {
+        notificationConstructor();
+        browserNotification = this;
+      }
+    }
+    vi.stubGlobal("window", { Notification: NotificationMock, location, focus });
+    vi.stubGlobal("document", {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    vi.stubGlobal("Notification", NotificationMock);
+    vi.stubGlobal("navigator", {
+      serviceWorker: { getRegistration: vi.fn().mockResolvedValue(undefined) },
+    });
+
+    const session = { ...BASE_SESSION, id: "team/a?b=c & café%done" };
+    useSessionNotifications([session]);
+    useSessionNotifications([{ ...session, status: "waiting" }]);
+
+    await vi.waitFor(() => expect(notificationConstructor).toHaveBeenCalledOnce());
+    expect(browserNotification?.onclick).toBeTypeOf("function");
+
+    browserNotification?.onclick?.(new Event("click"));
+
+    expect(browserNotification?.close).toHaveBeenCalledOnce();
+    expect(location.href).toBe("https://app.test/?session=team%2Fa%3Fb%3Dc+%26+caf%C3%A9%25done");
+    expect(focus).toHaveBeenCalledOnce();
   });
 });
