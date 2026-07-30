@@ -702,7 +702,6 @@ function DashboardContent({
 }: DashboardProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [viewedSubagent, setViewedSubagent] = useState<ActiveSubagent | null>(null);
-  const [composerMode, setComposerMode] = useState<ComposerMode>("prompt");
   const [message, setMessage] = useState("");
   const [commandState, setCommandState] = useState<"idle" | "sending">("idle");
   const [commandError, setCommandError] = useState<string | null>(null);
@@ -764,7 +763,7 @@ function DashboardContent({
     setCommandState("sending");
     setCommandError(null);
     try {
-      await onCommand(selectedSession.id, composerMode, message.trim());
+      await onCommand(selectedSession.id, "steer", message.trim());
       setMessage("");
     } catch (commandFailure) {
       setCommandError(
@@ -1142,21 +1141,6 @@ function DashboardContent({
             ) : (
               <form className="composer" onSubmit={submitMessage}>
                 <div className="composer-toolbar">
-                  <fieldset className="mode-switch" aria-label="Command delivery mode">
-                    {(["prompt", "steer", "follow_up"] as const).map((mode) => (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        key={mode}
-                        aria-pressed={composerMode === mode}
-                        onClick={() => setComposerMode(mode)}
-                        disabled={!selectedSession.capabilities.includes(mode)}
-                      >
-                        {mode === "follow_up" ? "Follow up" : mode[0]?.toUpperCase() + mode.slice(1)}
-                      </Button>
-                    ))}
-                  </fieldset>
                   <Button
                     type="button"
                     size="sm"
@@ -1173,24 +1157,14 @@ function DashboardContent({
                 </div>
                 <div className="composer-field">
                   <label className="sr-only" htmlFor="composer-message">
-                    {composerMode === "prompt"
-                      ? "New instruction"
-                      : composerMode === "steer"
-                        ? "Steer current run"
-                        : "Queue after run"}
+                    Steer current run
                   </label>
                   <Textarea
                     id="composer-message"
                     value={message}
                     onChange={(event) => setMessage(event.target.value)}
-                    placeholder={
-                      composerMode === "steer"
-                        ? "Redirect the current run…"
-                        : composerMode === "follow_up"
-                          ? "Queue the next instruction…"
-                          : "Ask OMP to build, investigate, or change something…"
-                    }
-                    rows={3}
+                    placeholder="Redirect the current run…"
+                    rows={2}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
                         event.currentTarget.form?.requestSubmit();

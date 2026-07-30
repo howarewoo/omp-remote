@@ -12,7 +12,7 @@ A single Tailnet owner supervising OMP coding sessions from an iOS or Android ph
 
 ## Product Purpose
 
-OMP Remote provides one phone-first dashboard for every OMP session on a private host. Success means the user can see what each session is doing, open its live transcript, prompt or steer it, interrupt a run, and start or resume work without returning to the host terminal.
+OMP Remote provides one phone-first dashboard for every OMP session on a private host. Success means the user can see what each session is doing, open its live transcript, steer it, interrupt a run, and start or resume work without returning to the host terminal.
 
 ## Positioning
 
@@ -26,7 +26,7 @@ The dashboard runs as a loopback-only host service on macOS and Linux. Tailscale
 
 - Show all active registered sessions and their run, connection, working-directory, and context state.
 - Stream session transcript and lifecycle updates with reconnect support.
-- Keep prompt, steer, follow-up, and abort controls immediately available on mobile.
+- Keep steer and abort controls immediately available on mobile.
 - Launch and resume dashboard-owned OMP sessions.
 - Preserve the distinction between controls supported by RPC-owned and extension-registered sessions.
 - Support macOS and Linux hosts.
@@ -43,7 +43,7 @@ OMP 17.1.x exposes a documented JSONL RPC v2 protocol and auto-discovers project
 - Show live state before offering control.
 - Keep remote actions explicit and reversible where OMP supports reversal.
 - Preserve the host as the authority; reconnect clients to truth rather than reconstructing it locally.
-- Make the three urgent mobile actions—prompt, steer, and abort—reachable without navigating away from the transcript.
+- Make the two urgent mobile actions, steer and abort, reachable without navigating away from the transcript.
 - Treat Tailnet privacy as a deployment boundary, not permission to expose a non-loopback backend.
 
 ## Accessibility & Inclusion
