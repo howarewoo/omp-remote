@@ -7,6 +7,7 @@ const SESSION: Session = {
   source: "rpc",
   name: "Stream test",
   cwd: "/tmp/stream-test",
+  branch: "feature/streaming",
   status: "running",
   connected: true,
   model: "openai/gpt-5.6",

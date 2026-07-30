@@ -18,6 +18,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { z } from "zod";
+import { resolveGitBranch } from "./git-branch.js";
 import { normalizeRawMessage } from "./message-normalizer.js";
 import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
 
@@ -211,7 +212,9 @@ app.get("/extension", { websocket: true }, (socket, request) => {
         createdAt: catalogSession?.createdAt ?? frame.session.createdAt ?? frame.session.lastActivity,
         activeSubagents: catalogSession?.activeSubagents ?? [],
       });
+      refreshSessionBranch(frame.session.id, frame.session.cwd);
     } else if (frame.type === "heartbeat") {
+      const currentSession = registry.get(frame.sessionId);
       registry.update(frame.sessionId, {
         connected: true,
         status: frame.idle ? "idle" : "running",
@@ -220,6 +223,7 @@ app.get("/extension", { websocket: true }, (socket, request) => {
         contextPercent: frame.contextPercent,
         lastActivity: new Date().toISOString(),
       });
+      if (currentSession) refreshSessionBranch(frame.sessionId, currentSession.cwd);
     } else if (frame.type === "event") {
       registry.update(frame.sessionId, {
         connected: true,
@@ -330,6 +334,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
     source: "rpc",
     name: stateResponse.data.sessionName ?? null,
     cwd,
+    branch: await resolveGitBranch(cwd),
     status: stateResponse.data.isStreaming
       ? "running"
       : stateResponse.data.queuedMessageCount
@@ -367,16 +372,25 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
 
 async function refreshRpcState(sessionId: string, rpc: RpcSession): Promise<void> {
   try {
+    const currentSession = registry.get(sessionId);
     const response = RpcStateResponseSchema.parse(await rpc.request({ type: "get_state" }));
     registry.update(sessionId, {
       name: response.data.sessionName ?? null,
       model: response.data.model ? `${response.data.model.provider}/${response.data.model.id}` : null,
       contextPercent: normalizePercent(response.data.contextUsage?.percent),
+      ...(currentSession ? { branch: await resolveGitBranch(currentSession.cwd) } : {}),
       status: response.data.queuedMessageCount ? "waiting" : response.data.isStreaming ? "running" : "idle",
     });
   } catch (error) {
     logger.error("Could not refresh OMP RPC state", error, { sessionId });
   }
+}
+
+function refreshSessionBranch(sessionId: string, cwd: string): void {
+  void resolveGitBranch(cwd).then((branch) => {
+    const currentSession = registry.get(sessionId);
+    if (currentSession?.cwd === cwd) registry.update(sessionId, { branch });
+  });
 }
 
 function syncActiveSubagents(catalogSession: Session): void {

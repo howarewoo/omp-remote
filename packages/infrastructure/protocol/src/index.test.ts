@@ -115,6 +115,7 @@ describe("historical session schemas", () => {
     source: "history",
     name: "Saved investigation",
     cwd: "/workspace/project",
+    branch: "feature/session-header",
     status: "history",
     connected: false,
     model: null,
@@ -196,6 +197,7 @@ describe("ExtensionRegisterSchema", () => {
   };
   const currentExtensionSession = {
     ...previousExtensionSession,
+    branch: "feature/session-header",
     createdAt: "2026-07-29T09:00:00.000Z",
   };
 
@@ -209,6 +211,7 @@ describe("ExtensionRegisterSchema", () => {
       type: "register",
       session: {
         ...previousExtensionSession,
+        branch: null,
         activeSubagents: [],
         sessionPath: null,
       },
