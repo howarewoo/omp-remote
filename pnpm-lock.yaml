@@ -60,6 +60,9 @@ catalogs:
     vitest:
       specifier: 4.1.10
       version: 4.1.10
+    workbox-window:
+      specifier: 7.4.1
+      version: 7.4.1
     ws:
       specifier: 8.21.1
       version: 8.21.1
@@ -153,6 +156,9 @@ importers:
       react-dom:
         specifier: 'catalog:'
         version: 19.2.8(react@19.2.8)
+      workbox-window:
+        specifier: 'catalog:'
+        version: 7.4.1
     devDependencies:
       '@types/react':
         specifier: 'catalog:'
