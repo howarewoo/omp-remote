@@ -49,6 +49,7 @@
   --font-brand: "Plus Jakarta Sans", "Geist", ui-sans-serif, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
   --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 * {
@@ -1932,6 +1933,7 @@ textarea:disabled {
 
   .transcript {
     padding-top: 0.8rem;
+    padding-bottom: 0.75rem;
   }
 
   .transcript-entry {
@@ -1943,7 +1945,7 @@ textarea:disabled {
   }
 
   .composer {
-    padding-bottom: max(0.5rem, calc(env(safe-area-inset-bottom) - 0.5rem));
+    padding-bottom: max(0.75rem, var(--safe-area-bottom));
   }
 
   .composer-field .ui-textarea {
@@ -1986,6 +1988,7 @@ textarea:disabled {
   }
 
   .composer-footer {
+    min-height: 0;
     justify-content: flex-end;
   }
 }
