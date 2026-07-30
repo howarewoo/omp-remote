@@ -4,11 +4,12 @@ import { describe, expect, it } from "vitest";
 import {
   canKillSession,
   formatSubagentActivityLabel,
-  getComposerAction,
-  getSkillSuggestions,
   formatSystemTextPreview,
   formatToolTextPreview,
+  getComposerAction,
+  getSkillSuggestions,
   groupSessionsByConnection,
+  isNearTranscriptBottom,
   parseInlineTranscript,
   parseTranscriptBlocks,
   SystemTranscriptText,
@@ -58,6 +59,13 @@ describe("getComposerAction", () => {
         "",
       ),
     ).toBeNull();
+  });
+});
+
+describe("isNearTranscriptBottom", () => {
+  it("treats only the final 80 pixels as the live-follow region", () => {
+    expect(isNearTranscriptBottom(1_000, 421, 500)).toBe(true);
+    expect(isNearTranscriptBottom(1_000, 420, 500)).toBe(false);
   });
 });
 

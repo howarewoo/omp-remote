@@ -1,4 +1,4 @@
-import { filterMainSessions, type ActiveSubagent, type Session } from "@omp-remote/protocol";
+import { type ActiveSubagent, filterMainSessions, type Session } from "@omp-remote/protocol";
 import { SESSION_STATUS_LABEL, SESSION_STATUS_TONE } from "@omp-remote/ui";
 import { type FormEvent, memo, useEffect, useMemo, useRef, useState } from "react";
 import { SubagentSessionViewer } from "./subagent-session-viewer.js";
@@ -31,6 +31,14 @@ type SessionSection = {
 const SKILL_COMMAND_PREFIX = "skill:";
 const SKILL_SUGGESTION_LIMIT = 8;
 const SKILL_SUGGESTION_LIST_ID = "composer-skill-suggestions";
+
+export function isNearTranscriptBottom(
+  scrollHeight: number,
+  scrollTop: number,
+  clientHeight: number,
+): boolean {
+  return scrollHeight - scrollTop - clientHeight < 80;
+}
 
 export function getComposerAction(
   session: Pick<Session, "capabilities" | "status">,
@@ -752,6 +760,7 @@ function DashboardContent({
   const [historyQuery, setHistoryQuery] = useState("");
   const [activeHistoryQuery, setActiveHistoryQuery] = useState("");
   const [transcriptLoadingId, setTranscriptLoadingId] = useState<string | null>(null);
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const loadedTranscriptIdRef = useRef<string | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const followTranscriptRef = useRef(true);
@@ -787,6 +796,7 @@ function DashboardContent({
 
   useEffect(() => {
     followTranscriptRef.current = true;
+    setShowScrollToBottom(false);
   }, [selectedSession?.id]);
 
   useEffect(() => {
@@ -795,8 +805,10 @@ function DashboardContent({
 
   useEffect(() => {
     const transcript = transcriptRef.current;
-    if (transcript && followTranscriptRef.current) transcript.scrollTop = transcript.scrollHeight;
-  }, [selectedSession?.messages.length, selectedSession?.messages.at(-1)?.text]);
+    if (!transcript || !followTranscriptRef.current) return;
+    transcript.scrollTop = transcript.scrollHeight;
+    setShowScrollToBottom(false);
+  }, [selectedSession?.id, selectedSession?.messages.length, selectedSession?.messages.at(-1)?.text]);
 
   useEffect(() => {
     if (selectedSession?.source !== "history" || loadedTranscriptIdRef.current === selectedSession.id) return;
@@ -1178,43 +1190,69 @@ function DashboardContent({
 
             <Separator />
 
-            <div
-              ref={transcriptRef}
-              className="transcript"
-              role="log"
-              aria-live="polite"
-              aria-label="Session transcript"
-              onScroll={(event) => {
-                const target = event.currentTarget;
-                followTranscriptRef.current =
-                  target.scrollHeight - target.scrollTop - target.clientHeight < 80;
-              }}
-            >
-              {transcriptLoadingId === selectedSession.id ? (
-                <div className="empty-transcript" role="status">
-                  <span className="status-orbit" aria-hidden="true" />
-                  <strong>Reading session transcript</strong>
-                  <p>Large transcripts stay on the host and load only when selected.</p>
-                </div>
-              ) : selectedSession.messages.length === 0 ? (
-                <div className="empty-transcript">
-                  <span className="terminal-prompt" aria-hidden="true">
-                    π
-                  </span>
-                  <strong>
-                    {selectedSession.source === "history"
-                      ? "No text messages in this session"
-                      : "Ready for an instruction"}
-                  </strong>
-                  <p>
-                    {selectedSession.source === "history"
-                      ? "Resume the session to continue working."
-                      : "Prompt OMP below. Live output will appear here as it arrives."}
-                  </p>
-                </div>
-              ) : (
-                selectedSession.messages.map((entry) => <TranscriptEntry entry={entry} key={entry.id} />)
-              )}
+            <div className="transcript-region">
+              <div
+                ref={transcriptRef}
+                className="transcript"
+                role="log"
+                aria-live="polite"
+                aria-label="Session transcript"
+                onScroll={(event) => {
+                  const target = event.currentTarget;
+                  const isNearBottom = isNearTranscriptBottom(
+                    target.scrollHeight,
+                    target.scrollTop,
+                    target.clientHeight,
+                  );
+                  followTranscriptRef.current = isNearBottom;
+                  setShowScrollToBottom(!isNearBottom);
+                }}
+              >
+                {transcriptLoadingId === selectedSession.id ? (
+                  <div className="empty-transcript" role="status">
+                    <span className="status-orbit" aria-hidden="true" />
+                    <strong>Reading session transcript</strong>
+                    <p>Large transcripts stay on the host and load only when selected.</p>
+                  </div>
+                ) : selectedSession.messages.length === 0 ? (
+                  <div className="empty-transcript">
+                    <span className="terminal-prompt" aria-hidden="true">
+                      π
+                    </span>
+                    <strong>
+                      {selectedSession.source === "history"
+                        ? "No text messages in this session"
+                        : "Ready for an instruction"}
+                    </strong>
+                    <p>
+                      {selectedSession.source === "history"
+                        ? "Resume the session to continue working."
+                        : "Prompt OMP below. Live output will appear here as it arrives."}
+                    </p>
+                  </div>
+                ) : (
+                  selectedSession.messages.map((entry) => <TranscriptEntry entry={entry} key={entry.id} />)
+                )}
+              </div>
+              {showScrollToBottom ? (
+                <Button
+                  className="scroll-to-bottom-button"
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  aria-label="Scroll to latest output"
+                  title="Scroll to latest output"
+                  onClick={() => {
+                    const transcript = transcriptRef.current;
+                    if (!transcript) return;
+                    followTranscriptRef.current = true;
+                    transcript.scrollTop = transcript.scrollHeight;
+                    setShowScrollToBottom(false);
+                  }}
+                >
+                  <Icon name="down" />
+                </Button>
+              ) : null}
             </div>
 
             {selectedSession.source === "history" ? (
@@ -1481,8 +1519,9 @@ function DashboardContent({
   );
 }
 
-function Icon({ name }: { name: "plus" | "power" | "search" | "send" | "stop" }) {
+function Icon({ name }: { name: "down" | "plus" | "power" | "search" | "send" | "stop" }) {
   const paths = {
+    down: <path d="m6 9 6 6 6-6" />,
     plus: <path d="M12 5v14M5 12h14" />,
     power: (
       <>
