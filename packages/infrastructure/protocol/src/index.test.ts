@@ -232,6 +232,114 @@ describe("historical session schemas", () => {
     ).toEqual(["session-main", "session-unrelated"]);
   });
 
+  it("excludes active, historical, and recursively nested workers by session path", () => {
+    const rootSession = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-root",
+      sessionPath: "/home/user/.omp/agent/sessions/project/root.jsonl",
+      activeSubagents: [],
+    });
+    const activeWorker = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-active-worker",
+      source: "extension",
+      status: "running",
+      connected: true,
+      sessionPath: "/home/user/.omp/agent/sessions/project/root/ActiveWorker.jsonl",
+    });
+    const historicalWorker = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-historical-worker",
+      sessionPath: "/home/user/.omp/agent/sessions/project/root/HistoricalWorker.jsonl",
+    });
+    const recursiveWorker = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-recursive-worker",
+      source: "extension",
+      status: "idle",
+      connected: true,
+      sessionPath: "/home/user/.omp/agent/sessions/project/root/ActiveWorker/RecursiveWorker.jsonl",
+    });
+    const unrelatedSession = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-unrelated",
+      sessionPath: "/home/user/.omp/agent/sessions/project/unrelated.jsonl",
+    });
+
+    expect(
+      filterMainSessions([
+        rootSession,
+        activeWorker,
+        historicalWorker,
+        recursiveWorker,
+        unrelatedSession,
+      ]).map((session) => session.id),
+    ).toEqual(["session-root", "session-unrelated"]);
+  });
+
+  it("requires an exact nesting boundary and falls back to active IDs for null paths", () => {
+    const rootSession = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-root",
+      sessionPath: "/home/user/.omp/agent/sessions/project/root.jsonl",
+      activeSubagents: [
+        {
+          id: "session-null-path-worker",
+          name: "LegacyWorker",
+          lastActivity: "2026-07-28T10:05:00.000Z",
+        },
+      ],
+    });
+    const sharedPrefixSession = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-shared-prefix",
+      sessionPath: "/home/user/.omp/agent/sessions/project/root-worker/Worker.jsonl",
+    });
+    const unrelatedDirectorySession = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-unrelated-directory",
+      sessionPath: "/home/user/.omp/agent/sessions/other/root/Worker.jsonl",
+    });
+    const nullPathWorker = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-null-path-worker",
+      sessionPath: null,
+    });
+    const nullPathRoot = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-null-path-root",
+      sessionPath: null,
+      activeSubagents: [
+        {
+          id: "session-path-worker",
+          name: "PathWorker",
+          lastActivity: "2026-07-28T10:05:00.000Z",
+        },
+      ],
+    });
+    const pathWorker = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-path-worker",
+      sessionPath: "/home/user/.omp/agent/sessions/legacy/PathWorker.jsonl",
+    });
+
+    expect(
+      filterMainSessions([
+        rootSession,
+        sharedPrefixSession,
+        unrelatedDirectorySession,
+        nullPathWorker,
+        nullPathRoot,
+        pathWorker,
+      ]).map((session) => session.id),
+    ).toEqual([
+      "session-root",
+      "session-shared-prefix",
+      "session-unrelated-directory",
+      "session-null-path-root",
+    ]);
+  });
+
   it("validates bounded catalog pages", () => {
     expect(
       SessionCatalogPageSchema.parse({

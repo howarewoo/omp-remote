@@ -8,5 +8,6 @@
 - [responsive-padding-preserves-role-insets](responsive-padding-preserves-role-insets.md) `gotcha` scope=`apps/web/src/*.css` — Responsive block overrides preserve role-specific inline spacing
 - [service-preserves-executable-path](service-preserves-executable-path.md) `gotcha` scope=`scripts/**,apps/daemon/**` — Background services must preserve installer PATH for command-by-name child spawns
 - [single-daemon-authority](single-daemon-authority.md) `gotcha` scope=`package.json,scripts/*.mjs,apps/*/src/**,packages/infrastructure/*/src/**` — Live streams and commands never cross daemon processes
+- [subagent-identity-from-session-path](subagent-identity-from-session-path.md) `gotcha` scope=`apps/*/src/**,packages/infrastructure/*/src/**,packages/features/sessions/src/**` — Nested session paths identify subagents; activeSubagents only reports current activity
 - [turbo-dev-env-allowlist](turbo-dev-env-allowlist.md) `gotcha` scope=`turbo.json,package.json,apps/*/vite.config.ts` — Turbo strict mode filters undeclared development environment values
 - [bounded-websocket-broadcasts](bounded-websocket-broadcasts.md) `pattern` scope=`apps/daemon/**` — Bound WebSocket queues before shared serialization
