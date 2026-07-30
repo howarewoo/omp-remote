@@ -9,6 +9,7 @@ export default function App() {
   return (
     <Dashboard
       sessions={client.sessions}
+      askRequests={client.askRequests}
       historyLoading={client.historyLoading}
       hasMoreHistory={client.hasMoreHistory}
       connection={client.connection}
@@ -19,6 +20,7 @@ export default function App() {
       onCommand={client.command}
       onAbort={client.abort}
       onKill={client.kill}
+      onRespondToAsk={client.respondToAsk}
       onSearchHistory={client.searchHistory}
       onLoadMoreHistory={client.loadMoreHistory}
       onLoadTranscript={client.loadTranscript}

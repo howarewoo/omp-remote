@@ -41,7 +41,7 @@ The daemon exposes three local surfaces:
 - `/ws` — origin-checked browser control and session updates.
 - `/extension` — loopback-only OMP extension registration.
 
-Dashboard-launched sessions run as isolated `omp --mode rpc --no-extensions` child processes. Existing terminal sessions are registered by the user extension and remain controlled by their original OMP process.
+Dashboard-launched sessions run as isolated `omp --mode rpc-ui` child processes. When OMP needs input through the `ask` tool, the dashboard presents the question and returns the selected answer to that session. Existing terminal sessions are registered by the user extension and remain controlled by their original OMP process.
 
 ## Getting started
 

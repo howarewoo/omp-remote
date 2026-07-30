@@ -67,6 +67,34 @@ describe("BrowserCommandSchema", () => {
     ).toMatchObject({ command: "kill" });
   });
 
+  it.each([
+    { response: { value: "PostgreSQL" } },
+    { response: { cancelled: true } },
+    { response: { cancelled: true, timedOut: true } },
+  ] as const)("accepts ask responses", ({ response }) => {
+    expect(
+      BrowserCommandSchema.parse({
+        type: "ask_response",
+        requestId: "dashboard-request-1",
+        sessionId: "session-1",
+        askRequestId: "ask-1",
+        response,
+      }),
+    ).toMatchObject({ type: "ask_response", response });
+  });
+
+  it("rejects ambiguous ask responses", () => {
+    expect(() =>
+      BrowserCommandSchema.parse({
+        type: "ask_response",
+        requestId: "dashboard-request-1",
+        sessionId: "session-1",
+        askRequestId: "ask-1",
+        response: { value: "PostgreSQL", cancelled: true },
+      }),
+    ).toThrow();
+  });
+
   it("rejects empty non-abort commands", () => {
     expect(() =>
       BrowserCommandSchema.parse({
@@ -360,6 +388,43 @@ describe("ServerFrameSchema", () => {
         status: "running",
         capabilities: ["prompt", "abort"],
       },
+    });
+  });
+
+  it("accepts a remote ask request with an optional deadline", () => {
+    expect(
+      ServerFrameSchema.parse({
+        type: "ask_request",
+        request: {
+          sessionId: "session-1",
+          requestId: "ask-1",
+          kind: "select",
+          title: "Which database?",
+          options: ["SQLite", "PostgreSQL"],
+          initialValue: null,
+          expiresAt: "2026-07-30T10:00:30.000Z",
+        },
+      }),
+    ).toMatchObject({
+      type: "ask_request",
+      request: {
+        kind: "select",
+        options: ["SQLite", "PostgreSQL"],
+      },
+    });
+  });
+
+  it("accepts ask cancellation frames", () => {
+    expect(
+      ServerFrameSchema.parse({
+        type: "ask_cancelled",
+        sessionId: "session-1",
+        requestId: "ask-1",
+      }),
+    ).toEqual({
+      type: "ask_cancelled",
+      sessionId: "session-1",
+      requestId: "ask-1",
     });
   });
 });

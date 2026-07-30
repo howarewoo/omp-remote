@@ -4,6 +4,7 @@ import { createLogger } from "@omp-remote/observability";
 import { type RpcFrame, RpcSession } from "@omp-remote/omp-rpc";
 import {
   BrowserCommandSchema,
+  type AskRequest,
   ExtensionFrameSchema,
   SessionCatalogPageSchema,
   SessionTranscriptResponseSchema,
@@ -23,6 +24,7 @@ import {
   type BrowserFrameDeliveryResult,
   sendBrowserFrame,
 } from "./browser-broadcast.js";
+import { normalizeRpcAskEvent } from "./rpc-ask.js";
 import { resolveGitBranch } from "./git-branch.js";
 import { normalizeRawMessage, normalizeSkillCommands } from "./message-normalizer.js";
 import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
@@ -86,6 +88,7 @@ const browserSockets = new Set<WebSocket>();
 const rpcSessions = new Map<string, RpcSession>();
 const extensionSockets = new Map<string, WebSocket>();
 const extensionSessionBySocket = new Map<WebSocket, string>();
+const pendingAskBySession = new Map<string, { request: AskRequest; timeout: NodeJS.Timeout | undefined }>();
 const app = Fastify({ logger: false, bodyLimit: 1024 * 1024 });
 
 await app.register(fastifyWebsocket, { options: { maxPayload: 1024 * 1024 } });
@@ -131,7 +134,11 @@ app.get("/ws", { websocket: true }, (socket, request) => {
     return;
   }
   browserSockets.add(socket);
-  sendToBrowser(socket, { type: "snapshot", sessions: registry.list() });
+  sendToBrowser(socket, {
+    type: "snapshot",
+    sessions: registry.list(),
+    askRequests: [...pendingAskBySession.values()].map(({ request: askRequest }) => askRequest),
+  });
   socket.on("message", async (raw) => {
     const command = (() => {
       try {
@@ -160,6 +167,45 @@ app.get("/ws", { websocket: true }, (socket, request) => {
           requestId: command.requestId,
           ok: false,
           error: error instanceof Error ? error.message : "OMP could not start",
+        });
+      }
+      return;
+    }
+    if (command.type === "ask_response") {
+      const pending = pendingAskBySession.get(command.sessionId);
+      const rpcSession = rpcSessions.get(command.sessionId);
+      const selectedValue = "value" in command.response ? command.response.value : undefined;
+      if (
+        !pending ||
+        pending.request.requestId !== command.askRequestId ||
+        !rpcSession ||
+        (pending.request.kind === "select" &&
+          selectedValue !== undefined &&
+          !pending.request.options.includes(selectedValue))
+      ) {
+        sendToBrowser(socket, {
+          type: "command_result",
+          requestId: command.requestId,
+          ok: false,
+          error: "This question is no longer waiting for an answer.",
+        });
+        return;
+      }
+      try {
+        await rpcSession.respondToUiRequest(command.askRequestId, command.response);
+        clearPendingAsk(command.sessionId, command.askRequestId);
+        sendToBrowser(socket, {
+          type: "command_result",
+          requestId: command.requestId,
+          ok: true,
+          error: null,
+        });
+      } catch (error) {
+        sendToBrowser(socket, {
+          type: "command_result",
+          requestId: command.requestId,
+          ok: false,
+          error: error instanceof Error ? error.message : "OMP rejected the answer",
         });
       }
       return;
@@ -339,6 +385,15 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
   let activeMessageId: string | undefined;
   rpc.subscribe((frame) => {
     if (!sessionId) return;
+    const askEvent = normalizeRpcAskEvent(sessionId, frame);
+    if (askEvent?.type === "request") {
+      setPendingAsk(askEvent.request);
+      return;
+    }
+    if (askEvent?.type === "cancel") {
+      clearPendingAsk(sessionId, askEvent.requestId);
+      return;
+    }
     if (frame.type === "agent_start") {
       registry.update(sessionId, { status: "running", lastActivity: new Date().toISOString() });
     } else if (frame.type === "agent_end") {
@@ -352,6 +407,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
     } else if (frame.type === "process_exit") {
       markSessionHistorical(sessionId);
       rpcSessions.delete(sessionId);
+      clearPendingAsk(sessionId);
     } else {
       const parsed = RpcMessageFrameSchema.safeParse(frame);
       if (!parsed.success) return;
@@ -491,6 +547,32 @@ function sendToBrowser(socket: WebSocket, frame: ServerFrame): void {
 
 function broadcast(frame: ServerFrame): void {
   reportBrowserBackpressure(broadcastBrowserFrame(browserSockets, frame));
+}
+
+function setPendingAsk(request: AskRequest): void {
+  clearPendingAsk(request.sessionId);
+  let timeout: NodeJS.Timeout | undefined;
+  if (request.expiresAt) {
+    timeout = setTimeout(
+      () => clearPendingAsk(request.sessionId, request.requestId),
+      Math.max(0, Date.parse(request.expiresAt) - Date.now()),
+    );
+    timeout.unref();
+  }
+  pendingAskBySession.set(request.sessionId, { request, timeout });
+  broadcast({ type: "ask_request", request });
+}
+
+function clearPendingAsk(sessionId: string, requestId?: string): void {
+  const pending = pendingAskBySession.get(sessionId);
+  if (!pending || (requestId !== undefined && pending.request.requestId !== requestId)) return;
+  clearTimeout(pending.timeout);
+  pendingAskBySession.delete(sessionId);
+  broadcast({
+    type: "ask_cancelled",
+    sessionId,
+    requestId: pending.request.requestId,
+  });
 }
 
 function reportBrowserBackpressure(result: BrowserFrameDeliveryResult): void {
