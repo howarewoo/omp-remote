@@ -95,4 +95,49 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+  it("launches RPC mode without disabling extensions", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "omp-remote-rpc-"));
+    const executable = join(directory, "rpc-fixture.cjs");
+    await writeFile(
+      executable,
+      `#!/usr/bin/env node
+const readline = require("node:readline");
+process.stdout.write(JSON.stringify({ type: "ready", supportedProtocolVersions: [] }) + "\\n");
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const frame = JSON.parse(line);
+  process.stdout.write(JSON.stringify({
+    type: "response",
+    id: frame.id,
+    success: true,
+    data: {
+      sessionId: "fixture-session",
+      isStreaming: false,
+      argv: process.argv.slice(2),
+    },
+  }) + "\\n");
+});
+`,
+    );
+    await chmod(executable, 0o755);
+
+    let rpc: RpcSession | undefined;
+    try {
+      rpc = new RpcSession({
+        cwd: directory,
+        ompPath: executable,
+        resume: null,
+        onStderr: () => undefined,
+      });
+
+      const state = await rpc.start();
+
+      expect(state).toMatchObject({
+        type: "response",
+        data: { argv: ["--mode", "rpc", "--cwd", directory] },
+      });
+    } finally {
+      await rpc?.terminate().catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });
