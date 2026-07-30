@@ -27,10 +27,19 @@ type SessionSection = {
   label: "Connected" | "Disconnected";
   sessions: Session[];
 };
+type NotificationState = "blocked" | "enabled" | "error" | "prompt" | "unsupported";
+type NotificationControl = { disabled: boolean; label: string };
 
 const SKILL_COMMAND_PREFIX = "skill:";
 const SKILL_SUGGESTION_LIMIT = 8;
 const SKILL_SUGGESTION_LIST_ID = "composer-skill-suggestions";
+const NOTIFICATION_CONTROL: Record<NotificationState, NotificationControl> = {
+  blocked: { disabled: true, label: "Notifications blocked in browser settings" },
+  enabled: { disabled: true, label: "Session notifications enabled" },
+  error: { disabled: false, label: "Retry enabling session notifications" },
+  prompt: { disabled: false, label: "Enable session notifications" },
+  unsupported: { disabled: true, label: "Session notifications unsupported" },
+};
 
 export function isNearTranscriptBottom(
   scrollHeight: number,
@@ -451,6 +460,8 @@ export interface DashboardProps {
   hasMoreHistory: boolean;
   connection: "connecting" | "connected" | "disconnected";
   error: string | null;
+  notificationState: NotificationState;
+  onEnableNotifications(): Promise<void>;
   onLaunch(cwd: string, resume: string | null): Promise<void>;
   onCommand(sessionId: string, command: ComposerMode, text: string): Promise<void>;
   onAbort(sessionId: string): Promise<void>;
@@ -738,6 +749,8 @@ function DashboardContent({
   hasMoreHistory,
   connection,
   error,
+  notificationState,
+  onEnableNotifications,
   onLaunch,
   onCommand,
   onAbort,
@@ -1119,6 +1132,21 @@ function DashboardContent({
             ) : (
               <h1>OMP Remote</h1>
             )}
+            {notificationState !== "unsupported" ? (
+              <Button
+                className="notification-button"
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={NOTIFICATION_CONTROL[notificationState].label}
+                title={NOTIFICATION_CONTROL[notificationState].label}
+                data-state={notificationState}
+                disabled={NOTIFICATION_CONTROL[notificationState].disabled}
+                onClick={() => void onEnableNotifications()}
+              >
+                <Icon name="bell" />
+              </Button>
+            ) : null}
           </div>
           <Button type="button" variant="outline" onClick={() => setLaunchOpen(true)}>
             <Icon name="plus" />
@@ -1519,8 +1547,14 @@ function DashboardContent({
   );
 }
 
-function Icon({ name }: { name: "down" | "plus" | "power" | "search" | "send" | "stop" }) {
+function Icon({ name }: { name: "bell" | "down" | "plus" | "power" | "search" | "send" | "stop" }) {
   const paths = {
+    bell: (
+      <>
+        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" />
+        <path d="M10 21h4" />
+      </>
+    ),
     down: <path d="m6 9 6 6 6-6" />,
     plus: <path d="M12 5v14M5 12h14" />,
     power: (

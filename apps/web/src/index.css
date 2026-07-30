@@ -840,6 +840,15 @@ textarea:disabled {
 .status-badge {
   flex: 0 0 auto;
 }
+.notification-button {
+  flex: 0 0 auto;
+}
+
+.notification-button[data-state="enabled"]:disabled {
+  cursor: default;
+  opacity: 1;
+  color: var(--primary);
+}
 
 .kill-session-button {
   color: var(--omp-red);
