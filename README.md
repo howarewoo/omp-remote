@@ -55,59 +55,25 @@ Follow these steps on the macOS or Linux computer where you run OMP.
 - [Git](https://git-scm.com/downloads).
 - [Tailscale](https://tailscale.com/download) on both the computer and your phone. Sign in to the same Tailscale network (Tailnet) on both devices.
 
-### 2. Download and install OMP Remote
+### 2. Install OMP Remote
+
+Paste this single command into a terminal:
 
 ```bash
-git clone https://github.com/howarewoo/omp-remote.git
-cd omp-remote
-pnpm install --frozen-lockfile
-pnpm build
+git clone https://github.com/howarewoo/omp-remote.git && pnpm --dir omp-remote run setup
 ```
 
-### 3. Connect your OMP sessions
+The setup command installs dependencies, builds OMP Remote, connects future OMP terminal sessions, starts the background service, and configures private Tailscale access. It is safe to rerun. If Tailscale prints an admin URL the first time, open it to enable Serve and then rerun the same command.
 
-```bash
-pnpm setup:extension
-```
+When setup finishes, it prints the private `https://...ts.net` dashboard URL. OMP Remote is not exposed to the public internet; only devices allowed onto your Tailnet can reach it.
 
-This installs the OMP Remote extension at `${PI_CODING_AGENT_DIR:-~/.omp/agent}/extensions/omp-remote.js`. Start a new OMP terminal session after installation and it will appear in the dashboard automatically.
-
-### 4. Run OMP Remote
-
-For an always-on background service that starts automatically when you sign in:
-
-```bash
-pnpm install:service
-```
-
-This starts a user LaunchAgent on macOS or a user systemd service on Linux. Run the command with the Node.js installation you want the service to keep using.
-
-To run OMP Remote only in the current terminal instead:
-
-```bash
-pnpm start
-```
-
-Keep that terminal open while you use the dashboard.
-
-### 5. Make it available to your phone
-
-```bash
-pnpm tailscale:serve
-tailscale serve status
-```
-
-The first command securely maps your private Tailnet HTTPS address to OMP Remote on `http://127.0.0.1:4387`. On first use, Tailscale may print an admin URL: open it once to enable Serve, then rerun `pnpm tailscale:serve`.
-
-Copy the `https://...ts.net` URL shown by `tailscale serve status`. OMP Remote is not exposed to the public internet; only devices allowed onto your Tailnet can reach it.
-
-### 6. Open it on your phone from anywhere
+### 3. Open it on your phone
 
 1. Open Tailscale on your phone and make sure it is connected.
-2. Open the `https://...ts.net` URL in Safari or Chrome.
+2. Open the dashboard URL from setup in Safari or Chrome.
 3. Optional: install it like an app. On iPhone, use **Share → Add to Home Screen**. On Android, open the browser menu and choose **Install app** or **Add to Home screen**.
 
-The dashboard works over Wi-Fi or mobile data from anywhere, as long as the host computer is awake, online, running OMP Remote, and connected to Tailscale.
+Start a new OMP terminal session after setup and it will appear in the dashboard automatically. The dashboard works over Wi-Fi or mobile data from anywhere, as long as the host computer is awake, online, running OMP Remote, and connected to Tailscale.
 
 ## Development
 

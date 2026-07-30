@@ -13,9 +13,10 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",
-    "test": "node --test scripts/dev.test.mjs && turbo run test",
+    "test": "node --test scripts/dev.test.mjs scripts/setup.test.mjs && turbo run test",
     "typecheck": "turbo run typecheck",
     "install:service": "node scripts/install-service.mjs",
+    "setup": "node scripts/setup.mjs",
     "setup:extension": "pnpm --filter @omp-remote/omp-extension install:user",
     "start": "pnpm --filter @omp-remote/daemon start",
     "tailscale:serve": "node scripts/tailscale-serve.mjs"
