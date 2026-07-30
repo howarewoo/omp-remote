@@ -25,10 +25,7 @@ import {
   sendBrowserFrame,
 } from "./browser-broadcast.js";
 import { normalizeRpcAskEvent } from "./rpc-ask.js";
-import {
-  createCatalogReconciler,
-  createReconciledSessionRegistrar,
-} from "./catalog-reconciliation.js";
+import { createCatalogReconciler, createReconciledSessionRegistrar } from "./catalog-reconciliation.js";
 import { resolveGitBranch } from "./git-branch.js";
 import { normalizeRawMessage, normalizeSkillCommands } from "./message-normalizer.js";
 import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";

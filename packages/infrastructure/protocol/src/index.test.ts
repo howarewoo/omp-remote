@@ -258,8 +258,7 @@ describe("historical session schemas", () => {
       source: "extension",
       status: "idle",
       connected: true,
-      sessionPath:
-        "/home/user/.omp/agent/sessions/project/root/ActiveWorker/RecursiveWorker.jsonl",
+      sessionPath: "/home/user/.omp/agent/sessions/project/root/ActiveWorker/RecursiveWorker.jsonl",
     });
     const unrelatedSession = SessionSchema.parse({
       ...historicalSession,

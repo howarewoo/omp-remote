@@ -260,4 +260,3 @@ function hasSessionPathAncestor(sessionPath: string | null, sessionPaths: Readon
   }
   return false;
 }
-

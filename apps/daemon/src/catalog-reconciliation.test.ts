@@ -1,10 +1,7 @@
 import type { Session } from "@omp-remote/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { CatalogDiff } from "./session-catalog.js";
-import {
-  createCatalogReconciler,
-  createReconciledSessionRegistrar,
-} from "./catalog-reconciliation.js";
+import { createCatalogReconciler, createReconciledSessionRegistrar } from "./catalog-reconciliation.js";
 
 const ROOT_SESSION: Session = {
   id: "session-root",
@@ -153,7 +150,13 @@ describe("createCatalogReconciler", () => {
       lastActivity: "2026-07-30T12:03:00.000Z",
     };
     thirdRefresh.resolve(catalogDiff([latestWorker]));
-    await Promise.all([firstRequest, secondRequest, duplicateSecondRequest, thirdRequest, duplicateThirdRequest]);
+    await Promise.all([
+      firstRequest,
+      secondRequest,
+      duplicateSecondRequest,
+      thirdRequest,
+      duplicateThirdRequest,
+    ]);
 
     expect(appliedActivity).toEqual([
       ["session-older-worker"],

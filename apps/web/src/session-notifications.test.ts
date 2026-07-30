@@ -77,16 +77,10 @@ describe("findSessionNotifications", () => {
 
   it("does not notify for a nested worker when its parent is absent from one snapshot", () => {
     expect(
-      findSessionNotifications(
-        [BASE_SESSION, WORKER_SESSION],
-        [{ ...WORKER_SESSION, status: "waiting" }],
-      ),
+      findSessionNotifications([BASE_SESSION, WORKER_SESSION], [{ ...WORKER_SESSION, status: "waiting" }]),
     ).toEqual([]);
     expect(
-      findSessionNotifications(
-        [WORKER_SESSION],
-        [BASE_SESSION, { ...WORKER_SESSION, status: "waiting" }],
-      ),
+      findSessionNotifications([WORKER_SESSION], [BASE_SESSION, { ...WORKER_SESSION, status: "waiting" }]),
     ).toEqual([]);
   });
 
