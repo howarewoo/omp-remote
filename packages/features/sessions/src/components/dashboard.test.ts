@@ -5,6 +5,7 @@ import {
   canKillSession,
   formatSubagentActivityLabel,
   getComposerAction,
+  getSkillSuggestions,
   formatSystemTextPreview,
   formatToolTextPreview,
   groupSessionsByConnection,
@@ -33,6 +34,7 @@ const BASE_SESSION: Session = {
   messages: [],
   sessionPath: "/work/.omp/session.jsonl",
   activeSubagents: [],
+  skillCommands: [],
 };
 
 describe("getComposerAction", () => {
@@ -56,6 +58,29 @@ describe("getComposerAction", () => {
         "",
       ),
     ).toBeNull();
+  });
+});
+
+describe("getSkillSuggestions", () => {
+  const skills: Session["skillCommands"] = [
+    { name: "skill:seo", description: "Audit search visibility" },
+    { name: "skill:woostack-change", description: "Ship a bounded enhancement" },
+    { name: "skill:woostack-fix", description: "Diagnose and fix a bug" },
+  ];
+
+  it("shows sorted skill commands for an empty slash query", () => {
+    expect(getSkillSuggestions("/", skills)).toEqual(skills);
+  });
+
+  it.each(["/woo", "/skill:woo"])("filters skills from %s", (message) => {
+    expect(getSkillSuggestions(message, skills).map(({ name }) => name)).toEqual([
+      "skill:woostack-change",
+      "skill:woostack-fix",
+    ]);
+  });
+
+  it("closes suggestions once command arguments begin", () => {
+    expect(getSkillSuggestions("/skill:seo audit this page", skills)).toEqual([]);
   });
 });
 

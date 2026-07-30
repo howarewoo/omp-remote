@@ -22,6 +22,11 @@ export const ActiveSubagentSchema = z.object({
   lastActivity: z.string(),
 });
 
+export const SkillCommandSchema = z.object({
+  name: z.string().regex(/^skill:[^\s]+$/),
+  description: z.string().trim().min(1).optional(),
+});
+
 export const SessionSchema = z.object({
   id: z.string().min(1),
   source: SessionSourceSchema,
@@ -38,6 +43,7 @@ export const SessionSchema = z.object({
   messages: z.array(TranscriptMessageSchema),
   sessionPath: z.string().min(1).nullable(),
   activeSubagents: z.array(ActiveSubagentSchema).default([]),
+  skillCommands: z.array(SkillCommandSchema).default([]),
 });
 
 export const SessionCatalogPageSchema = z.object({
@@ -126,6 +132,7 @@ export const ExtensionHeartbeatSchema = z.object({
   model: z.string().nullable(),
   contextPercent: z.number().min(0).max(100).nullable(),
   idle: z.boolean(),
+  skillCommands: z.array(SkillCommandSchema).optional(),
 });
 export const ExtensionResultSchema = z.object({
   type: z.literal("command_result"),
@@ -160,6 +167,7 @@ export type SessionTranscriptResponse = z.infer<typeof SessionTranscriptResponse
 export type Session = z.infer<typeof SessionSchema>;
 export type SessionCapability = z.infer<typeof SessionCapabilitySchema>;
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
+export type SkillCommand = z.infer<typeof SkillCommandSchema>;
 export type TranscriptMessage = z.infer<typeof TranscriptMessageSchema>;
 
 export function compareSessionsByCreation(left: Session, right: Session): number {

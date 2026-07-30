@@ -261,6 +261,7 @@ async function readSessionMetadata(path: string): Promise<SessionMetadata | null
         messages: [],
         sessionPath: path,
         activeSubagents: [],
+        skillCommands: [],
       },
     };
   } catch (error) {

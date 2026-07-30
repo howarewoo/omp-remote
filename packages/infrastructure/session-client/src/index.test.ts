@@ -27,6 +27,7 @@ const SESSION: Session = {
   ],
   sessionPath: "/tmp/session.jsonl",
   activeSubagents: [],
+  skillCommands: [],
 };
 
 describe("upsertTranscriptMessage", () => {

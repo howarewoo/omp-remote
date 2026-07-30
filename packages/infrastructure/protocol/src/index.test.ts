@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   BrowserCommandSchema,
   ExtensionRegisterSchema,
+  ExtensionHeartbeatSchema,
   filterMainSessions,
   SessionCatalogPageSchema,
   SessionSchema,
@@ -138,10 +139,20 @@ describe("historical session schemas", () => {
     messages: [],
     sessionPath: "/home/user/.omp/agent/sessions/project/session.jsonl",
     activeSubagents: [],
+    skillCommands: [],
   };
 
   it("accepts resumable historical sessions", () => {
     expect(SessionSchema.parse(historicalSession)).toEqual(historicalSession);
+  });
+
+  it("preserves discovered skill command metadata", () => {
+    expect(
+      SessionSchema.parse({
+        ...historicalSession,
+        skillCommands: [{ name: "skill:seo", description: "Audit search visibility" }],
+      }).skillCommands,
+    ).toEqual([{ name: "skill:seo", description: "Audit search visibility" }]);
   });
 
   it("accepts active subagent activity on the main session", () => {
@@ -253,6 +264,7 @@ describe("ExtensionRegisterSchema", () => {
         branch: null,
         activeSubagents: [],
         sessionPath: null,
+        skillCommands: [],
       },
     });
   });
@@ -267,7 +279,7 @@ describe("ExtensionRegisterSchema", () => {
       }),
     ).toEqual({
       type: "register",
-      session: { ...currentExtensionSession, activeSubagents: [], sessionPath },
+      session: { ...currentExtensionSession, activeSubagents: [], sessionPath, skillCommands: [] },
     });
   });
 
@@ -293,6 +305,19 @@ describe("ExtensionRegisterSchema", () => {
     if (!result.success) {
       expect(result.error.issues.map((issue) => issue.path)).toEqual([["sessionPath"]]);
     }
+  });
+  it("accepts skill command refreshes from extension heartbeats", () => {
+    expect(
+      ExtensionHeartbeatSchema.parse({
+        type: "heartbeat",
+        sessionId: "session-extension",
+        name: "Active investigation",
+        model: "anthropic/claude-sonnet-4",
+        contextPercent: 42,
+        idle: true,
+        skillCommands: [{ name: "skill:seo", description: "Audit search visibility" }],
+      }).skillCommands,
+    ).toEqual([{ name: "skill:seo", description: "Audit search visibility" }]);
   });
 });
 

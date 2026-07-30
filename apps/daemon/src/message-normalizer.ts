@@ -1,4 +1,4 @@
-import type { TranscriptMessage } from "@omp-remote/protocol";
+import { SkillCommandSchema, type SkillCommand, type TranscriptMessage } from "@omp-remote/protocol";
 import { z } from "zod";
 
 const RawMessageSchema = z
@@ -15,6 +15,8 @@ const RawMessageSchema = z
     isError: z.unknown().optional(),
   })
   .passthrough();
+
+const RawSkillCommandSchema = SkillCommandSchema.extend({ source: z.literal("skill") }).passthrough();
 
 type FallbackId = string | ((text: string, timestamp: string) => string);
 
@@ -73,6 +75,20 @@ export function normalizeRawMessage(
     presentation: isCanonicalEditDiff ? "diff" : "text",
     ...(toolName ? { toolName } : {}),
   };
+}
+
+export function normalizeSkillCommands(raw: unknown): SkillCommand[] {
+  if (!Array.isArray(raw)) return [];
+  const commands: SkillCommand[] = [];
+  for (const command of raw) {
+    const parsed = RawSkillCommandSchema.safeParse(command);
+    if (!parsed.success) continue;
+    commands.push({
+      name: parsed.data.name,
+      ...(parsed.data.description ? { description: parsed.data.description } : {}),
+    });
+  }
+  return commands;
 }
 
 function extractText(content: string | Array<{ type: string; text?: string | undefined }>): string {
