@@ -116,7 +116,20 @@ function normalizeRole(role: string): TranscriptRole {
   return role === "user" || role === "assistant" || role === "tool" ? role : "system";
 }
 
+export function isRpcMode(argv: readonly string[] = process.argv): boolean {
+  for (let index = argv.length - 1; index >= 0; index -= 1) {
+    const argument = argv[index];
+    if (argument === "--mode") return argv[index + 1] === "rpc" || argv[index + 1] === "rpc-ui";
+    if (argument?.startsWith("--mode=")) {
+      const mode = argument.slice("--mode=".length);
+      return mode === "rpc" || mode === "rpc-ui";
+    }
+  }
+  return false;
+}
+
 export default function ompRemoteExtension(pi: ExtensionAPI): void {
+  if (isRpcMode()) return;
   const { z } = pi.zod;
   const CommandSchema = z.discriminatedUnion("command", [
     z.object({
