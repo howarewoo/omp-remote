@@ -2037,10 +2037,6 @@ textarea:disabled {
     padding-bottom: max(0.75rem, var(--safe-area-bottom));
   }
 
-  .composer-field .ui-textarea {
-    font-size: 1rem;
-  }
-
   .history-controls {
     align-items: flex-start;
     flex-direction: column;
@@ -2095,6 +2091,16 @@ textarea:disabled {
 
   .kill-dialog-actions .ui-button {
     width: 100%;
+  }
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  input,
+  textarea,
+  select,
+  .ui-input,
+  .ui-textarea {
+    font-size: 1rem;
   }
 }
 
