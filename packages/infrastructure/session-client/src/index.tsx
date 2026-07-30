@@ -1,6 +1,5 @@
 import {
   compareSessionsByCreation,
-  filterMainSessions,
   type BrowserCommand,
   type Session,
   type SessionPatch,
@@ -18,7 +17,6 @@ type PendingCommand = { resolve: () => void; reject: (error: Error) => void };
 
 export interface SessionClient {
   sessions: Session[];
-  totalSessions: number;
   historyLoading: boolean;
   hasMoreHistory: boolean;
   connection: ConnectionState;
@@ -41,7 +39,6 @@ export function useSessionClient(): SessionClient {
   const [liveSessions, setLiveSessions] = useState<Session[]>([]);
   const [historySessions, setHistorySessions] = useState<Session[]>([]);
   const [historyQuery, setHistoryQuery] = useState("");
-  const [historyTotal, setHistoryTotal] = useState(0);
   const [historyNextOffset, setHistoryNextOffset] = useState<number | null>(0);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -136,7 +133,6 @@ export function useSessionClient(): SessionClient {
       const page = SessionCatalogPageSchema.parse(await response.json());
       if (requestNumber !== catalogRequestRef.current) return;
       setHistorySessions((current) => (append ? mergeSessions(current, page.sessions) : page.sessions));
-      setHistoryTotal(page.total);
       setHistoryNextOffset(page.nextOffset);
       setHistoryQuery(query);
     } catch (error) {
@@ -246,11 +242,9 @@ export function useSessionClient(): SessionClient {
       ),
     [historyQuery, historySessions, liveSessions],
   );
-  const mainSessionCount = useMemo(() => filterMainSessions(sessions).length, [sessions]);
 
   return {
     sessions,
-    totalSessions: Math.max(historyTotal, mainSessionCount),
     historyLoading,
     hasMoreHistory: historyNextOffset !== null,
     connection,

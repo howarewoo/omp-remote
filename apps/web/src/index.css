@@ -474,18 +474,6 @@ textarea:disabled {
   scrollbar-color: var(--border-strong) transparent;
 }
 
-.session-list-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem 1rem 0.6rem;
-  color: var(--muted-foreground);
-  font-family: var(--font-mono);
-  font-size: 0.625rem;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
 .session-list {
   display: grid;
   gap: 0.2rem;
@@ -682,7 +670,6 @@ textarea:disabled {
 .sidebar-root[data-state="collapsed"] .brand-remote,
 .sidebar-root[data-state="collapsed"] .sidebar-actions span,
 .sidebar-root[data-state="collapsed"] .session-search,
-.sidebar-root[data-state="collapsed"] .session-list-heading,
 .sidebar-root[data-state="collapsed"] .session-group-heading,
 .sidebar-root[data-state="collapsed"] .session-copy,
 .sidebar-root[data-state="collapsed"] .session-item time,

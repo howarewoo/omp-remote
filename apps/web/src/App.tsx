@@ -9,7 +9,6 @@ export default function App() {
   return (
     <Dashboard
       sessions={client.sessions}
-      totalSessions={client.totalSessions}
       historyLoading={client.historyLoading}
       hasMoreHistory={client.hasMoreHistory}
       connection={client.connection}
