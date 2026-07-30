@@ -4,5 +4,6 @@
 - [omp-edit-diff-details](omp-edit-diff-details.md) `gotcha` scope=`apps/daemon/src/**,packages/infrastructure/omp-extension/src/**,packages/infrastructure/protocol/src/**` — OMP edit results keep canonical diff in details.diff
 - [pwa-custom-register-updates](pwa-custom-register-updates.md) `gotcha` scope=`apps/*/vite.config.ts,apps/*/src/**` — Custom PWA registration must force update and activation
 - [pwa-top-safe-area](pwa-top-safe-area.md) `gotcha` scope=`apps/*/src/**` — Edge-to-edge PWA headers must preserve the top safe area
+- [responsive-padding-preserves-role-insets](responsive-padding-preserves-role-insets.md) `gotcha` scope=`apps/web/src/*.css` — Responsive block overrides preserve role-specific inline spacing
 - [single-daemon-authority](single-daemon-authority.md) `gotcha` scope=`package.json,scripts/*.mjs,apps/*/src/**,packages/infrastructure/*/src/**` — Live streams and commands never cross daemon processes
 - [turbo-dev-env-allowlist](turbo-dev-env-allowlist.md) `gotcha` scope=`turbo.json,package.json,apps/*/vite.config.ts` — Turbo strict mode filters undeclared development environment values
