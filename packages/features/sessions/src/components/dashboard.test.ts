@@ -3,6 +3,7 @@ import { isValidElement, type ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import {
   formatSubagentActivityLabel,
+  getComposerAction,
   formatSystemTextPreview,
   formatToolTextPreview,
   groupSessionsByConnection,
@@ -32,6 +33,30 @@ const BASE_SESSION: Session = {
   sessionPath: "/work/.omp/session.jsonl",
   activeSubagents: [],
 };
+
+describe("getComposerAction", () => {
+  it("uses the integrated submit control to abort a running session when the composer is blank", () => {
+    expect(getComposerAction({ ...BASE_SESSION, status: "running" }, "   ")).toBe("abort");
+  });
+
+  it("changes the integrated submit control to steer when the composer contains text", () => {
+    expect(getComposerAction({ ...BASE_SESSION, status: "running" }, "Change direction")).toBe("steer");
+  });
+
+  it("has no action for blank input when the session cannot be aborted", () => {
+    expect(getComposerAction(BASE_SESSION, "")).toBeNull();
+    expect(
+      getComposerAction(
+        {
+          ...BASE_SESSION,
+          status: "running",
+          capabilities: BASE_SESSION.capabilities.filter((capability) => capability !== "abort"),
+        },
+        "",
+      ),
+    ).toBeNull();
+  });
+});
 
 describe("groupSessionsByConnection", () => {
   it("lists connected sessions before disconnected sessions while preserving their order", () => {

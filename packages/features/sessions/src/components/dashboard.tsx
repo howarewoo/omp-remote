@@ -28,6 +28,14 @@ type SessionSection = {
   sessions: Session[];
 };
 
+export function getComposerAction(
+  session: Pick<Session, "capabilities" | "status">,
+  message: string,
+): "abort" | "steer" | null {
+  if (message.trim()) return "steer";
+  return session.status === "running" && session.capabilities.includes("abort") ? "abort" : null;
+}
+
 type DiffLineKind = "meta" | "context" | "removed" | "added";
 
 type DiffLine = {
@@ -723,6 +731,7 @@ function DashboardContent({
       mainSessions.find((session) => session.id === selectedId) ?? sessionSections[0]?.sessions[0] ?? null,
     [mainSessions, selectedId, sessionSections],
   );
+  const composerAction = selectedSession ? getComposerAction(selectedSession, message) : null;
   const viewedSubagentSession = useMemo(
     () => sessions.find((session) => session.id === viewedSubagent?.id) ?? null,
     [sessions, viewedSubagent?.id],
@@ -759,7 +768,11 @@ function DashboardContent({
 
   const submitMessage = async (event: FormEvent) => {
     event.preventDefault();
-    if (!selectedSession || !message.trim() || commandState === "sending") return;
+    if (!selectedSession || !composerAction || commandState === "sending") return;
+    if (composerAction === "abort") {
+      setAbortOpen(true);
+      return;
+    }
     setCommandState("sending");
     setCommandError(null);
     try {
@@ -1140,21 +1153,6 @@ function DashboardContent({
               </div>
             ) : (
               <form className="composer" onSubmit={submitMessage}>
-                <div className="composer-toolbar">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="abort-button"
-                    disabled={
-                      !selectedSession.capabilities.includes("abort") || selectedSession.status !== "running"
-                    }
-                    onClick={() => setAbortOpen(true)}
-                  >
-                    <Icon name="stop" />
-                    Abort
-                  </Button>
-                </div>
                 <div className="composer-field">
                   <label className="sr-only" htmlFor="composer-message">
                     Steer current run
@@ -1164,7 +1162,7 @@ function DashboardContent({
                     value={message}
                     onChange={(event) => setMessage(event.target.value)}
                     placeholder="Redirect the current run…"
-                    rows={2}
+                    rows={1}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
                         event.currentTarget.form?.requestSubmit();
@@ -1174,10 +1172,19 @@ function DashboardContent({
                     className="send-button"
                     type="submit"
                     size="icon"
-                    disabled={!message.trim() || commandState === "sending"}
-                    aria-label={commandState === "sending" ? "Sending instruction" : "Send instruction"}
+                    variant={composerAction === "abort" ? "destructive" : "default"}
+                    disabled={!composerAction || commandState === "sending"}
+                    aria-label={
+                      commandState === "sending"
+                        ? "Sending instruction"
+                        : composerAction === "abort"
+                          ? "Abort active run"
+                          : composerAction === "steer"
+                            ? "Steer active run"
+                            : "Enter an instruction to steer"
+                    }
                   >
-                    <Icon name="send" />
+                    <Icon name={composerAction === "abort" ? "stop" : "send"} />
                   </Button>
                 </div>
                 <div className="composer-footer">

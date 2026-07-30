@@ -1653,21 +1653,11 @@ textarea:disabled {
   background: var(--background);
 }
 
-.composer-toolbar,
 .composer-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-}
-
-.composer-toolbar {
-  justify-content: flex-end;
-  margin-bottom: 0.5rem;
-}
-
-.abort-button {
-  color: oklch(77% 0.1 25);
 }
 
 .composer-field {
@@ -1676,14 +1666,17 @@ textarea:disabled {
 }
 
 .composer-field .ui-textarea {
-  min-height: 5rem;
+  display: block;
+  min-height: 3rem;
   max-height: 12rem;
+  padding-block: 0.65rem;
 }
 
 .send-button {
   position: absolute;
   right: 0.55rem;
-  bottom: 0.55rem;
+  top: 50%;
+  transform: translateY(-50%);
   width: 2.75rem;
   min-width: 2.75rem;
   min-height: 2.75rem;
@@ -1950,33 +1943,11 @@ textarea:disabled {
   }
 
   .composer {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 0.25rem 0.5rem;
     padding-bottom: max(0.5rem, calc(env(safe-area-inset-bottom) - 0.5rem));
   }
 
-  .composer-toolbar {
-    grid-row: 2;
-    grid-column: 2;
-    align-self: center;
-    margin-bottom: 0;
-  }
-
-  .composer-field {
-    grid-row: 1;
-    grid-column: 1 / -1;
-  }
-
   .composer-field .ui-textarea {
-    min-height: 4rem;
-    padding-top: 0.65rem;
-    padding-bottom: 0.65rem;
-  }
-
-  .composer-footer {
-    grid-row: 2;
-    grid-column: 1;
+    font-size: 1rem;
   }
 
   .history-controls {
@@ -2008,20 +1979,6 @@ textarea:disabled {
 
   .session-metadata div:last-child {
     text-align: right;
-  }
-
-  .abort-button {
-    width: 2.75rem;
-    min-width: 2.75rem;
-    min-height: 2.75rem;
-    overflow: hidden;
-    padding: 0;
-    color: oklch(77% 0.1 25);
-    font-size: 0;
-  }
-
-  .abort-button .icon {
-    width: 1rem;
   }
 
   .composer-footer > span:first-child {
