@@ -1,5 +1,6 @@
 import {
   compareSessionsByCreation,
+  filterMainSessions,
   type BrowserCommand,
   type Session,
   SessionCatalogPageSchema,
@@ -236,10 +237,11 @@ export function useSessionClient(): SessionClient {
       ),
     [historyQuery, historySessions, liveSessions],
   );
+  const mainSessionCount = useMemo(() => filterMainSessions(sessions).length, [sessions]);
 
   return {
     sessions,
-    totalSessions: Math.max(historyTotal, sessions.length),
+    totalSessions: Math.max(historyTotal, mainSessionCount),
     historyLoading,
     hasMoreHistory: historyNextOffset !== null,
     connection,
