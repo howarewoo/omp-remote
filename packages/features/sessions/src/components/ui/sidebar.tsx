@@ -1,137 +1,291 @@
+import { Dialog } from "@base-ui/react/dialog";
 import {
   type ComponentProps,
   createContext,
+  type CSSProperties,
+  type Dispatch,
   type HTMLAttributes,
-  type ReactNode,
+  type SetStateAction,
+  useCallback,
   useContext,
   useEffect,
-  useRef,
+  useMemo,
   useState,
 } from "react";
 import { Button } from "./button.js";
+import { useIsMobile } from "./use-mobile.js";
 import { cn } from "./utils.js";
 
+const SIDEBAR_COOKIE_NAME = "sidebar_state";
+const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
+const SIDEBAR_WIDTH = "19rem";
+const SIDEBAR_WIDTH_MOBILE = "21rem";
+const SIDEBAR_WIDTH_ICON = "4.5rem";
+const SIDEBAR_KEYBOARD_SHORTCUT = "b";
+
 type SidebarContextValue = {
-  collapsed: boolean;
-  mobile: boolean;
-  setCollapsed(collapsed: boolean): void;
-  closeMobile(): void;
-  toggle(): void;
+  state: "expanded" | "collapsed";
+  open: boolean;
+  setOpen: Dispatch<SetStateAction<boolean>>;
+  openMobile: boolean;
+  setOpenMobile: Dispatch<SetStateAction<boolean>>;
+  isMobile: boolean;
+  toggleSidebar(): void;
 };
 
 const SidebarContext = createContext<SidebarContextValue | null>(null);
 
 export function useSidebar(): SidebarContextValue {
   const context = useContext(SidebarContext);
-  if (!context) throw new Error("Sidebar components must be used inside SidebarProvider");
+  if (!context) throw new Error("useSidebar must be used within a SidebarProvider.");
   return context;
 }
 
-export function SidebarProvider({ children }: { children: ReactNode }) {
-  const mediaQuery = useRef(window.matchMedia("(max-width: 760px)"));
-  const [mobile, setMobile] = useState(mediaQuery.current.matches);
-  const [collapsed, setCollapsed] = useState(mediaQuery.current.matches);
+type SidebarProviderProps = ComponentProps<"div"> & {
+  defaultOpen?: boolean;
+  open?: boolean;
+  onOpenChange?(open: boolean): void;
+};
+
+export function SidebarProvider({
+  defaultOpen = true,
+  open: openProp,
+  onOpenChange,
+  className,
+  style,
+  children,
+  ...props
+}: SidebarProviderProps) {
+  const isMobile = useIsMobile();
+  const [openMobile, setOpenMobile] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const open = openProp ?? internalOpen;
+
+  const setOpen = useCallback<Dispatch<SetStateAction<boolean>>>(
+    (value) => {
+      const nextOpen = typeof value === "function" ? value(open) : value;
+      if (onOpenChange) onOpenChange(nextOpen);
+      else setInternalOpen(nextOpen);
+      document.cookie = `${SIDEBAR_COOKIE_NAME}=${nextOpen}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`;
+    },
+    [onOpenChange, open],
+  );
+
+  const toggleSidebar = useCallback(() => {
+    if (isMobile) setOpenMobile((current) => !current);
+    else setOpen((current) => !current);
+  }, [isMobile, setOpen]);
 
   useEffect(() => {
-    const query = mediaQuery.current;
-    const handleChange = (event: MediaQueryListEvent) => {
-      setMobile(event.matches);
-      setCollapsed(event.matches);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === SIDEBAR_KEYBOARD_SHORTCUT && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        toggleSidebar();
+      }
     };
-    query.addEventListener("change", handleChange);
-    return () => query.removeEventListener("change", handleChange);
-  }, []);
 
-  const value: SidebarContextValue = {
-    collapsed,
-    mobile,
-    setCollapsed,
-    closeMobile: () => {
-      if (mobile) setCollapsed(true);
-    },
-    toggle: () => setCollapsed((current) => !current),
-  };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [toggleSidebar]);
+
+  const state = open ? "expanded" : "collapsed";
+  const value = useMemo<SidebarContextValue>(
+    () => ({
+      state,
+      open,
+      setOpen,
+      openMobile,
+      setOpenMobile,
+      isMobile,
+      toggleSidebar,
+    }),
+    [isMobile, open, openMobile, setOpen, state, toggleSidebar],
+  );
 
   return (
     <SidebarContext.Provider value={value}>
-      <div data-slot="sidebar-wrapper" className="sidebar-provider" data-sidebar-collapsed={collapsed}>
+      <div
+        data-slot="sidebar-wrapper"
+        className={cn("sidebar-provider", className)}
+        style={
+          {
+            "--sidebar-width": SIDEBAR_WIDTH,
+            "--sidebar-width-mobile": SIDEBAR_WIDTH_MOBILE,
+            "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
+            ...style,
+          } as CSSProperties
+        }
+        {...props}
+      >
         {children}
       </div>
     </SidebarContext.Provider>
   );
 }
 
-export function Sidebar({ className, children, ...props }: HTMLAttributes<HTMLElement>) {
-  const { collapsed, mobile, setCollapsed } = useSidebar();
-  const dialogRef = useRef<HTMLDialogElement>(null);
+type SidebarProps = ComponentProps<"div"> & {
+  side?: "left" | "right";
+  variant?: "sidebar" | "floating" | "inset";
+  collapsible?: "offcanvas" | "icon" | "none";
+};
 
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog || !mobile) return;
-    if (!collapsed && !dialog.open) dialog.showModal();
-    if (collapsed && dialog.open) dialog.close();
-  }, [collapsed, mobile]);
+export function Sidebar({
+  side = "left",
+  variant = "sidebar",
+  collapsible = "offcanvas",
+  className,
+  children,
+  "aria-label": ariaLabel = "Sessions",
+  ...props
+}: SidebarProps) {
+  const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
 
-  if (!mobile) {
+  if (collapsible === "none") {
     return (
-      <aside data-slot="sidebar" className={cn("sidebar", className)} aria-label="Sessions" {...props}>
+      <aside
+        data-sidebar="sidebar"
+        data-slot="sidebar"
+        className={cn("sidebar sidebar-static", className)}
+        aria-label={ariaLabel}
+        {...props}
+      >
         {children}
       </aside>
     );
   }
 
+  if (isMobile) {
+    return (
+      <Dialog.Root open={openMobile} onOpenChange={setOpenMobile}>
+        <Dialog.Portal>
+          <Dialog.Backdrop data-slot="sidebar-backdrop" className="sidebar-backdrop" />
+          <Dialog.Popup
+            data-sidebar="sidebar"
+            data-slot="sidebar"
+            data-mobile="true"
+            data-side={side}
+            className={cn("sidebar-sheet", className)}
+            {...props}
+          >
+            <Dialog.Title className="sr-only">{ariaLabel}</Dialog.Title>
+            <Dialog.Description className="sr-only">Displays the session sidebar.</Dialog.Description>
+            <aside className="sidebar" aria-label={ariaLabel}>
+              {children}
+            </aside>
+          </Dialog.Popup>
+        </Dialog.Portal>
+      </Dialog.Root>
+    );
+  }
+
   return (
-    <dialog
-      ref={dialogRef}
-      data-slot="sidebar-sheet"
-      className="sidebar-sheet"
-      aria-label="Sessions"
-      onCancel={(event) => {
-        event.preventDefault();
-        setCollapsed(true);
-      }}
-      onClose={() => setCollapsed(true)}
+    <div
+      data-slot="sidebar"
+      className="sidebar-root"
+      data-state={state}
+      data-collapsible={state === "collapsed" ? collapsible : ""}
+      data-variant={variant}
+      data-side={side}
     >
-      <aside data-slot="sidebar" className={cn("sidebar", className)} {...props}>
-        {children}
-      </aside>
-    </dialog>
+      <div data-slot="sidebar-gap" className="sidebar-gap" />
+      <div
+        data-slot="sidebar-container"
+        data-side={side}
+        className={cn("sidebar-container", className)}
+        {...props}
+      >
+        <aside data-sidebar="sidebar" data-slot="sidebar-inner" className="sidebar" aria-label={ariaLabel}>
+          {children}
+        </aside>
+      </div>
+    </div>
   );
 }
 
 export function SidebarHeader({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return <div data-slot="sidebar-header" className={cn("sidebar-header", className)} {...props} />;
+  return (
+    <div
+      data-slot="sidebar-header"
+      data-sidebar="header"
+      className={cn("sidebar-header", className)}
+      {...props}
+    />
+  );
 }
 
 export function SidebarContent({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return <div data-slot="sidebar-content" className={cn("sidebar-content", className)} {...props} />;
+  return (
+    <div
+      data-slot="sidebar-content"
+      data-sidebar="content"
+      className={cn("sidebar-content", className)}
+      {...props}
+    />
+  );
 }
 
 export function SidebarFooter({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return <div data-slot="sidebar-footer" className={cn("sidebar-footer", className)} {...props} />;
+  return (
+    <div
+      data-slot="sidebar-footer"
+      data-sidebar="footer"
+      className={cn("sidebar-footer", className)}
+      {...props}
+    />
+  );
 }
 
 export function SidebarInset({ className, ...props }: HTMLAttributes<HTMLElement>) {
   return <main data-slot="sidebar-inset" className={cn("sidebar-inset", className)} {...props} />;
 }
 
-export function SidebarTrigger({ className, ...props }: Omit<ComponentProps<typeof Button>, "children">) {
-  const { collapsed, toggle } = useSidebar();
+export function SidebarTrigger({
+  className,
+  onClick,
+  ...props
+}: Omit<ComponentProps<typeof Button>, "children">) {
+  const { isMobile, open, openMobile, toggleSidebar } = useSidebar();
+  const expanded = isMobile ? openMobile : open;
+
   return (
     <Button
       type="button"
       variant="ghost"
       size="icon"
+      data-sidebar="trigger"
+      data-slot="sidebar-trigger"
       className={cn("sidebar-trigger", className)}
-      aria-label={collapsed ? "Open session sidebar" : "Collapse session sidebar"}
-      aria-expanded={!collapsed}
-      onClick={toggle}
+      aria-label={expanded ? "Close session sidebar" : "Open session sidebar"}
+      aria-expanded={expanded}
+      onClick={(event) => {
+        onClick?.(event);
+        toggleSidebar();
+      }}
       {...props}
     >
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <rect x="3" y="4" width="18" height="16" rx="1" />
         <path d="M9 4v16M13 9h5M13 13h5" />
       </svg>
+      <span className="sr-only">Toggle sidebar</span>
     </Button>
+  );
+}
+
+export function SidebarRail({ className, ...props }: ComponentProps<"button">) {
+  const { toggleSidebar } = useSidebar();
+
+  return (
+    <button
+      type="button"
+      data-sidebar="rail"
+      data-slot="sidebar-rail"
+      className={cn("sidebar-rail", className)}
+      aria-label="Toggle session sidebar"
+      title="Toggle session sidebar"
+      tabIndex={-1}
+      onClick={toggleSidebar}
+      {...props}
+    />
   );
 }
