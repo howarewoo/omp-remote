@@ -1955,7 +1955,7 @@ textarea:disabled {
   }
 
   .transcript-entry {
-    padding: 0.9rem 0;
+    padding-block: 0.9rem;
   }
 
   .transcript-entry > .transcript-message {
