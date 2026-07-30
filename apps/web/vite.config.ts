@@ -46,6 +46,7 @@ export default defineConfig({
         clientsClaim: true,
         navigateFallback: "/index.html",
         globPatterns: ["**/*.{js,css,html,png,svg,woff2}"],
+        importScripts: ["notification-sw.js"],
         skipWaiting: true,
       },
     }),
