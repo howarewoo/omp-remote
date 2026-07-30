@@ -2,6 +2,7 @@ import {
   type ActiveSubagent,
   type AskRequest,
   type AskResponse,
+  type Effort,
   filterMainSessions,
   type Session,
 } from "@omp-remote/protocol";
@@ -11,6 +12,15 @@ import { SubagentSessionViewer } from "./subagent-session-viewer.js";
 import { Badge } from "./ui/badge.js";
 import { Button } from "./ui/button.js";
 import { Dialog } from "./ui/dialog.js";
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from "./ui/drawer.js";
 import { Input } from "./ui/input.js";
 import { Separator } from "./ui/separator.js";
 import {
@@ -36,6 +46,7 @@ type SessionSection = {
 type NotificationState = "blocked" | "enabled" | "error" | "prompt" | "unsupported";
 type NotificationControl = { disabled: boolean; label: string };
 
+const EMPTY_MODEL_OPTIONS: NonNullable<Session["availableModels"]> = [];
 const SKILL_COMMAND_PREFIX = "skill:";
 const SKILL_SUGGESTION_LIMIT = 8;
 const SKILL_SUGGESTION_LIST_ID = "composer-skill-suggestions";
@@ -482,6 +493,8 @@ export interface DashboardProps {
   onCommand(sessionId: string, command: ComposerMode, text: string): Promise<void>;
   onAbort(sessionId: string): Promise<void>;
   onKill(sessionId: string): Promise<void>;
+  onSetModel(sessionId: string, model: string): Promise<void>;
+  onSetEffort(sessionId: string, effort: Effort): Promise<void>;
   onRespondToAsk(sessionId: string, askRequestId: string, response: AskResponse): Promise<void>;
   onSearchHistory(query: string): Promise<void>;
   onLoadMoreHistory(): Promise<void>;
@@ -775,6 +788,8 @@ function DashboardContent({
   onCommand,
   onAbort,
   onKill,
+  onSetModel,
+  onSetEffort,
   onRespondToAsk,
   onSearchHistory,
   onLoadMoreHistory,
@@ -790,6 +805,10 @@ function DashboardContent({
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [abortOpen, setAbortOpen] = useState(false);
   const [killOpen, setKillOpen] = useState(false);
+  const [modelSheetOpen, setModelSheetOpen] = useState(false);
+  const [modelQuery, setModelQuery] = useState("");
+  const [configurationPending, setConfigurationPending] = useState<string | null>(null);
+  const [configurationError, setConfigurationError] = useState<string | null>(null);
   const [askDraft, setAskDraft] = useState("");
   const [askState, setAskState] = useState<"idle" | "sending">("idle");
   const [askError, setAskError] = useState<string | null>(null);
@@ -828,6 +847,18 @@ function DashboardContent({
     () => sessions.find((session) => session.id === viewedSubagent?.id) ?? null,
     [sessions, viewedSubagent?.id],
   );
+  const availableModels = selectedSession?.availableModels ?? EMPTY_MODEL_OPTIONS;
+  const currentModelOption = availableModels.find(
+    (model) => `${model.provider}/${model.id}` === selectedSession?.model,
+  );
+  const filteredModels = useMemo(() => {
+    const query = modelQuery.trim().toLocaleLowerCase();
+    if (!query) return availableModels;
+    return availableModels.filter((model) =>
+      [model.name, model.provider, model.id].some((value) => value.toLocaleLowerCase().includes(query)),
+    );
+  }, [availableModels, modelQuery]);
+  const availableEfforts = currentModelOption?.efforts ?? [];
 
   useEffect(() => {
     setActiveSkillIndex(0);
@@ -853,6 +884,13 @@ function DashboardContent({
 
   useEffect(() => {
     setViewedSubagent(null);
+  }, [selectedSession?.id]);
+
+  useEffect(() => {
+    setModelSheetOpen(false);
+    setModelQuery("");
+    setConfigurationPending(null);
+    setConfigurationError(null);
   }, [selectedSession?.id]);
 
   useEffect(() => {
@@ -972,6 +1010,40 @@ function DashboardContent({
       );
     } finally {
       setCommandState("idle");
+    }
+  };
+
+  const selectModel = async (model: string) => {
+    if (!selectedSession || configurationPending) return;
+    setConfigurationPending(model);
+    setConfigurationError(null);
+    try {
+      await onSetModel(selectedSession.id, model);
+    } catch (configurationFailure) {
+      setConfigurationError(
+        configurationFailure instanceof Error
+          ? configurationFailure.message
+          : "The model could not be changed",
+      );
+    } finally {
+      setConfigurationPending(null);
+    }
+  };
+
+  const selectEffort = async (effort: Effort) => {
+    if (!selectedSession || configurationPending) return;
+    setConfigurationPending(effort);
+    setConfigurationError(null);
+    try {
+      await onSetEffort(selectedSession.id, effort);
+    } catch (configurationFailure) {
+      setConfigurationError(
+        configurationFailure instanceof Error
+          ? configurationFailure.message
+          : "The effort could not be changed",
+      );
+    } finally {
+      setConfigurationPending(null);
     }
   };
 
@@ -1217,29 +1289,6 @@ function DashboardContent({
             className="session-workspace"
             aria-label={`Controls for ${selectedSession.name ?? selectedSession.cwd}`}
           >
-            <dl className="session-metadata">
-              <div>
-                <dt>Model</dt>
-                <dd>{selectedSession.model ?? "Default"}</dd>
-              </div>
-              <div>
-                <dt>Context</dt>
-                <dd>
-                  {selectedSession.contextPercent === null
-                    ? "—"
-                    : `${Math.round(selectedSession.contextPercent)}%`}
-                </dd>
-              </div>
-              <div>
-                <dt>Updated</dt>
-                <dd>
-                  <time dateTime={selectedSession.lastActivity}>
-                    {formatTime(selectedSession.lastActivity)}
-                  </time>
-                </dd>
-              </div>
-            </dl>
-
             {selectedSession.activeSubagents.length > 0 ? (
               <section className="subagent-activity" aria-label="Active subagents" aria-live="polite">
                 <strong className="subagent-activity-heading">
@@ -1333,6 +1382,44 @@ function DashboardContent({
                 </Button>
               ) : null}
             </div>
+
+            <dl className="session-metadata">
+              <div className="session-model-metadata">
+                <dt>Model</dt>
+                <dd>
+                  <Button
+                    className="session-model-trigger"
+                    type="button"
+                    variant="ghost"
+                    disabled={!selectedSession.capabilities.includes("model") || availableModels.length === 0}
+                    aria-label={`Change model and effort. Current model ${currentModelOption?.name ?? selectedSession.model ?? "Default"}, ${formatEffortLabel(selectedSession.effort)}`}
+                    onClick={() => setModelSheetOpen(true)}
+                  >
+                    <span className="session-model-name">
+                      {currentModelOption?.name ?? selectedSession.model?.split("/").at(-1) ?? "Default"}
+                    </span>
+                    <span className="session-effort">{formatEffortLabel(selectedSession.effort)}</span>
+                    <Icon name="up" />
+                  </Button>
+                </dd>
+              </div>
+              <div>
+                <dt>Context</dt>
+                <dd>
+                  {selectedSession.contextPercent === null
+                    ? "—"
+                    : `${Math.round(selectedSession.contextPercent)}%`}
+                </dd>
+              </div>
+              <div>
+                <dt>Updated</dt>
+                <dd>
+                  <time dateTime={selectedSession.lastActivity}>
+                    {formatTime(selectedSession.lastActivity)}
+                  </time>
+                </dd>
+              </div>
+            </dl>
 
             {selectedSession.source === "history" ? (
               <div className="history-controls">
@@ -1497,6 +1584,133 @@ function DashboardContent({
           </div>
         )}
       </SubagentSessionViewer>
+
+      <Drawer
+        open={modelSheetOpen}
+        onOpenChange={(open) => {
+          if (configurationPending) return;
+          setModelSheetOpen(open);
+          if (!open) {
+            setModelQuery("");
+            setConfigurationError(null);
+          }
+        }}
+        showSwipeHandle
+      >
+        <DrawerContent className="model-settings-sheet">
+          <DrawerHeader className="model-settings-header">
+            <div>
+              <DrawerTitle>Model and effort</DrawerTitle>
+              <DrawerDescription>Choose how this session handles its next instruction.</DrawerDescription>
+            </div>
+            <DrawerClose
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Close model and effort settings"
+                  disabled={configurationPending !== null}
+                />
+              }
+            >
+              <Icon name="close" />
+            </DrawerClose>
+          </DrawerHeader>
+          <div className="model-settings-body" aria-busy={configurationPending !== null}>
+            {availableModels.length > 8 ? (
+              <label className="model-search-field" htmlFor="model-settings-search">
+                <span className="sr-only">Search models</span>
+                <Icon name="search" />
+                <Input
+                  id="model-settings-search"
+                  value={modelQuery}
+                  onChange={(event) => setModelQuery(event.target.value)}
+                  placeholder="Search models"
+                  autoComplete="off"
+                />
+              </label>
+            ) : null}
+            <section className="model-settings-section" aria-labelledby="model-settings-model-heading">
+              <div className="model-settings-section-heading">
+                <h3 id="model-settings-model-heading">Model</h3>
+                <span>{availableModels.length} available</span>
+              </div>
+              <div className="model-option-list">
+                {filteredModels.map((model) => {
+                  const value = `${model.provider}/${model.id}`;
+                  const selected = value === selectedSession?.model;
+                  return (
+                    <Button
+                      className={cn("model-option", selected && "selected")}
+                      type="button"
+                      variant="ghost"
+                      aria-pressed={selected}
+                      disabled={configurationPending !== null}
+                      onClick={() => void selectModel(value)}
+                      key={value}
+                    >
+                      <span>
+                        <strong>{model.name}</strong>
+                        <small>{value}</small>
+                      </span>
+                      <span className="selection-indicator" aria-hidden="true" />
+                    </Button>
+                  );
+                })}
+                {filteredModels.length === 0 ? (
+                  <p className="model-settings-empty">No models match “{modelQuery.trim()}”.</p>
+                ) : null}
+              </div>
+            </section>
+            <section className="model-settings-section" aria-labelledby="model-settings-effort-heading">
+              <div className="model-settings-section-heading">
+                <h3 id="model-settings-effort-heading">Effort</h3>
+                <span>{currentModelOption?.name ?? "Select a model"}</span>
+              </div>
+              {availableEfforts.length > 0 ? (
+                <div className="effort-options">
+                  {availableEfforts.map((effort) => (
+                    <Button
+                      className={cn("effort-option", effort === selectedSession?.effort && "selected")}
+                      type="button"
+                      variant="outline"
+                      aria-pressed={effort === selectedSession?.effort}
+                      disabled={
+                        configurationPending !== null || !selectedSession?.capabilities.includes("effort")
+                      }
+                      onClick={() => void selectEffort(effort)}
+                      key={effort}
+                    >
+                      {formatEffortLabel(effort)}
+                    </Button>
+                  ))}
+                </div>
+              ) : (
+                <p className="model-settings-empty">
+                  {currentModelOption
+                    ? "This model does not expose adjustable effort."
+                    : "Select a model to see its effort options."}
+                </p>
+              )}
+            </section>
+            {configurationError ? (
+              <p className="inline-error model-settings-error" role="alert">
+                {configurationError}
+              </p>
+            ) : null}
+          </div>
+          <DrawerFooter className="model-settings-footer">
+            <DrawerClose
+              render={
+                <Button type="button" disabled={configurationPending !== null}>
+                  Done
+                </Button>
+              }
+            />
+          </DrawerFooter>
+        </DrawerContent>
+      </Drawer>
 
       <Dialog
         open={activeAskRequest !== null}
@@ -1680,7 +1894,11 @@ function DashboardContent({
   );
 }
 
-function Icon({ name }: { name: "bell" | "down" | "plus" | "power" | "search" | "send" | "stop" }) {
+function Icon({
+  name,
+}: {
+  name: "bell" | "close" | "down" | "plus" | "power" | "search" | "send" | "stop" | "up";
+}) {
   const paths = {
     bell: (
       <>
@@ -1688,6 +1906,7 @@ function Icon({ name }: { name: "bell" | "down" | "plus" | "power" | "search" | 
         <path d="M10 21h4" />
       </>
     ),
+    close: <path d="m6 6 12 12M18 6 6 18" />,
     down: <path d="m6 9 6 6 6-6" />,
     plus: <path d="M12 5v14M5 12h14" />,
     power: (
@@ -1699,6 +1918,7 @@ function Icon({ name }: { name: "bell" | "down" | "plus" | "power" | "search" | 
     search: <path d="m21 21-4.4-4.4m2.4-5.1a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" />,
     send: <path d="m4 4 17 8-17 8 3-8-3-8Zm3 8h14" />,
     stop: <rect x="7" y="7" width="10" height="10" rx="1" />,
+    up: <path d="m6 15 6-6 6 6" />,
   } as const;
   return (
     <svg
@@ -1725,4 +1945,11 @@ function formatTime(timestamp: string): string {
   return Number.isNaN(date.getTime())
     ? "Unknown"
     : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatEffortLabel(effort: Effort | null | undefined): string {
+  if (!effort) return "Default effort";
+  if (effort === "off") return "No reasoning";
+  if (effort === "xhigh") return "Extra high";
+  return `${effort[0]?.toUpperCase()}${effort.slice(1)}`;
 }

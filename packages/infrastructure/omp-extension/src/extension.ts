@@ -29,6 +29,26 @@ type ExtensionSkillCommand = {
   description?: string;
 };
 
+type EffortName = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+type ExtensionThinkingLevel = Parameters<ExtensionAPI["setThinkingLevel"]>[0];
+type ModelSummary = {
+  provider: string;
+  id: string;
+  name: string;
+  thinking?: { efforts: readonly Exclude<EffortName, "off">[]; requiresEffort?: boolean };
+};
+
+export function getSessionModelOptions(models: readonly ModelSummary[]) {
+  return models.map((model) => ({
+    provider: model.provider,
+    id: model.id,
+    name: model.name,
+    efforts: model.thinking
+      ? [...(model.thinking.requiresEffort ? [] : (["off"] as const)), ...model.thinking.efforts]
+      : [],
+  }));
+}
+
 export function getSkillCommands(commands: readonly AvailableCommand[]): ExtensionSkillCommand[] {
   return commands
     .filter((command) => command.source === "skill" && command.name.startsWith("skill:"))
@@ -138,6 +158,16 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
       text: z.string().min(1),
     }),
     z.object({ requestId: z.string(), command: z.literal("abort") }),
+    z.object({
+      requestId: z.string(),
+      command: z.literal("set_model"),
+      model: z.string().regex(/^[^/]+\/.+$/),
+    }),
+    z.object({
+      requestId: z.string(),
+      command: z.literal("set_effort"),
+      effort: z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]),
+    }),
   ]);
   const SessionEntrySchema = z
     .object({ id: z.string(), type: z.literal("message"), message: z.unknown() })
@@ -184,10 +214,12 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
       status: ctx.isIdle() ? (ctx.hasPendingMessages() ? "waiting" : "idle") : "running",
       connected: true,
       model: model ? `${model.provider}/${model.id}` : null,
+      effort: pi.getThinkingLevel() ?? null,
+      availableModels: getSessionModelOptions(ctx.models.list()),
       contextPercent: normalizeContextPercent(ctx),
       createdAt,
       lastActivity: now,
-      capabilities: ["prompt", "steer", "follow_up", "abort", "resume"] as const,
+      capabilities: ["prompt", "steer", "follow_up", "abort", "resume", "model", "effort"] as const,
       messages,
       sessionPath: ctx.sessionManager.getSessionFile() ?? null,
       skillCommands: getSkillCommands(pi.getCommands()),
@@ -226,8 +258,16 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
         else if (command.command === "prompt") await pi.sendUserMessage(command.text);
         else if (command.command === "steer") {
           await pi.sendUserMessage(command.text, { deliverAs: "steer" });
-        } else {
+        } else if (command.command === "follow_up") {
           await pi.sendUserMessage(command.text, { deliverAs: "followUp" });
+        } else if (command.command === "set_model") {
+          const model = context.models.resolve(command.model);
+          if (!model) throw new Error(`Model ${command.model} is not available`);
+          if (!(await pi.setModel(model))) throw new Error(`Model ${command.model} is not authenticated`);
+          register();
+        } else if (command.command === "set_effort") {
+          pi.setThinkingLevel(command.effort as ExtensionThinkingLevel);
+          register();
         }
         send({ type: "command_result", requestId: command.requestId, ok: true, error: null });
       } catch (error) {
@@ -262,6 +302,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
       name: context.sessionManager.getSessionName() ?? null,
       model: model ? `${model.provider}/${model.id}` : null,
       contextPercent: normalizeContextPercent(context),
+      effort: pi.getThinkingLevel() ?? null,
     });
   };
 
@@ -278,6 +319,8 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
         name: context.sessionManager.getSessionName() ?? null,
         model: model ? `${model.provider}/${model.id}` : null,
         contextPercent: normalizeContextPercent(context),
+        effort: pi.getThinkingLevel() ?? null,
+        availableModels: getSessionModelOptions(context.models.list()),
         idle: context.isIdle(),
         skillCommands: getSkillCommands(pi.getCommands()),
       });

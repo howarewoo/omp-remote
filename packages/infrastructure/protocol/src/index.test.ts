@@ -67,6 +67,27 @@ describe("BrowserCommandSchema", () => {
     ).toMatchObject({ command: "kill" });
   });
 
+  it("accepts model and effort session controls", () => {
+    expect(
+      BrowserCommandSchema.parse({
+        type: "session_command",
+        requestId: "model-1",
+        sessionId: "session-1",
+        command: "set_model",
+        model: "openai/gpt-5.6",
+      }),
+    ).toMatchObject({ command: "set_model", model: "openai/gpt-5.6" });
+    expect(
+      BrowserCommandSchema.parse({
+        type: "session_command",
+        requestId: "effort-1",
+        sessionId: "session-1",
+        command: "set_effort",
+        effort: "high",
+      }),
+    ).toMatchObject({ command: "set_effort", effort: "high" });
+  });
+
   it.each([
     { response: { value: "PostgreSQL" } },
     { response: { cancelled: true } },
@@ -182,6 +203,31 @@ describe("historical session schemas", () => {
         skillCommands: [{ name: "skill:seo", description: "Audit search visibility" }],
       }).skillCommands,
     ).toEqual([{ name: "skill:seo", description: "Audit search visibility" }]);
+  });
+
+  it("preserves model choices and the active effort", () => {
+    expect(
+      SessionSchema.parse({
+        ...historicalSession,
+        source: "rpc",
+        connected: true,
+        status: "idle",
+        model: "openai/gpt-5.6",
+        effort: "high",
+        capabilities: ["prompt", "model", "effort"],
+        availableModels: [
+          {
+            provider: "openai",
+            id: "gpt-5.6",
+            name: "GPT-5.6",
+            efforts: ["low", "medium", "high", "xhigh"],
+          },
+        ],
+      }),
+    ).toMatchObject({
+      effort: "high",
+      availableModels: [{ provider: "openai", id: "gpt-5.6", efforts: ["low", "medium", "high", "xhigh"] }],
+    });
   });
 
   it("accepts active subagent activity on the main session", () => {

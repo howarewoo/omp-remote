@@ -3,6 +3,7 @@ import {
   type AskResponse,
   type BrowserCommand,
   compareSessionsByCreation,
+  type Effort,
   ServerFrameSchema,
   type Session,
   SessionCatalogPageSchema,
@@ -29,6 +30,8 @@ export interface SessionClient {
   command(sessionId: string, command: "prompt" | "steer" | "follow_up", text: string): Promise<void>;
   abort(sessionId: string): Promise<void>;
   kill(sessionId: string): Promise<void>;
+  setModel(sessionId: string, model: string): Promise<void>;
+  setEffort(sessionId: string, effort: Effort): Promise<void>;
   respondToAsk(sessionId: string, askRequestId: string, response: AskResponse): Promise<void>;
   searchHistory(query: string): Promise<void>;
   loadMoreHistory(): Promise<void>;
@@ -263,6 +266,28 @@ export function useSessionClient(): SessionClient {
       send({ type: "session_command", requestId: crypto.randomUUID(), sessionId, command: "kill" }),
     [send],
   );
+  const setModel = useCallback(
+    (sessionId: string, model: string) =>
+      send({
+        type: "session_command",
+        requestId: crypto.randomUUID(),
+        sessionId,
+        command: "set_model",
+        model,
+      }),
+    [send],
+  );
+  const setEffort = useCallback(
+    (sessionId: string, effort: Effort) =>
+      send({
+        type: "session_command",
+        requestId: crypto.randomUUID(),
+        sessionId,
+        command: "set_effort",
+        effort,
+      }),
+    [send],
+  );
   const respondToAsk = useCallback(
     (sessionId: string, askRequestId: string, response: AskResponse) =>
       send({
@@ -298,6 +323,8 @@ export function useSessionClient(): SessionClient {
     command,
     abort,
     kill,
+    setModel,
+    setEffort,
     respondToAsk,
     searchHistory,
     loadMoreHistory,
@@ -374,6 +401,8 @@ export function patchSession(sessions: Session[], sessionId: string, patch: Sess
   if (patch.status !== undefined) updated.status = patch.status;
   if (patch.connected !== undefined) updated.connected = patch.connected;
   if (patch.model !== undefined) updated.model = patch.model;
+  if (patch.effort !== undefined) updated.effort = patch.effort;
+  if (patch.availableModels !== undefined) updated.availableModels = patch.availableModels;
   if (patch.contextPercent !== undefined) updated.contextPercent = patch.contextPercent;
   if (patch.createdAt !== undefined) updated.createdAt = patch.createdAt;
   if (patch.lastActivity !== undefined) updated.lastActivity = patch.lastActivity;
