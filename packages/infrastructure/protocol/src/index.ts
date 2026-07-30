@@ -27,6 +27,7 @@ export const SessionSchema = z.object({
   source: SessionSourceSchema,
   name: z.string().nullable(),
   cwd: z.string().min(1),
+  branch: z.string().min(1).nullable().default(null),
   status: SessionStatusSchema,
   connected: z.boolean(),
   model: z.string().nullable(),

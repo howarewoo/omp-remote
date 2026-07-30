@@ -7,6 +7,7 @@ const BASE_SESSION: Session = {
   source: "rpc",
   name: "Bootstrap",
   cwd: "/work/omp-remote",
+  branch: "feature/session-header",
   status: "idle",
   connected: true,
   model: "openai/gpt-5.6",

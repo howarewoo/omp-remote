@@ -247,6 +247,7 @@ async function readSessionMetadata(path: string): Promise<SessionMetadata | null
         source: "history",
         name: title ?? (headerTitle || fallbackSessionName(path, header.id, header.cwd, header.timestamp)),
         cwd: header.cwd,
+        branch: null,
         status: "history",
         connected: false,
         model: null,

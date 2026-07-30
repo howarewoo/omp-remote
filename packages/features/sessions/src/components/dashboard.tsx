@@ -979,7 +979,16 @@ function DashboardContent({
               <>
                 <div>
                   <h1>{selectedSession.name ?? "Untitled session"}</h1>
-                  <p>{selectedSession.cwd}</p>
+                  <div className="session-header-details">
+                    <p>{selectedSession.cwd}</p>
+                    {selectedSession.branch ? (
+                      <span className="session-branch">
+                        <span aria-hidden="true">git:</span>
+                        <span className="sr-only">Git branch </span>
+                        {selectedSession.branch}
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
                 <Badge
                   className={cn("status-badge", `status-${SESSION_STATUS_TONE[selectedSession.status]}`)}
