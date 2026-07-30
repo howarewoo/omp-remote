@@ -18,6 +18,11 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { z } from "zod";
+import {
+  broadcastBrowserFrame,
+  type BrowserFrameDeliveryResult,
+  sendBrowserFrame,
+} from "./browser-broadcast.js";
 import { resolveGitBranch } from "./git-branch.js";
 import { normalizeRawMessage, normalizeSkillCommands } from "./message-normalizer.js";
 import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
@@ -126,14 +131,14 @@ app.get("/ws", { websocket: true }, (socket, request) => {
     return;
   }
   browserSockets.add(socket);
-  sendFrame(socket, { type: "snapshot", sessions: registry.list() });
+  sendToBrowser(socket, { type: "snapshot", sessions: registry.list() });
   socket.on("message", async (raw) => {
     const command = (() => {
       try {
         return BrowserCommandSchema.parse(JSON.parse(raw.toString()));
       } catch (error) {
         logger.error("Rejected dashboard command", error);
-        sendFrame(socket, { type: "error", message: "The dashboard command was not valid." });
+        sendToBrowser(socket, { type: "error", message: "The dashboard command was not valid." });
         return null;
       }
     })();
@@ -142,10 +147,15 @@ app.get("/ws", { websocket: true }, (socket, request) => {
     if (command.type === "launch") {
       try {
         await launchRpcSession(command.cwd, command.resume);
-        sendFrame(socket, { type: "command_result", requestId: command.requestId, ok: true, error: null });
+        sendToBrowser(socket, {
+          type: "command_result",
+          requestId: command.requestId,
+          ok: true,
+          error: null,
+        });
       } catch (error) {
         logger.error("Failed to launch OMP RPC session", error, { cwd: command.cwd });
-        sendFrame(socket, {
+        sendToBrowser(socket, {
           type: "command_result",
           requestId: command.requestId,
           ok: false,
@@ -169,9 +179,14 @@ app.get("/ws", { websocket: true }, (socket, request) => {
               : { type: command.command, message: command.text };
           await rpcSession.request(rpcCommand);
         }
-        sendFrame(socket, { type: "command_result", requestId: command.requestId, ok: true, error: null });
+        sendToBrowser(socket, {
+          type: "command_result",
+          requestId: command.requestId,
+          ok: true,
+          error: null,
+        });
       } catch (error) {
-        sendFrame(socket, {
+        sendToBrowser(socket, {
           type: "command_result",
           requestId: command.requestId,
           ok: false,
@@ -182,7 +197,7 @@ app.get("/ws", { websocket: true }, (socket, request) => {
     }
 
     if (command.command === "kill") {
-      sendFrame(socket, {
+      sendToBrowser(socket, {
         type: "command_result",
         requestId: command.requestId,
         ok: false,
@@ -196,7 +211,7 @@ app.get("/ws", { websocket: true }, (socket, request) => {
       extensionSocket.send(JSON.stringify(command));
       return;
     }
-    sendFrame(socket, {
+    sendToBrowser(socket, {
       type: "command_result",
       requestId: command.requestId,
       ok: false,
@@ -470,12 +485,20 @@ function normalizePercent(percent: number | undefined): number | null {
   return Math.max(0, Math.min(100, percent <= 1 ? percent * 100 : percent));
 }
 
-function sendFrame(socket: WebSocket, frame: ServerFrame): void {
-  if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(frame));
+function sendToBrowser(socket: WebSocket, frame: ServerFrame): void {
+  reportBrowserBackpressure(sendBrowserFrame(socket, frame));
 }
 
 function broadcast(frame: ServerFrame): void {
-  for (const socket of browserSockets) sendFrame(socket, frame);
+  reportBrowserBackpressure(broadcastBrowserFrame(browserSockets, frame));
+}
+
+function reportBrowserBackpressure(result: BrowserFrameDeliveryResult): void {
+  if (result.terminated === 0) return;
+  logger.warn("Terminated lagging dashboard WebSocket peers", {
+    terminatedPeers: result.terminated,
+    maxRejectedBufferedBytes: result.maxRejectedBufferedBytes,
+  });
 }
 
 function markSessionHistorical(sessionId: string): void {

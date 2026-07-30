@@ -3,6 +3,7 @@ import {
   filterMainSessions,
   type BrowserCommand,
   type Session,
+  type SessionPatch,
   SessionCatalogPageSchema,
   ServerFrameSchema,
   SessionTranscriptResponseSchema,
@@ -74,6 +75,8 @@ export function useSessionClient(): SessionClient {
         if (frame.type === "snapshot") setLiveSessions(frame.sessions);
         else if (frame.type === "session_upsert") {
           setLiveSessions((current) => upsertSession(current, frame.session));
+        } else if (frame.type === "session_update") {
+          setLiveSessions((current) => patchSession(current, frame.sessionId, frame.patch));
         } else if (frame.type === "transcript_upsert") {
           setLiveSessions((current) => upsertTranscriptMessage(current, frame.sessionId, frame.message));
         } else if (frame.type === "session_removed") {
@@ -288,6 +291,30 @@ export function upsertTranscriptMessage(
     else messages.push(message);
     return { ...session, messages: messages.slice(-200), lastActivity: message.timestamp };
   });
+}
+
+export function patchSession(sessions: Session[], sessionId: string, patch: SessionPatch): Session[] {
+  const index = sessions.findIndex((session) => session.id === sessionId);
+  const current = sessions[index];
+  if (!current) return sessions;
+  const updated: Session = { ...current, messages: current.messages };
+  if (patch.source !== undefined) updated.source = patch.source;
+  if (patch.name !== undefined) updated.name = patch.name;
+  if (patch.cwd !== undefined) updated.cwd = patch.cwd;
+  if (patch.branch !== undefined) updated.branch = patch.branch;
+  if (patch.status !== undefined) updated.status = patch.status;
+  if (patch.connected !== undefined) updated.connected = patch.connected;
+  if (patch.model !== undefined) updated.model = patch.model;
+  if (patch.contextPercent !== undefined) updated.contextPercent = patch.contextPercent;
+  if (patch.createdAt !== undefined) updated.createdAt = patch.createdAt;
+  if (patch.lastActivity !== undefined) updated.lastActivity = patch.lastActivity;
+  if (patch.capabilities !== undefined) updated.capabilities = patch.capabilities;
+  if (patch.sessionPath !== undefined) updated.sessionPath = patch.sessionPath;
+  if (patch.activeSubagents !== undefined) updated.activeSubagents = patch.activeSubagents;
+  if (patch.skillCommands !== undefined) updated.skillCommands = patch.skillCommands;
+  const next = [...sessions];
+  next[index] = updated;
+  return next;
 }
 
 function upsertSession(sessions: Session[], session: Session): Session[] {

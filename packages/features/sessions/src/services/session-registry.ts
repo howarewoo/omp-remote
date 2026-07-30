@@ -1,9 +1,15 @@
-import { compareSessionsByCreation, type Session, type TranscriptMessage } from "@omp-remote/protocol";
+import {
+  compareSessionsByCreation,
+  type Session,
+  type SessionPatch,
+  type TranscriptMessage,
+} from "@omp-remote/protocol";
 
 const MAX_TRANSCRIPT_MESSAGES = 200;
 
 export type SessionRegistryEvent =
   | { type: "session_upsert"; session: Session }
+  | { type: "session_update"; sessionId: string; patch: SessionPatch }
   | { type: "transcript_upsert"; sessionId: string; message: TranscriptMessage };
 
 export class SessionRegistry {
@@ -26,12 +32,13 @@ export class SessionRegistry {
     return cloneSession(next);
   }
 
-  update(sessionId: string, patch: Partial<Omit<Session, "id" | "messages">>): Session | undefined {
+  update(sessionId: string, patch: SessionPatch): Session | undefined {
     const current = this.#sessions.get(sessionId);
     if (!current) return undefined;
-    const next = cloneSession({ ...current, ...patch, messages: current.messages });
+    const detachedPatch = cloneSessionPatch(patch);
+    const next = cloneSession({ ...current, ...detachedPatch, messages: current.messages });
     this.#sessions.set(sessionId, next);
-    this.#emit({ type: "session_upsert", session: next });
+    this.#emit({ type: "session_update", sessionId, patch: detachedPatch });
     return cloneSession(next);
   }
 
@@ -60,11 +67,17 @@ export class SessionRegistry {
 
   #emit(event: SessionRegistryEvent): void {
     for (const listener of this.#listeners) {
-      listener(
-        event.type === "session_upsert"
-          ? { type: event.type, session: cloneSession(event.session) }
-          : { type: event.type, sessionId: event.sessionId, message: { ...event.message } },
-      );
+      if (event.type === "session_upsert") {
+        listener({ type: event.type, session: cloneSession(event.session) });
+      } else if (event.type === "session_update") {
+        listener({
+          type: event.type,
+          sessionId: event.sessionId,
+          patch: cloneSessionPatch(event.patch),
+        });
+      } else {
+        listener({ type: event.type, sessionId: event.sessionId, message: { ...event.message } });
+      }
     }
   }
 }
@@ -75,5 +88,29 @@ function cloneSession(session: Session): Session {
     capabilities: [...session.capabilities],
     messages: session.messages.map((message) => ({ ...message })),
     activeSubagents: session.activeSubagents.map((subagent) => ({ ...subagent })),
+    skillCommands: session.skillCommands.map((command) => ({ ...command })),
   };
+}
+
+function cloneSessionPatch(patch: SessionPatch): Partial<Omit<Session, "id" | "messages">> {
+  const clone: Partial<Omit<Session, "id" | "messages">> = {};
+  if (patch.source !== undefined) clone.source = patch.source;
+  if (patch.name !== undefined) clone.name = patch.name;
+  if (patch.cwd !== undefined) clone.cwd = patch.cwd;
+  if (patch.branch !== undefined) clone.branch = patch.branch;
+  if (patch.status !== undefined) clone.status = patch.status;
+  if (patch.connected !== undefined) clone.connected = patch.connected;
+  if (patch.model !== undefined) clone.model = patch.model;
+  if (patch.contextPercent !== undefined) clone.contextPercent = patch.contextPercent;
+  if (patch.createdAt !== undefined) clone.createdAt = patch.createdAt;
+  if (patch.lastActivity !== undefined) clone.lastActivity = patch.lastActivity;
+  if (patch.capabilities !== undefined) clone.capabilities = [...patch.capabilities];
+  if (patch.sessionPath !== undefined) clone.sessionPath = patch.sessionPath;
+  if (patch.activeSubagents !== undefined) {
+    clone.activeSubagents = patch.activeSubagents.map((subagent) => ({ ...subagent }));
+  }
+  if (patch.skillCommands !== undefined) {
+    clone.skillCommands = patch.skillCommands.map((command) => ({ ...command }));
+  }
+  return clone;
 }
