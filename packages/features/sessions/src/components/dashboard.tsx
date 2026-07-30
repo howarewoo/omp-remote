@@ -446,7 +446,6 @@ export function formatSubagentActivityLabel(count: number): string {
 
 export interface DashboardProps {
   sessions: Session[];
-  totalSessions: number;
   historyLoading: boolean;
   hasMoreHistory: boolean;
   connection: "connecting" | "connected" | "disconnected";
@@ -733,7 +732,6 @@ export function TranscriptEntry({ entry }: { entry: Session["messages"][number] 
 }
 function DashboardContent({
   sessions,
-  totalSessions,
   historyLoading,
   hasMoreHistory,
   connection,
@@ -961,10 +959,6 @@ function DashboardContent({
         </div>
 
         <SidebarContent>
-          <div className="session-list-heading">
-            <span>Sessions</span>
-            <span>{totalSessions.toLocaleString()}</span>
-          </div>
           <nav className="session-list" aria-label="Registered OMP sessions">
             {mainSessions.length === 0 ? (
               <div className="sidebar-empty" role="status">
@@ -1003,13 +997,15 @@ function DashboardContent({
                 >
                   <h2 className="session-group-heading" id={`session-group-${section.id}`}>
                     <span>{section.label}</span>
-                    <span>
-                      {section.sessions.length.toLocaleString()}
-                      <span className="sr-only">
-                        {" "}
-                        {section.sessions.length === 1 ? "session" : "sessions"}
+                    {section.id === "connected" ? (
+                      <span>
+                        {section.sessions.length.toLocaleString()}
+                        <span className="sr-only">
+                          {" "}
+                          {section.sessions.length === 1 ? "session" : "sessions"}
+                        </span>
                       </span>
-                    </span>
+                    ) : null}
                   </h2>
                   {section.sessions.map((session) => {
                     const selected = session.id === selectedSession?.id;
