@@ -13,7 +13,7 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",
-    "test": "node --test scripts/dev.test.mjs scripts/setup.test.mjs && turbo run test",
+    "test": "node --test scripts/dev.test.mjs scripts/install-service.test.mjs scripts/setup.test.mjs && turbo run test",
     "typecheck": "turbo run typecheck",
     "install:service": "node scripts/install-service.mjs",
     "setup": "node scripts/setup.mjs",
