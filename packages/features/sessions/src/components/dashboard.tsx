@@ -14,6 +14,7 @@ import {
   SidebarHeader,
   SidebarInset,
   SidebarProvider,
+  SidebarRail,
   SidebarTrigger,
   useSidebar,
 } from "./ui/sidebar.js";
@@ -714,7 +715,7 @@ function DashboardContent({
   const loadedTranscriptIdRef = useRef<string | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const followTranscriptRef = useRef(true);
-  const { closeMobile, mobile } = useSidebar();
+  const { isMobile, setOpenMobile } = useSidebar();
 
   const mainSessions = useMemo(() => filterMainSessions(sessions), [sessions]);
   const sessionSections = useMemo(() => groupSessionsByConnection(mainSessions), [mainSessions]);
@@ -836,7 +837,7 @@ function DashboardContent({
 
   return (
     <div className="app-shell">
-      <Sidebar>
+      <Sidebar collapsible="icon">
         <SidebarHeader>
           <div className="brand-lockup">
             <span className="brand-mark" aria-hidden="true">
@@ -937,7 +938,7 @@ function DashboardContent({
                         onClick={() => {
                           setSelectedId(session.id);
                           setViewedSubagent(null);
-                          closeMobile();
+                          setOpenMobile(false);
                         }}
                       >
                         <span
@@ -982,6 +983,7 @@ function DashboardContent({
                 : "Host offline"}
           </span>
         </SidebarFooter>
+        <SidebarRail />
       </Sidebar>
 
       <SidebarInset>
@@ -1239,7 +1241,7 @@ function DashboardContent({
 
       <SubagentSessionViewer
         open={viewedSubagent !== null}
-        mobile={mobile}
+        mobile={isMobile}
         subagent={viewedSubagent}
         session={viewedSubagentSession}
         onOpenChange={(open) => {
