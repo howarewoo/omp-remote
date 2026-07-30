@@ -159,3 +159,8 @@ export type TranscriptMessage = z.infer<typeof TranscriptMessageSchema>;
 export function compareSessionsByCreation(left: Session, right: Session): number {
   return right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id);
 }
+
+export function filterMainSessions(sessions: readonly Session[]): Session[] {
+  const subagentIds = new Set(sessions.flatMap((session) => session.activeSubagents.map(({ id }) => id)));
+  return sessions.filter((session) => !subagentIds.has(session.id));
+}

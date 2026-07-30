@@ -1,6 +1,7 @@
-import type { Session } from "@omp-remote/protocol";
+import { filterMainSessions, type ActiveSubagent, type Session } from "@omp-remote/protocol";
 import { SESSION_STATUS_LABEL, SESSION_STATUS_TONE } from "@omp-remote/ui";
 import { type FormEvent, memo, useEffect, useMemo, useRef, useState } from "react";
+import { SubagentSessionViewer } from "./subagent-session-viewer.js";
 import { Badge } from "./ui/badge.js";
 import { Button } from "./ui/button.js";
 import { Dialog } from "./ui/dialog.js";
@@ -699,6 +700,7 @@ function DashboardContent({
   onLoadTranscript,
 }: DashboardProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [viewedSubagent, setViewedSubagent] = useState<ActiveSubagent | null>(null);
   const [composerMode, setComposerMode] = useState<ComposerMode>("prompt");
   const [message, setMessage] = useState("");
   const [commandState, setCommandState] = useState<"idle" | "sending">("idle");
@@ -712,12 +714,18 @@ function DashboardContent({
   const loadedTranscriptIdRef = useRef<string | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   const followTranscriptRef = useRef(true);
-  const { closeMobile } = useSidebar();
+  const { closeMobile, mobile } = useSidebar();
 
-  const sessionSections = useMemo(() => groupSessionsByConnection(sessions), [sessions]);
+  const mainSessions = useMemo(() => filterMainSessions(sessions), [sessions]);
+  const sessionSections = useMemo(() => groupSessionsByConnection(mainSessions), [mainSessions]);
   const selectedSession = useMemo(
-    () => sessions.find((session) => session.id === selectedId) ?? sessionSections[0]?.sessions[0] ?? null,
-    [selectedId, sessionSections, sessions],
+    () =>
+      mainSessions.find((session) => session.id === selectedId) ?? sessionSections[0]?.sessions[0] ?? null,
+    [mainSessions, selectedId, sessionSections],
+  );
+  const viewedSubagentSession = useMemo(
+    () => sessions.find((session) => session.id === viewedSubagent?.id) ?? null,
+    [sessions, viewedSubagent?.id],
   );
 
   useEffect(() => {
@@ -726,6 +734,10 @@ function DashboardContent({
 
   useEffect(() => {
     followTranscriptRef.current = true;
+  }, [selectedSession?.id]);
+
+  useEffect(() => {
+    setViewedSubagent(null);
   }, [selectedSession?.id]);
 
   useEffect(() => {
@@ -865,7 +877,7 @@ function DashboardContent({
             <span>{totalSessions.toLocaleString()}</span>
           </div>
           <nav className="session-list" aria-label="Registered OMP sessions">
-            {sessions.length === 0 ? (
+            {mainSessions.length === 0 ? (
               <div className="sidebar-empty" role="status">
                 <span className="status-orbit" aria-hidden="true" />
                 <strong>{historyLoading ? "Reading session history" : "No sessions found"}</strong>
@@ -924,6 +936,7 @@ function DashboardContent({
                         title={displayName}
                         onClick={() => {
                           setSelectedId(session.id);
+                          setViewedSubagent(null);
                           closeMobile();
                         }}
                       >
@@ -1050,8 +1063,14 @@ function DashboardContent({
                 <ul className="subagent-list">
                   {selectedSession.activeSubagents.slice(0, 5).map((subagent) => (
                     <li key={subagent.id}>
-                      <span>{subagent.name}</span>
-                      <time dateTime={subagent.lastActivity}>{formatTime(subagent.lastActivity)}</time>
+                      <button
+                        type="button"
+                        aria-label={`Open ${subagent.name} session`}
+                        onClick={() => setViewedSubagent(subagent)}
+                      >
+                        <span>{subagent.name}</span>
+                        <time dateTime={subagent.lastActivity}>{formatTime(subagent.lastActivity)}</time>
+                      </button>
                     </li>
                   ))}
                   {selectedSession.activeSubagents.length > 5 ? (
@@ -1217,6 +1236,34 @@ function DashboardContent({
           </section>
         )}
       </SidebarInset>
+
+      <SubagentSessionViewer
+        open={viewedSubagent !== null}
+        mobile={mobile}
+        subagent={viewedSubagent}
+        session={viewedSubagentSession}
+        onOpenChange={(open) => {
+          if (!open) setViewedSubagent(null);
+        }}
+      >
+        {viewedSubagentSession?.messages.length ? (
+          viewedSubagentSession.messages.map((entry) => <TranscriptEntry entry={entry} key={entry.id} />)
+        ) : (
+          <div className="empty-transcript">
+            <span className="terminal-prompt" aria-hidden="true">
+              π
+            </span>
+            <strong>
+              {viewedSubagentSession ? "Waiting for subagent output" : "Connecting to subagent"}
+            </strong>
+            <p>
+              {viewedSubagentSession
+                ? "Live output will appear here as the subagent works."
+                : "The session will appear as soon as the host publishes it."}
+            </p>
+          </div>
+        )}
+      </SubagentSessionViewer>
 
       <Dialog
         open={launchOpen}

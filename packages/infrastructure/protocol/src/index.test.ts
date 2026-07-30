@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   BrowserCommandSchema,
   ExtensionRegisterSchema,
+  filterMainSessions,
   SessionCatalogPageSchema,
   SessionSchema,
   SessionTranscriptResponseSchema,
@@ -151,6 +152,33 @@ describe("historical session schemas", () => {
         lastActivity: "2026-07-28T10:05:00.000Z",
       },
     ]);
+  });
+
+  it("excludes sessions nested under a main agent", () => {
+    const mainSession = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-main",
+      activeSubagents: [
+        {
+          id: "session-worker",
+          name: "ResearchAgent",
+          lastActivity: "2026-07-28T10:05:00.000Z",
+        },
+      ],
+    });
+    const workerSession = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-worker",
+      name: "ResearchAgent",
+    });
+    const unrelatedSession = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-unrelated",
+    });
+
+    expect(
+      filterMainSessions([mainSession, workerSession, unrelatedSession]).map((session) => session.id),
+    ).toEqual(["session-main", "session-unrelated"]);
   });
 
   it("validates bounded catalog pages", () => {
