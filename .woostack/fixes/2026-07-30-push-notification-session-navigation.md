@@ -1,6 +1,6 @@
 ---
 type: fix
-status: hardened
+status: executing
 branch: fix/push-notification-session-navigation
 ---
 
@@ -39,21 +39,21 @@ Security and edge behavior:
 
 ## 3. Implementation Plan
 
-- [ ] **Step 1: Reproduce with failing tests**
+- [x] **Step 1: Reproduce with failing tests**
   - Extend `apps/web/src/session-notifications.test.ts` to require idle and waiting events to contain the originating session deep link and to prove reserved session-ID characters are encoded exactly once.
   - Add `apps/web/src/notification-sw.test.ts` that executes the service-worker click handler with mocked clients and proves an existing same-origin client is navigated before focus, a closed app opens the target, and missing, malformed, or cross-origin targets fall back to `/`.
   - Exercise the direct `Notification` fallback with a mocked browser notification and require its click handler to close, navigate to the encoded session URL, and focus the app window.
   - Extend `packages/features/sessions/src/components/dashboard.test.ts` with selection cases proving a requested session wins over the default, survives an initially empty session list, and falls back deterministically when absent.
   - Add focused URL-state tests beside `App` for reading and replacing the `session` query parameter without dropping unrelated query parameters.
   - Run the focused web and sessions tests and record that the new navigation cases fail against the current implementation.
-- [ ] **Step 2: Apply the minimal fix**
+- [x] **Step 2: Apply the minimal fix**
   - Add a session-specific URL to `SessionNotificationEvent`, construct it from `session.id` in one helper, and use it for both service-worker and direct browser notifications.
   - Give direct browser notifications an `onclick` handler that closes the notification, navigates the current app window to the session URL, and focuses it.
   - Update `notification-sw.js` to validate the target against `self.location.origin`, navigate an existing same-origin client before focusing it, and open the same target when no client exists.
   - Make `App` own the selected session ID derived from the URL, replace the query parameter on selection changes, and pass the controlled selection contract into `Dashboard`.
   - Update `Dashboard` to use the controlled selected ID, retain the normal first-session fallback, and report sidebar/fallback selections through the callback without introducing a second routing mechanism.
-- [ ] **Step 3: Verification**
+- [x] **Step 3: Verification**
   - Run the focused notification, service-worker, URL-state, and dashboard test files.
   - Run the web and sessions package typechecks and existing package test suites.
   - Build the web application to verify the public service-worker import and browser types.
-  - Serve the built PWA, trigger a notification for a non-selected session, tap it with the app already open and with no app window, and verify the addressed session becomes current in both cases; also verify manual selection replaces the stale query target.
+  - Serve the built PWA and exercise the generated service worker with an actual persistent notification and `NotificationEvent` while the app is open; verify it navigates to the addressed session. Verify the closed-client `openWindow` branch with the behavioral worker test because the host cannot automate a physical macOS notification tap, and separately verify the built app consumes that deep link plus manual selection replaces the stale query target.

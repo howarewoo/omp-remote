@@ -7,11 +7,16 @@ export interface SessionNotificationEvent {
   title: "Input required" | "Session idle";
   body: string;
   tag: string;
+  url: string;
 }
 
 export interface SessionNotifications {
   state: SessionNotificationState;
   enable(): Promise<void>;
+}
+
+function sessionUrl(sessionId: string): string {
+  return `/?${new URLSearchParams({ session: sessionId })}`;
 }
 
 /** Returns user-relevant status transitions without alerting for snapshots or inactive sessions. */
@@ -35,12 +40,14 @@ export function findSessionNotifications(
         title: "Input required",
         body: `${displayName} is waiting for input.`,
         tag: `session-${session.id}-waiting`,
+        url: sessionUrl(session.id),
       });
     } else if (previous.status === "running" && session.status === "idle") {
       notifications.push({
         title: "Session idle",
         body: `${displayName} finished and is idle.`,
         tag: `session-${session.id}-idle`,
+        url: sessionUrl(session.id),
       });
     }
   }
@@ -101,12 +108,17 @@ async function showSessionNotification(notification: SessionNotificationEvent): 
     body: notification.body,
     icon: "/icon-192.png",
     tag: notification.tag,
-    data: { url: "/" },
+    data: { url: notification.url },
   };
   const registration = await navigator.serviceWorker?.getRegistration();
   if (registration) {
     await registration.showNotification(notification.title, options);
     return;
   }
-  new Notification(notification.title, options);
+  const browserNotification = new Notification(notification.title, options);
+  browserNotification.onclick = () => {
+    browserNotification.close();
+    window.location.href = notification.url;
+    window.focus();
+  };
 }

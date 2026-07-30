@@ -1,12 +1,12 @@
 import {
   type AskRequest,
   type AskResponse,
-  compareSessionsByCreation,
   type BrowserCommand,
-  type Session,
-  type SessionPatch,
-  SessionCatalogPageSchema,
+  compareSessionsByCreation,
   ServerFrameSchema,
+  type Session,
+  SessionCatalogPageSchema,
+  type SessionPatch,
   SessionTranscriptResponseSchema,
 } from "@omp-remote/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -20,6 +20,7 @@ type PendingCommand = { resolve: () => void; reject: (error: Error) => void };
 export interface SessionClient {
   sessions: Session[];
   askRequests: AskRequest[];
+  sessionsReady: boolean;
   historyLoading: boolean;
   hasMoreHistory: boolean;
   connection: ConnectionState;
@@ -43,6 +44,8 @@ export function useSessionClient(): SessionClient {
   const [liveSessions, setLiveSessions] = useState<Session[]>([]);
   const [askRequests, setAskRequests] = useState<AskRequest[]>([]);
   const [historySessions, setHistorySessions] = useState<Session[]>([]);
+  const [liveSessionsReady, setLiveSessionsReady] = useState(false);
+  const [historySessionsReady, setHistorySessionsReady] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyNextOffset, setHistoryNextOffset] = useState<number | null>(0);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -57,6 +60,7 @@ export function useSessionClient(): SessionClient {
     const connect = () => {
       if (disposed) return;
       setConnection("connecting");
+      setLiveSessionsReady(false);
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
       socketRef.current = socket;
@@ -77,6 +81,7 @@ export function useSessionClient(): SessionClient {
         if (frame.type === "snapshot") {
           setLiveSessions(frame.sessions);
           setAskRequests(frame.askRequests);
+          setLiveSessionsReady(true);
         } else if (frame.type === "session_upsert") {
           setLiveSessions((current) => upsertSession(current, frame.session));
         } else if (frame.type === "session_update") {
@@ -121,55 +126,65 @@ export function useSessionClient(): SessionClient {
 
   useEffect(
     () => () => {
-      catalogAbortRef.current?.abort();
       transcriptAbortRef.current?.abort();
     },
     [],
   );
 
-  const loadCatalogPage = useCallback(async (query: string, offset: number, append: boolean) => {
-    const requestNumber = ++catalogRequestRef.current;
-    catalogAbortRef.current?.abort();
-    const abortController = new AbortController();
-    catalogAbortRef.current = abortController;
-    setHistoryLoading(true);
-    setHistoryError(null);
-    try {
-      const search = new URLSearchParams({
-        offset: String(offset),
-        limit: String(CATALOG_PAGE_SIZE),
-        q: query,
-      });
-      const response = await fetch(`/api/sessions?${search}`, { signal: abortController.signal });
-      if (!response.ok) throw new Error(`Session history request failed (${response.status})`);
-      const page = SessionCatalogPageSchema.parse(await response.json());
-      if (requestNumber !== catalogRequestRef.current) return;
-      setHistorySessions((current) => (append ? mergeSessions(current, page.sessions) : page.sessions));
-      setHistoryNextOffset(page.nextOffset);
-      setHistoryQuery(query);
-    } catch (error) {
-      if (abortController.signal.aborted) return;
-      if (requestNumber !== catalogRequestRef.current) return;
-      const message = error instanceof Error ? error.message : "Session history could not be loaded";
-      setHistoryError(message);
-      throw error;
-    } finally {
-      if (requestNumber === catalogRequestRef.current) {
-        setHistoryLoading(false);
-        if (catalogAbortRef.current === abortController) catalogAbortRef.current = null;
+  const loadCatalogPage = useCallback(
+    async (query: string, offset: number, append: boolean, baseline = false) => {
+      const requestNumber = ++catalogRequestRef.current;
+      catalogAbortRef.current?.abort();
+      const abortController = new AbortController();
+      catalogAbortRef.current = abortController;
+      setHistoryLoading(true);
+      setHistoryError(null);
+      try {
+        const search = new URLSearchParams({
+          offset: String(offset),
+          limit: String(CATALOG_PAGE_SIZE),
+          q: query,
+        });
+        const response = await fetch(`/api/sessions?${search}`, { signal: abortController.signal });
+        if (!response.ok) throw new Error(`Session history request failed (${response.status})`);
+        const page = SessionCatalogPageSchema.parse(await response.json());
+        if (requestNumber !== catalogRequestRef.current) return;
+        setHistorySessions((current) => (append ? mergeSessions(current, page.sessions) : page.sessions));
+        setHistoryNextOffset(page.nextOffset);
+        setHistoryQuery(query);
+        if (baseline) setHistorySessionsReady(true);
+      } catch (error) {
+        if (abortController.signal.aborted) return;
+        if (requestNumber !== catalogRequestRef.current) return;
+        const message = error instanceof Error ? error.message : "Session history could not be loaded";
+        setHistoryError(message);
+        throw error;
+      } finally {
+        if (requestNumber === catalogRequestRef.current) {
+          setHistoryLoading(false);
+          if (catalogAbortRef.current === abortController) catalogAbortRef.current = null;
+        }
       }
-    }
-  }, []);
+    },
+    [],
+  );
 
-  const searchHistory = useCallback(
-    (query: string) => loadCatalogPage(query.trim(), 0, false),
+  const catalogLoads = useMemo(
+    () => createCatalogLoadCoordinator(() => loadCatalogPage("", 0, false, true)),
     [loadCatalogPage],
   );
 
+  const searchHistory = useCallback(
+    (query: string) => catalogLoads.afterBaseline(() => loadCatalogPage(query.trim(), 0, false)),
+    [catalogLoads, loadCatalogPage],
+  );
+
   const loadMoreHistory = useCallback(() => {
-    if (historyLoading || historyNextOffset === null) return Promise.resolve();
+    if (!historySessionsReady || historyLoading || historyNextOffset === null) {
+      return Promise.resolve();
+    }
     return loadCatalogPage(historyQuery, historyNextOffset, true);
-  }, [historyLoading, historyNextOffset, historyQuery, loadCatalogPage]);
+  }, [historyLoading, historyNextOffset, historyQuery, historySessionsReady, loadCatalogPage]);
 
   const loadTranscript = useCallback(async (sessionId: string) => {
     transcriptAbortRef.current?.abort();
@@ -203,8 +218,13 @@ export function useSessionClient(): SessionClient {
   }, []);
 
   useEffect(() => {
-    void searchHistory("").catch(() => undefined);
-  }, [searchHistory]);
+    const baseline = catalogLoads.loadBaseline();
+    void baseline.catch(() => undefined);
+    return () => {
+      catalogLoads.invalidateBaseline(baseline);
+      catalogAbortRef.current?.abort();
+    };
+  }, [catalogLoads]);
 
   const send = useCallback((frame: BrowserCommand): Promise<void> => {
     const socket = socketRef.current;
@@ -269,6 +289,7 @@ export function useSessionClient(): SessionClient {
   return {
     sessions,
     askRequests,
+    sessionsReady: sessionSourcesReady(liveSessionsReady, historySessionsReady),
     historyLoading,
     hasMoreHistory: historyNextOffset !== null,
     connection,
@@ -281,6 +302,35 @@ export function useSessionClient(): SessionClient {
     searchHistory,
     loadMoreHistory,
     loadTranscript,
+  };
+}
+
+export function sessionSourcesReady(liveSnapshotReady: boolean, baselineCatalogReady: boolean): boolean {
+  return liveSnapshotReady && baselineCatalogReady;
+}
+
+export function createCatalogLoadCoordinator(loadBaselinePage: () => Promise<void>) {
+  let baselinePromise: Promise<void> | null = null;
+  const loadBaseline = () => {
+    if (!baselinePromise) {
+      let currentPromise: Promise<void>;
+      currentPromise = loadBaselinePage().catch((error: unknown) => {
+        if (baselinePromise === currentPromise) baselinePromise = null;
+        throw error;
+      });
+      baselinePromise = currentPromise;
+    }
+    return baselinePromise;
+  };
+
+  return {
+    loadBaseline,
+    invalidateBaseline(attempt: Promise<void>): void {
+      if (baselinePromise === attempt) baselinePromise = null;
+    },
+    afterBaseline(load: () => Promise<void>): Promise<void> {
+      return loadBaseline().then(load);
+    },
   };
 }
 

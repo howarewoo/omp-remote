@@ -1,8 +1,34 @@
 import type { AskRequest, Session } from "@omp-remote/protocol";
-import { isValidElement, type ReactNode } from "react";
-import { describe, expect, it } from "vitest";
+import type * as ReactModule from "react";
+import { isValidElement, type ReactElement, type ReactNode } from "react";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("react", async (importOriginal) => {
+  const actual = await importOriginal<typeof ReactModule>();
+  return {
+    ...actual,
+    useEffect: (effect: Parameters<typeof actual.useEffect>[0]) => void effect(),
+    useMemo: <T>(factory: () => T) => factory(),
+    useRef: <T>(initial: T) => ({ current: initial }),
+    useState: <T>(initial: T | (() => T)) => [
+      typeof initial === "function" ? (initial as () => T)() : initial,
+      vi.fn(),
+    ],
+  };
+});
+
+vi.mock("./ui/sidebar.js", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    useSidebar: () => ({ isMobile: false, setOpenMobile: vi.fn() }),
+  };
+});
+
 import {
   canKillSession,
+  Dashboard,
+  type DashboardProps,
   formatSubagentActivityLabel,
   formatSystemTextPreview,
   formatToolTextPreview,
@@ -456,5 +482,139 @@ describe("OMP-style transcript formatting", () => {
         { kind: "number", text: "2" },
       ]),
     );
+  });
+});
+
+type ControlledDashboardProps = DashboardProps & {
+  selectedSessionId: string | null;
+  onSelectedSessionChange(sessionId: string): void;
+};
+
+const DASHBOARD_DEFAULTS = {
+  askRequests: [] as AskRequest[],
+  onEnableNotifications: vi.fn().mockResolvedValue(undefined),
+  onLaunch: vi.fn().mockResolvedValue(undefined),
+  onCommand: vi.fn().mockResolvedValue(undefined),
+  onAbort: vi.fn().mockResolvedValue(undefined),
+  onKill: vi.fn().mockResolvedValue(undefined),
+  onRespondToAsk: vi.fn().mockResolvedValue(undefined),
+  onSearchHistory: vi.fn().mockResolvedValue(undefined),
+  onLoadMoreHistory: vi.fn().mockResolvedValue(undefined),
+  onLoadTranscript: vi.fn().mockResolvedValue(undefined),
+};
+
+function renderControlledDashboard(props: ControlledDashboardProps): ReactNode {
+  const dashboard = Dashboard(props) as ReactElement<{
+    children: ReactElement<ControlledDashboardProps>;
+  }>;
+  const content = dashboard.props.children;
+  return (content.type as (contentProps: ControlledDashboardProps) => ReactNode)(content.props);
+}
+
+function findHostText(node: ReactNode, hostType: string): string | undefined {
+  if (node === null || node === undefined || typeof node === "boolean") return undefined;
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const match = findHostText(child, hostType);
+      if (match !== undefined) return match;
+    }
+    return undefined;
+  }
+  if (!isValidElement(node)) return undefined;
+  const element = node as ReactElement<{ children?: ReactNode }>;
+  if (element.type === hostType) {
+    const children = element.props.children;
+    return Array.isArray(children) ? children.join("") : String(children ?? "");
+  }
+  return findHostText(element.props.children, hostType);
+}
+
+describe("controlled dashboard selection", () => {
+  it("uses a requested session instead of the default first session", () => {
+    const sessions = [BASE_SESSION, { ...BASE_SESSION, id: "session-2", name: "Requested session" }];
+
+    const output = renderControlledDashboard({
+      sessions,
+      sessionsReady: true,
+      historyLoading: false,
+      hasMoreHistory: false,
+      connection: "connected",
+      error: null,
+      notificationState: "enabled",
+      selectedSessionId: "session-2",
+      onSelectedSessionChange: vi.fn(),
+      ...DASHBOARD_DEFAULTS,
+    });
+
+    expect(findHostText(output, "h1")).toBe("Requested session");
+  });
+
+  it("preserves a requested session while the list is empty and selects it when sessions arrive", () => {
+    const onSelectedSessionChange = vi.fn();
+    const baseProps = {
+      sessionsReady: true,
+      historyLoading: false,
+      hasMoreHistory: false,
+      connection: "connected" as const,
+      error: null,
+      notificationState: "enabled" as const,
+      selectedSessionId: "session-2",
+      onSelectedSessionChange,
+      ...DASHBOARD_DEFAULTS,
+    };
+
+    renderControlledDashboard({ ...baseProps, sessions: [] });
+    expect(onSelectedSessionChange).not.toHaveBeenCalled();
+
+    const output = renderControlledDashboard({
+      ...baseProps,
+      sessions: [BASE_SESSION, { ...BASE_SESSION, id: "session-2", name: "Requested session" }],
+    });
+    expect(findHostText(output, "h1")).toBe("Requested session");
+  });
+
+  it("does not replace a requested ID from a nonempty partial session update", () => {
+    const onSelectedSessionChange = vi.fn();
+    const props = {
+      historyLoading: false,
+      hasMoreHistory: false,
+      connection: "connected" as const,
+      error: null,
+      notificationState: "enabled" as const,
+      selectedSessionId: "session-2",
+      onSelectedSessionChange,
+      ...DASHBOARD_DEFAULTS,
+    };
+
+    renderControlledDashboard({ ...props, sessions: [BASE_SESSION], sessionsReady: false });
+    expect(onSelectedSessionChange).not.toHaveBeenCalled();
+
+    const output = renderControlledDashboard({
+      ...props,
+      sessions: [BASE_SESSION, { ...BASE_SESSION, id: "session-2", name: "Requested session" }],
+      sessionsReady: true,
+    });
+    expect(findHostText(output, "h1")).toBe("Requested session");
+    expect(onSelectedSessionChange).not.toHaveBeenCalled();
+  });
+
+  it("falls back deterministically and reports the first session when the requested ID is absent", () => {
+    const onSelectedSessionChange = vi.fn();
+
+    const output = renderControlledDashboard({
+      sessions: [BASE_SESSION, { ...BASE_SESSION, id: "session-2", name: "Second session" }],
+      sessionsReady: true,
+      historyLoading: false,
+      hasMoreHistory: false,
+      connection: "connected",
+      error: null,
+      notificationState: "enabled",
+      selectedSessionId: "missing-session",
+      onSelectedSessionChange,
+      ...DASHBOARD_DEFAULTS,
+    });
+
+    expect(findHostText(output, "h1")).toBe("Bootstrap");
+    expect(onSelectedSessionChange).toHaveBeenCalledWith("session-1");
   });
 });
