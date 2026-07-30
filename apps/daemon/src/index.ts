@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { z } from "zod";
 import { resolveGitBranch } from "./git-branch.js";
-import { normalizeRawMessage } from "./message-normalizer.js";
+import { normalizeRawMessage, normalizeSkillCommands } from "./message-normalizer.js";
 import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
 
 const MAX_MESSAGES = 200;
@@ -53,6 +53,16 @@ const RpcMessagesResponseSchema = z.object({
   command: z.literal("get_messages"),
   success: z.literal(true),
   data: z.union([z.array(z.unknown()), z.object({ messages: z.array(z.unknown()) })]),
+});
+const RpcAvailableCommandsResponseSchema = z.object({
+  type: z.literal("response"),
+  command: z.literal("get_available_commands"),
+  success: z.literal(true),
+  data: z.object({ commands: z.array(z.unknown()) }),
+});
+const RpcAvailableCommandsUpdateSchema = z.object({
+  type: z.literal("available_commands_update"),
+  commands: z.array(z.unknown()),
 });
 const CatalogQuerySchema = z.object({
   offset: z.coerce.number().int().nonnegative().default(0),
@@ -236,6 +246,7 @@ app.get("/extension", { websocket: true }, (socket, request) => {
         model: frame.model,
         contextPercent: frame.contextPercent,
         lastActivity: new Date().toISOString(),
+        ...(frame.skillCommands !== undefined ? { skillCommands: frame.skillCommands } : {}),
       });
       if (currentSession) refreshSessionBranch(frame.sessionId, currentSession.cwd);
     } else if (frame.type === "event") {
@@ -318,6 +329,11 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
     } else if (frame.type === "agent_end") {
       registry.update(sessionId, { status: "idle", lastActivity: new Date().toISOString() });
       void refreshRpcState(sessionId, rpc);
+    } else if (frame.type === "available_commands_update") {
+      const update = RpcAvailableCommandsUpdateSchema.safeParse(frame);
+      if (update.success) {
+        registry.update(sessionId, { skillCommands: normalizeSkillCommands(update.data.commands) });
+      }
     } else if (frame.type === "process_exit") {
       markSessionHistorical(sessionId);
       rpcSessions.delete(sessionId);
@@ -342,6 +358,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
   if (!sessionId) throw new Error("OMP RPC did not return a session ID");
   const contextPercent = normalizePercent(stateResponse.data.contextUsage?.percent);
   const catalogSession = sessionCatalog.get(sessionId);
+  const skillCommands = await loadRpcSkillCommands(sessionId, rpc);
   const now = new Date().toISOString();
   const session: Session = {
     id: sessionId,
@@ -365,6 +382,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
     messages: [],
     sessionPath: stateResponse.data.sessionFile ?? null,
     activeSubagents: catalogSession?.activeSubagents ?? [],
+    skillCommands,
   };
   rpcSessions.set(sessionId, rpc);
   registry.upsert(session);
@@ -382,6 +400,18 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
     logger.error("Could not load initial OMP transcript", error, { sessionId });
   }
   return registry.get(sessionId) ?? session;
+}
+
+async function loadRpcSkillCommands(sessionId: string, rpc: RpcSession): Promise<Session["skillCommands"]> {
+  try {
+    const response = RpcAvailableCommandsResponseSchema.parse(
+      await rpc.request({ type: "get_available_commands" }),
+    );
+    return normalizeSkillCommands(response.data.commands);
+  } catch (error) {
+    logger.error("Could not load OMP skill commands", error, { sessionId });
+    return [];
+  }
 }
 
 async function refreshRpcState(sessionId: string, rpc: RpcSession): Promise<void> {

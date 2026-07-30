@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeRawMessage } from "./message-normalizer.js";
+import { normalizeRawMessage, normalizeSkillCommands } from "./message-normalizer.js";
 
 const SNAPSHOT_CONTENT = [{ type: "text", text: "*** Begin Patch\n*** End Patch" }];
 const CANONICAL_DIFF = "-1|before\n+1|after";
@@ -109,5 +109,17 @@ describe("normalizeRawMessage", () => {
     expect(
       normalizeRawMessage({ id: 42, role: "assistant", content: "invalid id" }, false, "fallback-id"),
     ).toBeNull();
+  });
+});
+
+describe("normalizeSkillCommands", () => {
+  it("keeps only valid skill command metadata from OMP", () => {
+    expect(
+      normalizeSkillCommands([
+        { name: "skill:seo", description: "Audit search visibility", source: "skill" },
+        { name: "help", description: "Show help", source: "builtin" },
+        { name: "skill:broken", description: 42, source: "skill" },
+      ]),
+    ).toEqual([{ name: "skill:seo", description: "Audit search visibility" }]);
   });
 });

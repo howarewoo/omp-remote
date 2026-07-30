@@ -1675,6 +1675,61 @@ textarea:disabled {
   display: block;
 }
 
+.skill-suggestions {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  bottom: calc(100% + 0.5rem);
+  left: 0;
+  max-height: min(21rem, 45dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.3rem;
+  border: 1px solid var(--border-strong);
+  border-radius: calc(var(--radius) * 2);
+  background: var(--popover);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
+}
+
+.skill-suggestion {
+  display: grid;
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.6rem 0.75rem;
+  border: 0;
+  border-radius: var(--radius);
+  color: var(--popover-foreground);
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.skill-suggestion:hover,
+.skill-suggestion.active {
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+}
+
+.skill-suggestion code {
+  overflow: hidden;
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-suggestion span {
+  overflow: hidden;
+  margin-top: 0.2rem;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .composer-field .ui-textarea {
   display: block;
   min-height: 3rem;

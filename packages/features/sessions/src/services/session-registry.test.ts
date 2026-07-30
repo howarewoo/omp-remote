@@ -24,6 +24,7 @@ const BASE_SESSION: Session = {
       lastActivity: "2026-07-28T17:01:00.000Z",
     },
   ],
+  skillCommands: [],
 };
 
 describe("SessionRegistry", () => {

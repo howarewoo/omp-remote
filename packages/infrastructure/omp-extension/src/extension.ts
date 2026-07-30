@@ -18,6 +18,25 @@ type ExtensionTranscriptMessage = {
 };
 
 type FallbackId = string | (() => string);
+type AvailableCommand = {
+  name: string;
+  description?: string;
+  source: string;
+};
+
+type ExtensionSkillCommand = {
+  name: string;
+  description?: string;
+};
+
+export function getSkillCommands(commands: readonly AvailableCommand[]): ExtensionSkillCommand[] {
+  return commands
+    .filter((command) => command.source === "skill" && command.name.startsWith("skill:"))
+    .map((command) => ({
+      name: command.name,
+      ...(command.description?.trim() ? { description: command.description.trim() } : {}),
+    }));
+}
 
 export function normalizeExtensionMessage(
   raw: unknown,
@@ -158,6 +177,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
       capabilities: ["prompt", "steer", "follow_up", "abort", "resume"] as const,
       messages,
       sessionPath: ctx.sessionManager.getSessionFile() ?? null,
+      skillCommands: getSkillCommands(pi.getCommands()),
     };
   };
 
@@ -246,6 +266,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
         model: model ? `${model.provider}/${model.id}` : null,
         contextPercent: normalizeContextPercent(context),
         idle: context.isIdle(),
+        skillCommands: getSkillCommands(pi.getCommands()),
       });
     }, HEARTBEAT_INTERVAL_MS);
   });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeExtensionMessage } from "./extension.js";
+import { getSkillCommands, normalizeExtensionMessage } from "./extension.js";
 
 const SNAPSHOT_CONTENT = [{ type: "text", text: "*** Begin Patch\n*** End Patch" }];
 const CANONICAL_DIFF = "-1|before\n+1|after";
@@ -85,5 +85,16 @@ describe("normalizeExtensionMessage", () => {
     expect(
       normalizeExtensionMessage({ id: 42, role: "assistant", content: "invalid id" }, false, "fallback-id"),
     ).toBeNull();
+  });
+});
+
+describe("getSkillCommands", () => {
+  it("keeps only skill commands exposed by the active OMP session", () => {
+    expect(
+      getSkillCommands([
+        { name: "skill:seo", description: "Audit search visibility", source: "skill" },
+        { name: "review", description: "Review changes", source: "prompt" },
+      ]),
+    ).toEqual([{ name: "skill:seo", description: "Audit search visibility" }]);
   });
 });

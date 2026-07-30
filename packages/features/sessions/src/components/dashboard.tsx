@@ -28,12 +28,36 @@ type SessionSection = {
   sessions: Session[];
 };
 
+const SKILL_COMMAND_PREFIX = "skill:";
+const SKILL_SUGGESTION_LIMIT = 8;
+const SKILL_SUGGESTION_LIST_ID = "composer-skill-suggestions";
+
 export function getComposerAction(
   session: Pick<Session, "capabilities" | "status">,
   message: string,
 ): "abort" | "steer" | null {
   if (message.trim()) return "steer";
   return session.status === "running" && session.capabilities.includes("abort") ? "abort" : null;
+}
+
+/**
+ * Returns the active session's skill commands matching the composer's leading slash token.
+ */
+export function getSkillSuggestions(
+  message: string,
+  skillCommands: readonly Session["skillCommands"][number][],
+): Session["skillCommands"] {
+  const match = /^\/(?:skill:)?([^\s]*)$/i.exec(message);
+  if (!match) return [];
+  const query = match[1]?.toLocaleLowerCase() ?? "";
+  return skillCommands
+    .filter(
+      (command) =>
+        command.name.startsWith(SKILL_COMMAND_PREFIX) &&
+        command.name.slice(SKILL_COMMAND_PREFIX.length).toLocaleLowerCase().includes(query),
+    )
+    .toSorted((left, right) => left.name.localeCompare(right.name))
+    .slice(0, SKILL_SUGGESTION_LIMIT);
 }
 
 export function canKillSession(session: Pick<Session, "capabilities">): boolean {
@@ -717,6 +741,8 @@ function DashboardContent({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [viewedSubagent, setViewedSubagent] = useState<ActiveSubagent | null>(null);
   const [message, setMessage] = useState("");
+  const [activeSkillIndex, setActiveSkillIndex] = useState(0);
+  const [autocompleteDismissedFor, setAutocompleteDismissedFor] = useState<string | null>(null);
   const [commandState, setCommandState] = useState<"idle" | "sending">("idle");
   const [commandError, setCommandError] = useState<string | null>(null);
   const [launchOpen, setLaunchOpen] = useState(false);
@@ -739,10 +765,22 @@ function DashboardContent({
     [mainSessions, selectedId, sessionSections],
   );
   const composerAction = selectedSession ? getComposerAction(selectedSession, message) : null;
+  const skillSuggestions = useMemo(
+    () => getSkillSuggestions(message, selectedSession?.skillCommands ?? []),
+    [message, selectedSession?.skillCommands],
+  );
+  const visibleSkillSuggestions =
+    autocompleteDismissedFor === message ? [] : skillSuggestions;
+  const activeSkillSuggestion = visibleSkillSuggestions[activeSkillIndex] ?? visibleSkillSuggestions[0];
   const viewedSubagentSession = useMemo(
     () => sessions.find((session) => session.id === viewedSubagent?.id) ?? null,
     [sessions, viewedSubagent?.id],
   );
+
+  useEffect(() => {
+    setActiveSkillIndex(0);
+    setAutocompleteDismissedFor(null);
+  }, [message, selectedSession?.id]);
 
   useEffect(() => {
     if (selectedSession && selectedSession.id !== selectedId) setSelectedId(selectedSession.id);
@@ -772,6 +810,10 @@ function DashboardContent({
       })
       .finally(() => setTranscriptLoadingId((current) => (current === sessionId ? null : current)));
   }, [onLoadTranscript, selectedSession]);
+
+  const selectSkillSuggestion = (commandName: string) => {
+    setMessage(`/${commandName} `);
+  };
 
   const submitMessage = async (event: FormEvent) => {
     event.preventDefault();
@@ -1196,15 +1238,68 @@ function DashboardContent({
                   <label className="sr-only" htmlFor="composer-message">
                     Steer current run
                   </label>
+                  {visibleSkillSuggestions.length > 0 ? (
+                    <div
+                      className="skill-suggestions"
+                      id={SKILL_SUGGESTION_LIST_ID}
+                      role="listbox"
+                      aria-label="Available skills"
+                    >
+                      {visibleSkillSuggestions.map((skill, index) => (
+                        <button
+                          type="button"
+                          className={cn("skill-suggestion", index === activeSkillIndex && "active")}
+                          id={`${SKILL_SUGGESTION_LIST_ID}-${index}`}
+                          role="option"
+                          aria-selected={index === activeSkillIndex}
+                          key={skill.name}
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={(event) => {
+                            selectSkillSuggestion(skill.name);
+                            event.currentTarget.form?.querySelector("textarea")?.focus();
+                          }}
+                        >
+                          <code>/{skill.name}</code>
+                          {skill.description ? <span>{skill.description}</span> : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                   <Textarea
                     id="composer-message"
                     value={message}
+                    aria-autocomplete="list"
+                    aria-controls={visibleSkillSuggestions.length > 0 ? SKILL_SUGGESTION_LIST_ID : undefined}
+                    aria-expanded={visibleSkillSuggestions.length > 0}
+                    aria-activedescendant={
+                      activeSkillSuggestion
+                        ? `${SKILL_SUGGESTION_LIST_ID}-${visibleSkillSuggestions.indexOf(activeSkillSuggestion)}`
+                        : undefined
+                    }
                     onChange={(event) => setMessage(event.target.value)}
                     placeholder="Redirect the current run…"
                     rows={1}
                     onKeyDown={(event) => {
-                      if (event.key === "Enter" && (event.metaKey || event.ctrlKey))
+                      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                         event.currentTarget.form?.requestSubmit();
+                        return;
+                      }
+                      if (visibleSkillSuggestions.length === 0) return;
+                      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                        event.preventDefault();
+                        const direction = event.key === "ArrowDown" ? 1 : -1;
+                        setActiveSkillIndex(
+                          (current) =>
+                            (current + direction + visibleSkillSuggestions.length) %
+                            visibleSkillSuggestions.length,
+                        );
+                      } else if (event.key === "Enter" || event.key === "Tab") {
+                        event.preventDefault();
+                        if (activeSkillSuggestion) selectSkillSuggestion(activeSkillSuggestion.name);
+                      } else if (event.key === "Escape") {
+                        event.preventDefault();
+                        setAutocompleteDismissedFor(message);
+                      }
                     }}
                   />
                   <Button
