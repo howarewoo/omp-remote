@@ -694,7 +694,7 @@ function TranscriptEntryContent({ entry }: { entry: Session["messages"][number] 
 
 export function ToolTranscriptText({ entry }: { entry: Session["messages"][number] }) {
   return (
-    <details className="tool-message-disclosure">
+    <details className="tool-message-disclosure" open={entry.toolName === "edit"}>
       <summary>
         <TranscriptEntryHeader entry={entry} collapsible />
         <pre className="tool-message-preview">{formatToolTextPreview(entry.text)}</pre>

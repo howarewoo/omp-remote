@@ -164,9 +164,25 @@ describe("ToolTranscriptText", () => {
       Array.from({ length: 10 }, (_, index) => `line ${index + 3}`).join("\n"),
     );
     expect(block.type).toBe("details");
-    expect(block.props.open).toBeUndefined();
+    expect(block.props.open).toBe(false);
     expect(block.props.children[0].type).toBe("summary");
     expect(block.props.children[0].props.children[1].props.children).toBe(formatToolTextPreview(text));
+  });
+
+  it("renders edit output as an open disclosure by default", () => {
+    const block = ToolTranscriptText({
+      entry: {
+        id: "edit-1",
+        role: "tool",
+        toolName: "edit",
+        text: "-1|before\n+1|after",
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "diff",
+      },
+    });
+
+    expect(block.props.open).toBe(true);
   });
 
   it("labels an empty tool result", () => {
