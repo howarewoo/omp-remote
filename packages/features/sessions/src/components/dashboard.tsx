@@ -769,8 +769,7 @@ function DashboardContent({
     () => getSkillSuggestions(message, selectedSession?.skillCommands ?? []),
     [message, selectedSession?.skillCommands],
   );
-  const visibleSkillSuggestions =
-    autocompleteDismissedFor === message ? [] : skillSuggestions;
+  const visibleSkillSuggestions = autocompleteDismissedFor === message ? [] : skillSuggestions;
   const activeSkillSuggestion = visibleSkillSuggestions[activeSkillIndex] ?? visibleSkillSuggestions[0];
   const viewedSubagentSession = useMemo(
     () => sessions.find((session) => session.id === viewedSubagent?.id) ?? null,

@@ -319,7 +319,6 @@ describe("ExtensionRegisterSchema", () => {
       }).skillCommands,
     ).toEqual([{ name: "skill:seo", description: "Audit search visibility" }]);
   });
-
 });
 
 describe("ServerFrameSchema", () => {
