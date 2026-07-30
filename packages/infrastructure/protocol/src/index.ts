@@ -27,6 +27,23 @@ export const SkillCommandSchema = z.object({
   description: z.string().trim().min(1).optional(),
 });
 
+export const AskRequestSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    requestId: z.string().min(1),
+    kind: z.enum(["select", "text"]),
+    title: z.string().min(1),
+    options: z.array(z.string()).default([]),
+    initialValue: z.string().nullable().default(null),
+    expiresAt: z.string().nullable().default(null),
+  })
+  .strict();
+
+export const AskResponseSchema = z.union([
+  z.object({ value: z.string() }).strict(),
+  z.object({ cancelled: z.literal(true), timedOut: z.boolean().optional() }).strict(),
+]);
+
 export const SessionSchema = z.object({
   id: z.string().min(1),
   source: SessionSourceSchema,
@@ -94,10 +111,23 @@ export const BrowserCommandSchema = z.union([
     sessionId: z.string().min(1),
     command: z.literal("kill"),
   }),
+  z
+    .object({
+      type: z.literal("ask_response"),
+      requestId: z.string().min(1),
+      sessionId: z.string().min(1),
+      askRequestId: z.string().min(1),
+      response: AskResponseSchema,
+    })
+    .strict(),
 ]);
 
 export const ServerFrameSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("snapshot"), sessions: z.array(SessionSchema) }),
+  z.object({
+    type: z.literal("snapshot"),
+    sessions: z.array(SessionSchema),
+    askRequests: z.array(AskRequestSchema).default([]),
+  }),
   z.object({ type: z.literal("session_upsert"), session: SessionSchema }),
   z.object({
     type: z.literal("session_update"),
@@ -108,6 +138,12 @@ export const ServerFrameSchema = z.discriminatedUnion("type", [
     type: z.literal("transcript_upsert"),
     sessionId: z.string().min(1),
     message: TranscriptMessageSchema,
+  }),
+  z.object({ type: z.literal("ask_request"), request: AskRequestSchema }),
+  z.object({
+    type: z.literal("ask_cancelled"),
+    sessionId: z.string().min(1),
+    requestId: z.string().min(1),
   }),
   z.object({ type: z.literal("session_removed"), sessionId: z.string() }),
   z.object({
@@ -171,6 +207,8 @@ export const ExtensionCommandSchema = z.discriminatedUnion("command", [
   z.object({ requestId: z.string(), command: z.literal("abort") }),
 ]);
 
+export type AskRequest = z.infer<typeof AskRequestSchema>;
+export type AskResponse = z.infer<typeof AskResponseSchema>;
 export type BrowserCommand = z.infer<typeof BrowserCommandSchema>;
 export type ActiveSubagent = z.infer<typeof ActiveSubagentSchema>;
 export type ExtensionCommand = z.infer<typeof ExtensionCommandSchema>;

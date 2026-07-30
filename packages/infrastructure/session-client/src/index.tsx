@@ -1,4 +1,6 @@
 import {
+  type AskRequest,
+  type AskResponse,
   compareSessionsByCreation,
   type BrowserCommand,
   type Session,
@@ -17,6 +19,7 @@ type PendingCommand = { resolve: () => void; reject: (error: Error) => void };
 
 export interface SessionClient {
   sessions: Session[];
+  askRequests: AskRequest[];
   historyLoading: boolean;
   hasMoreHistory: boolean;
   connection: ConnectionState;
@@ -25,6 +28,7 @@ export interface SessionClient {
   command(sessionId: string, command: "prompt" | "steer" | "follow_up", text: string): Promise<void>;
   abort(sessionId: string): Promise<void>;
   kill(sessionId: string): Promise<void>;
+  respondToAsk(sessionId: string, askRequestId: string, response: AskResponse): Promise<void>;
   searchHistory(query: string): Promise<void>;
   loadMoreHistory(): Promise<void>;
   loadTranscript(sessionId: string): Promise<void>;
@@ -37,6 +41,7 @@ export function useSessionClient(): SessionClient {
   const catalogAbortRef = useRef<AbortController | null>(null);
   const transcriptAbortRef = useRef<AbortController | null>(null);
   const [liveSessions, setLiveSessions] = useState<Session[]>([]);
+  const [askRequests, setAskRequests] = useState<AskRequest[]>([]);
   const [historySessions, setHistorySessions] = useState<Session[]>([]);
   const [historyQuery, setHistoryQuery] = useState("");
   const [historyNextOffset, setHistoryNextOffset] = useState<number | null>(0);
@@ -69,13 +74,19 @@ export function useSessionClient(): SessionClient {
           }
         })();
         if (!frame) return;
-        if (frame.type === "snapshot") setLiveSessions(frame.sessions);
-        else if (frame.type === "session_upsert") {
+        if (frame.type === "snapshot") {
+          setLiveSessions(frame.sessions);
+          setAskRequests(frame.askRequests);
+        } else if (frame.type === "session_upsert") {
           setLiveSessions((current) => upsertSession(current, frame.session));
         } else if (frame.type === "session_update") {
           setLiveSessions((current) => patchSession(current, frame.sessionId, frame.patch));
         } else if (frame.type === "transcript_upsert") {
           setLiveSessions((current) => upsertTranscriptMessage(current, frame.sessionId, frame.message));
+        } else if (frame.type === "ask_request") {
+          setAskRequests((current) => upsertAskRequest(current, frame.request));
+        } else if (frame.type === "ask_cancelled") {
+          setAskRequests((current) => removeAskRequest(current, frame.sessionId, frame.requestId));
         } else if (frame.type === "session_removed") {
           setLiveSessions((current) => current.filter((session) => session.id !== frame.sessionId));
         } else if (frame.type === "command_result") {
@@ -92,6 +103,7 @@ export function useSessionClient(): SessionClient {
         if (socketRef.current === socket) socketRef.current = null;
         if (disposed) return;
         setConnection("disconnected");
+        setAskRequests([]);
         reconnectTimer = window.setTimeout(connect, RECONNECT_DELAY_MS);
       });
       socket.addEventListener("error", () => socket.close());
@@ -231,6 +243,17 @@ export function useSessionClient(): SessionClient {
       send({ type: "session_command", requestId: crypto.randomUUID(), sessionId, command: "kill" }),
     [send],
   );
+  const respondToAsk = useCallback(
+    (sessionId: string, askRequestId: string, response: AskResponse) =>
+      send({
+        type: "ask_response",
+        requestId: crypto.randomUUID(),
+        sessionId,
+        askRequestId,
+        response,
+      }),
+    [send],
+  );
 
   const sessions = useMemo(
     () =>
@@ -245,6 +268,7 @@ export function useSessionClient(): SessionClient {
 
   return {
     sessions,
+    askRequests,
     historyLoading,
     hasMoreHistory: historyNextOffset !== null,
     connection,
@@ -253,6 +277,7 @@ export function useSessionClient(): SessionClient {
     command,
     abort,
     kill,
+    respondToAsk,
     searchHistory,
     loadMoreHistory,
     loadTranscript,
@@ -316,4 +341,20 @@ function upsertSession(sessions: Session[], session: Session): Session[] {
     sessions.filter((current) => current.id !== session.id),
     [session],
   );
+}
+
+export function upsertAskRequest(requests: AskRequest[], request: AskRequest): AskRequest[] {
+  const existingIndex = requests.findIndex((current) => current.sessionId === request.sessionId);
+  if (existingIndex < 0) return [...requests, request];
+  const next = [...requests];
+  next[existingIndex] = request;
+  return next;
+}
+
+export function removeAskRequest(requests: AskRequest[], sessionId: string, requestId: string): AskRequest[] {
+  const index = requests.findIndex(
+    (request) => request.sessionId === sessionId && request.requestId === requestId,
+  );
+  if (index < 0) return requests;
+  return requests.toSpliced(index, 1);
 }

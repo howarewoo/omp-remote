@@ -86,6 +86,8 @@ export interface RpcSessionOptions {
   onStderr: (text: string) => void;
 }
 
+export type RpcUiResponse = { value: string } | { cancelled: true; timedOut?: boolean | undefined };
+
 export class RpcSession {
   readonly #decoder = new RpcFrameDecoder();
   readonly #listeners = new Set<(frame: RpcFrame) => void>();
@@ -101,7 +103,7 @@ export class RpcSession {
 
   async start(): Promise<RpcFrame> {
     if (this.#child) throw new Error("OMP RPC session is already running");
-    const args = ["--mode", "rpc", "--cwd", this.#options.cwd];
+    const args = ["--mode", "rpc-ui", "--cwd", this.#options.cwd];
     if (this.#options.resume) args.push("--resume", this.#options.resume);
     const child = spawn(this.#options.ompPath, args, { stdio: ["pipe", "pipe", "pipe"] });
     this.#child = child;
@@ -142,6 +144,20 @@ export class RpcSession {
         this.#pending.delete(id);
         reject(error);
       });
+    });
+  }
+
+  respondToUiRequest(requestId: string, response: RpcUiResponse): Promise<void> {
+    const child = this.#child;
+    if (!child?.stdin.writable) return Promise.reject(new Error("OMP RPC session is not connected"));
+    return new Promise<void>((resolve, reject) => {
+      child.stdin.write(
+        `${JSON.stringify({ type: "extension_ui_response", id: requestId, ...response })}\n`,
+        (error) => {
+          if (error) reject(error);
+          else resolve();
+        },
+      );
     });
   }
 

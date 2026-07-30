@@ -1,4 +1,4 @@
-import type { Session } from "@omp-remote/protocol";
+import type { AskRequest, Session } from "@omp-remote/protocol";
 import { isValidElement, type ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import {
@@ -6,6 +6,7 @@ import {
   formatSubagentActivityLabel,
   formatSystemTextPreview,
   formatToolTextPreview,
+  getActiveAskRequest,
   getComposerAction,
   getSkillSuggestions,
   groupSessionsByConnection,
@@ -228,6 +229,39 @@ describe("SystemTranscriptText", () => {
     ["  Build finished.\nNo errors.  ", "Build finished. No errors."],
   ])("formats the preview for %j", (text, expected) => {
     expect(formatSystemTextPreview(text)).toBe(expected);
+  });
+});
+
+describe("getActiveAskRequest", () => {
+  const requests: AskRequest[] = [
+    {
+      sessionId: "session-2",
+      requestId: "ask-2",
+      kind: "select",
+      title: "Second session question",
+      options: ["Continue", "Stop"],
+      initialValue: null,
+      expiresAt: null,
+    },
+    {
+      sessionId: "session-1",
+      requestId: "ask-1",
+      kind: "text",
+      title: "Selected session question",
+      options: [],
+      initialValue: null,
+      expiresAt: null,
+    },
+  ];
+
+  it("prioritizes the selected session without reordering the request queue", () => {
+    expect(getActiveAskRequest(requests, "session-1")).toBe(requests[1]);
+    expect(requests.map(({ requestId }) => requestId)).toEqual(["ask-2", "ask-1"]);
+  });
+
+  it("falls back to the oldest pending request", () => {
+    expect(getActiveAskRequest(requests, "missing-session")).toBe(requests[0]);
+    expect(getActiveAskRequest([], "session-1")).toBeNull();
   });
 });
 

@@ -1,4 +1,10 @@
-import { type ActiveSubagent, filterMainSessions, type Session } from "@omp-remote/protocol";
+import {
+  type ActiveSubagent,
+  type AskRequest,
+  type AskResponse,
+  filterMainSessions,
+  type Session,
+} from "@omp-remote/protocol";
 import { SESSION_STATUS_LABEL, SESSION_STATUS_TONE } from "@omp-remote/ui";
 import { type FormEvent, memo, useEffect, useMemo, useRef, useState } from "react";
 import { SubagentSessionViewer } from "./subagent-session-viewer.js";
@@ -453,8 +459,16 @@ export function formatSubagentActivityLabel(count: number): string {
   return `${count} ${count === 1 ? "subagent" : "subagents"} running`;
 }
 
+export function getActiveAskRequest(
+  askRequests: readonly AskRequest[],
+  selectedSessionId: string | null,
+): AskRequest | null {
+  return askRequests.find((request) => request.sessionId === selectedSessionId) ?? askRequests[0] ?? null;
+}
+
 export interface DashboardProps {
   sessions: Session[];
+  askRequests: AskRequest[];
   historyLoading: boolean;
   hasMoreHistory: boolean;
   connection: "connecting" | "connected" | "disconnected";
@@ -465,6 +479,7 @@ export interface DashboardProps {
   onCommand(sessionId: string, command: ComposerMode, text: string): Promise<void>;
   onAbort(sessionId: string): Promise<void>;
   onKill(sessionId: string): Promise<void>;
+  onRespondToAsk(sessionId: string, askRequestId: string, response: AskResponse): Promise<void>;
   onSearchHistory(query: string): Promise<void>;
   onLoadMoreHistory(): Promise<void>;
   onLoadTranscript(sessionId: string): Promise<void>;
@@ -743,6 +758,7 @@ export function TranscriptEntry({ entry }: { entry: Session["messages"][number] 
 }
 function DashboardContent({
   sessions,
+  askRequests,
   historyLoading,
   hasMoreHistory,
   connection,
@@ -753,6 +769,7 @@ function DashboardContent({
   onCommand,
   onAbort,
   onKill,
+  onRespondToAsk,
   onSearchHistory,
   onLoadMoreHistory,
   onLoadTranscript,
@@ -768,6 +785,9 @@ function DashboardContent({
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [abortOpen, setAbortOpen] = useState(false);
   const [killOpen, setKillOpen] = useState(false);
+  const [askDraft, setAskDraft] = useState("");
+  const [askState, setAskState] = useState<"idle" | "sending">("idle");
+  const [askError, setAskError] = useState<string | null>(null);
   const [historyQuery, setHistoryQuery] = useState("");
   const [activeHistoryQuery, setActiveHistoryQuery] = useState("");
   const [transcriptLoadingId, setTranscriptLoadingId] = useState<string | null>(null);
@@ -784,6 +804,12 @@ function DashboardContent({
       mainSessions.find((session) => session.id === selectedId) ?? sessionSections[0]?.sessions[0] ?? null,
     [mainSessions, selectedId, sessionSections],
   );
+  const activeAskRequest = getActiveAskRequest(askRequests, selectedSession?.id ?? null);
+  const activeAskSession = activeAskRequest
+    ? sessions.find((session) => session.id === activeAskRequest.sessionId)
+    : null;
+  const activeAskSessionName =
+    activeAskSession?.name ?? activeAskSession?.cwd.split("/").filter(Boolean).at(-1) ?? "OMP session";
   const composerAction = selectedSession ? getComposerAction(selectedSession, message) : null;
   const skillSuggestions = useMemo(
     () => getSkillSuggestions(message, selectedSession?.skillCommands ?? []),
@@ -804,6 +830,12 @@ function DashboardContent({
   useEffect(() => {
     if (selectedSession && selectedSession.id !== selectedId) setSelectedId(selectedSession.id);
   }, [selectedId, selectedSession]);
+
+  useEffect(() => {
+    setAskDraft(activeAskRequest?.initialValue ?? "");
+    setAskError(null);
+    setAskState("idle");
+  }, [activeAskRequest?.initialValue, activeAskRequest?.requestId]);
 
   useEffect(() => {
     followTranscriptRef.current = true;
@@ -931,6 +963,20 @@ function DashboardContent({
       );
     } finally {
       setCommandState("idle");
+    }
+  };
+
+  const respondToActiveAsk = async (response: AskResponse) => {
+    if (!activeAskRequest || askState === "sending") return;
+    setAskState("sending");
+    setAskError(null);
+    try {
+      await onRespondToAsk(activeAskRequest.sessionId, activeAskRequest.requestId, response);
+    } catch (responseFailure) {
+      setAskError(
+        responseFailure instanceof Error ? responseFailure.message : "Your answer could not be delivered",
+      );
+      setAskState("idle");
     }
   };
 
@@ -1442,6 +1488,88 @@ function DashboardContent({
           </div>
         )}
       </SubagentSessionViewer>
+
+      <Dialog
+        open={activeAskRequest !== null}
+        onOpenChange={(open) => {
+          if (!open) void respondToActiveAsk({ cancelled: true });
+        }}
+        dismissible={askState !== "sending"}
+        title={activeAskRequest?.title ?? "OMP needs your input"}
+        description={`${activeAskSessionName} is waiting for your response.`}
+      >
+        {activeAskRequest?.kind === "select" ? (
+          <div className="ask-options" aria-busy={askState === "sending"}>
+            {activeAskRequest.options.map((option, index) => (
+              <Button
+                type="button"
+                variant="outline"
+                className="ask-option"
+                disabled={askState === "sending" || connection !== "connected"}
+                onClick={() => void respondToActiveAsk({ value: option })}
+                key={`${option}-${index}`}
+              >
+                {option}
+              </Button>
+            ))}
+          </div>
+        ) : (
+          <form
+            className="ask-answer-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void respondToActiveAsk({ value: askDraft });
+            }}
+          >
+            <label className="sr-only" htmlFor="ask-answer">
+              Your answer
+            </label>
+            <Textarea
+              id="ask-answer"
+              className="ask-textarea"
+              value={askDraft}
+              onChange={(event) => setAskDraft(event.target.value)}
+              disabled={askState === "sending" || connection !== "connected"}
+              rows={5}
+              autoFocus
+            />
+            <footer className="dialog-actions ask-dialog-actions">
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={askState === "sending"}
+                onClick={() => void respondToActiveAsk({ cancelled: true })}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={askState === "sending" || connection !== "connected"}
+                aria-busy={askState === "sending"}
+              >
+                {askState === "sending" ? "Answering…" : "Answer"}
+              </Button>
+            </footer>
+          </form>
+        )}
+        {activeAskRequest?.kind === "select" ? (
+          <footer className="dialog-actions ask-dialog-actions">
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={askState === "sending"}
+              onClick={() => void respondToActiveAsk({ cancelled: true })}
+            >
+              Cancel
+            </Button>
+          </footer>
+        ) : null}
+        {askError ? (
+          <p className="inline-error ask-error" role="alert">
+            {askError}
+          </p>
+        ) : null}
+      </Dialog>
 
       <Dialog
         open={launchOpen}

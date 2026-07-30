@@ -95,7 +95,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       await rm(directory, { recursive: true, force: true });
     }
   });
-  it("launches RPC mode without disabling extensions", async () => {
+  it("launches RPC UI mode without disabling extensions", async () => {
     const directory = await mkdtemp(join(tmpdir(), "omp-remote-rpc-"));
     const executable = join(directory, "rpc-fixture.cjs");
     await writeFile(
@@ -133,7 +133,80 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 
       expect(state).toMatchObject({
         type: "response",
-        data: { argv: ["--mode", "rpc", "--cwd", directory] },
+        data: { argv: ["--mode", "rpc-ui", "--cwd", directory] },
+      });
+    } finally {
+      await rpc?.terminate().catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("writes extension UI responses without wrapping them as RPC commands", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "omp-remote-rpc-ui-"));
+    const executable = join(directory, "rpc-ui-fixture.cjs");
+    await writeFile(
+      executable,
+      `#!/usr/bin/env node
+const readline = require("node:readline");
+let sentAsk = false;
+process.stdout.write(JSON.stringify({ type: "ready", supportedProtocolVersions: [] }) + "\\n");
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const frame = JSON.parse(line);
+  if (frame.type === "extension_ui_response") {
+    process.stdout.write(JSON.stringify({ type: "ui_response_received", frame }) + "\\n");
+    return;
+  }
+  process.stdout.write(JSON.stringify({
+    type: "response",
+    id: frame.id,
+    success: true,
+    data: { sessionId: "fixture-session", isStreaming: false },
+  }) + "\\n");
+  if (!sentAsk) {
+    sentAsk = true;
+    process.stdout.write(JSON.stringify({
+      type: "extension_ui_request",
+      id: "ask-1",
+      method: "select",
+      title: "Which database?",
+      options: ["SQLite", "PostgreSQL"],
+    }) + "\\n");
+  }
+});
+`,
+    );
+    await chmod(executable, 0o755);
+
+    let rpc: RpcSession | undefined;
+    try {
+      rpc = new RpcSession({
+        cwd: directory,
+        ompPath: executable,
+        resume: null,
+        onStderr: () => undefined,
+      });
+      const askFrame = new Promise<Record<string, unknown>>((resolve) => {
+        const unsubscribe = rpc?.subscribe((frame) => {
+          if (frame.type !== "extension_ui_request") return;
+          unsubscribe?.();
+          resolve(frame);
+        });
+      });
+
+      await rpc.start();
+      await expect(askFrame).resolves.toMatchObject({ id: "ask-1", method: "select" });
+
+      const receipt = new Promise<Record<string, unknown>>((resolve) => {
+        const unsubscribe = rpc?.subscribe((frame) => {
+          if (frame.type !== "ui_response_received") return;
+          unsubscribe?.();
+          resolve(frame);
+        });
+      });
+      await rpc.respondToUiRequest("ask-1", { value: "PostgreSQL" });
+
+      await expect(receipt).resolves.toMatchObject({
+        frame: { type: "extension_ui_response", id: "ask-1", value: "PostgreSQL" },
       });
     } finally {
       await rpc?.terminate().catch(() => undefined);

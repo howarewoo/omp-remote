@@ -1,6 +1,6 @@
-import type { Session } from "@omp-remote/protocol";
+import type { AskRequest, Session } from "@omp-remote/protocol";
 import { describe, expect, it } from "vitest";
-import { patchSession, upsertTranscriptMessage } from "./index.js";
+import { patchSession, removeAskRequest, upsertAskRequest, upsertTranscriptMessage } from "./index.js";
 
 const SESSION: Session = {
   id: "session-1",
@@ -123,5 +123,37 @@ describe("patchSession", () => {
     const sessions = [SESSION];
 
     expect(patchSession(sessions, "missing-session", { status: "idle" })).toBe(sessions);
+  });
+});
+
+describe("remote ask request state", () => {
+  const firstRequest: AskRequest = {
+    sessionId: "session-1",
+    requestId: "ask-1",
+    kind: "select",
+    title: "Which database?",
+    options: ["SQLite", "PostgreSQL"],
+    initialValue: null,
+    expiresAt: null,
+  };
+
+  it("replaces the active request for a session in place", () => {
+    const otherRequest = { ...firstRequest, sessionId: "session-2", requestId: "ask-2" };
+    const nextRequest = {
+      ...firstRequest,
+      requestId: "ask-3",
+      kind: "text" as const,
+      title: "Type another answer",
+      options: [],
+    };
+
+    expect(upsertAskRequest([firstRequest, otherRequest], nextRequest)).toEqual([nextRequest, otherRequest]);
+  });
+
+  it("removes only the matching request", () => {
+    const newerRequest = { ...firstRequest, requestId: "ask-2" };
+
+    expect(removeAskRequest([newerRequest], "session-1", "ask-1")).toEqual([newerRequest]);
+    expect(removeAskRequest([newerRequest], "session-1", "ask-2")).toEqual([]);
   });
 });
