@@ -43,6 +43,8 @@ export default function App() {
       onCommand={client.command}
       onAbort={client.abort}
       onKill={client.kill}
+      onSetModel={client.setModel}
+      onSetEffort={client.setEffort}
       onRespondToAsk={client.respondToAsk}
       onSearchHistory={client.searchHistory}
       onLoadMoreHistory={client.loadMoreHistory}

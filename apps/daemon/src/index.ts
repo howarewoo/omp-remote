@@ -5,11 +5,13 @@ import { type RpcFrame, RpcSession } from "@omp-remote/omp-rpc";
 import {
   BrowserCommandSchema,
   type AskRequest,
+  EffortSchema,
   ExtensionFrameSchema,
   SessionCatalogPageSchema,
   SessionTranscriptResponseSchema,
   type ServerFrame,
   type Session,
+  type SessionModelOption,
 } from "@omp-remote/protocol";
 import { SessionRegistry } from "@omp-remote/sessions/services";
 import Fastify from "fastify";
@@ -38,6 +40,20 @@ const EnvironmentSchema = z.object({
   OMP_REMOTE_ORIGIN: z.string().url().optional(),
   OMP_REMOTE_OMP_PATH: z.string().min(1).default("omp"),
 });
+const RpcModelSchema = z
+  .object({
+    provider: z.string(),
+    id: z.string(),
+    name: z.string(),
+    thinking: z
+      .object({
+        efforts: z.array(EffortSchema),
+        requiresEffort: z.boolean().optional(),
+      })
+      .optional(),
+  })
+  .passthrough();
+
 const RpcStateResponseSchema = z.object({
   type: z.literal("response"),
   command: z.literal("get_state"),
@@ -46,7 +62,8 @@ const RpcStateResponseSchema = z.object({
     sessionId: z.string(),
     sessionName: z.string().nullable().optional(),
     sessionFile: z.string().nullable().optional(),
-    model: z.object({ provider: z.string(), id: z.string() }).nullable().optional(),
+    model: RpcModelSchema.nullable().optional(),
+    thinkingLevel: EffortSchema.optional(),
     isStreaming: z.boolean(),
     queuedMessageCount: z.number().optional(),
     contextUsage: z.object({ percent: z.number() }).nullable().optional(),
@@ -67,6 +84,12 @@ const RpcAvailableCommandsResponseSchema = z.object({
   command: z.literal("get_available_commands"),
   success: z.literal(true),
   data: z.object({ commands: z.array(z.unknown()) }),
+});
+const RpcAvailableModelsResponseSchema = z.object({
+  type: z.literal("response"),
+  command: z.literal("get_available_models"),
+  success: z.literal(true),
+  data: z.object({ models: z.array(RpcModelSchema) }),
 });
 const RpcAvailableCommandsUpdateSchema = z.object({
   type: z.literal("available_commands_update"),
@@ -228,6 +251,13 @@ app.get("/ws", { websocket: true }, (socket, request) => {
           await rpcSession.terminate();
         } else if (command.command === "abort") {
           await rpcSession.request({ type: "abort" });
+        } else if (command.command === "set_model") {
+          const [provider, ...modelId] = command.model.split("/");
+          await rpcSession.request({ type: "set_model", provider, modelId: modelId.join("/") });
+          await refreshRpcState(command.sessionId, rpcSession);
+        } else if (command.command === "set_effort") {
+          await rpcSession.request({ type: "set_thinking_level", level: command.effort });
+          await refreshRpcState(command.sessionId, rpcSession);
         } else {
           const rpcCommand: RpcFrame =
             command.command === "follow_up"
@@ -318,6 +348,8 @@ app.get("/extension", { websocket: true }, (socket, request) => {
         name: frame.name,
         model: frame.model,
         contextPercent: frame.contextPercent,
+        effort: frame.effort,
+        availableModels: frame.availableModels,
         lastActivity: new Date().toISOString(),
         ...(frame.skillCommands !== undefined ? { skillCommands: frame.skillCommands } : {}),
       });
@@ -333,6 +365,7 @@ app.get("/extension", { websocket: true }, (socket, request) => {
         name: frame.name,
         model: frame.model,
         contextPercent: frame.contextPercent,
+        effort: frame.effort,
         lastActivity: new Date().toISOString(),
       });
       if (frame.message) registry.appendMessage(frame.sessionId, frame.message);
@@ -436,7 +469,10 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
   if (!sessionId) throw new Error("OMP RPC did not return a session ID");
   const contextPercent = normalizePercent(stateResponse.data.contextUsage?.percent);
   const catalogSession = sessionCatalog.get(sessionId);
-  const skillCommands = await loadRpcSkillCommands(sessionId, rpc);
+  const [skillCommands, availableModels] = await Promise.all([
+    loadRpcSkillCommands(sessionId, rpc),
+    loadRpcModelOptions(sessionId, rpc),
+  ]);
   const now = new Date().toISOString();
   const session: Session = {
     id: sessionId,
@@ -453,10 +489,12 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
     model: stateResponse.data.model
       ? `${stateResponse.data.model.provider}/${stateResponse.data.model.id}`
       : null,
+    effort: stateResponse.data.thinkingLevel ?? null,
+    availableModels,
     contextPercent,
     createdAt: catalogSession?.createdAt ?? now,
     lastActivity: now,
-    capabilities: ["prompt", "steer", "follow_up", "abort", "kill", "resume"],
+    capabilities: ["prompt", "steer", "follow_up", "abort", "kill", "resume", "model", "effort"],
     messages: [],
     sessionPath: stateResponse.data.sessionFile ?? null,
     activeSubagents: catalogSession?.activeSubagents ?? [],
@@ -492,6 +530,25 @@ async function loadRpcSkillCommands(sessionId: string, rpc: RpcSession): Promise
   }
 }
 
+async function loadRpcModelOptions(sessionId: string, rpc: RpcSession): Promise<SessionModelOption[]> {
+  try {
+    const response = RpcAvailableModelsResponseSchema.parse(
+      await rpc.request({ type: "get_available_models" }),
+    );
+    return response.data.models.map((model) => ({
+      provider: model.provider,
+      id: model.id,
+      name: model.name,
+      efforts: model.thinking
+        ? [...(model.thinking.requiresEffort ? [] : (["off"] as const)), ...model.thinking.efforts]
+        : [],
+    }));
+  } catch (error) {
+    logger.error("Could not load OMP model choices", error, { sessionId });
+    return [];
+  }
+}
+
 async function refreshRpcState(sessionId: string, rpc: RpcSession): Promise<void> {
   try {
     const currentSession = registry.get(sessionId);
@@ -499,6 +556,7 @@ async function refreshRpcState(sessionId: string, rpc: RpcSession): Promise<void
     registry.update(sessionId, {
       name: response.data.sessionName ?? null,
       model: response.data.model ? `${response.data.model.provider}/${response.data.model.id}` : null,
+      effort: response.data.thinkingLevel ?? null,
       contextPercent: normalizePercent(response.data.contextUsage?.percent),
       ...(currentSession ? { branch: await resolveGitBranch(currentSession.cwd) } : {}),
       status: response.data.queuedMessageCount ? "waiting" : response.data.isStreaming ? "running" : "idle",

@@ -867,17 +867,27 @@ textarea:disabled {
 }
 
 .session-metadata {
-  display: flex;
+  display: grid;
   flex: 0 0 auto;
-  justify-content: flex-end;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: stretch;
   margin: 0;
-  padding: 1.2rem 0 1.4rem;
+  padding: 0.65rem 0 0.75rem;
+  border-top: 1px solid var(--border);
 }
 
-.session-metadata div {
+.session-metadata > div {
+  display: grid;
   min-width: 6rem;
+  align-content: center;
   padding: 0 1rem;
   border-left: 1px solid var(--border);
+}
+
+.session-metadata > .session-model-metadata {
+  min-width: 0;
+  padding-left: 0;
+  border-left: 0;
 }
 
 .session-metadata dt {
@@ -890,13 +900,51 @@ textarea:disabled {
 
 .session-metadata dd {
   max-width: 15rem;
-  margin: 0.45rem 0 0;
+  margin: 0.35rem 0 0;
   overflow: hidden;
   color: var(--foreground);
   font-family: var(--font-mono);
   font-size: 0.6875rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-model-metadata dd {
+  max-width: none;
+  margin-top: 0.2rem;
+}
+
+.session-model-trigger.ui-button {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.5rem;
+  justify-content: flex-start;
+  padding: 0 0.4rem;
+  color: var(--foreground);
+}
+
+.session-model-trigger:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.session-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-effort {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+  font-size: 0.625rem;
+  font-weight: 500;
+}
+
+.session-model-trigger .icon {
+  margin-left: auto;
+  color: var(--muted-foreground);
 }
 
 .subagent-activity {
@@ -1113,6 +1161,196 @@ textarea:disabled {
 
 .drawer-swipe-handle:active {
   cursor: grabbing;
+}
+
+.model-settings-sheet {
+  width: min(100%, 48rem);
+  margin-inline: auto;
+}
+
+.model-settings-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.model-settings-header > div {
+  min-width: 0;
+}
+
+.model-settings-header h2,
+.model-settings-header p {
+  margin: 0;
+}
+
+.model-settings-header h2 {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+}
+
+.model-settings-header p {
+  margin-top: 0.35rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.model-settings-body {
+  display: grid;
+  min-height: 0;
+  gap: 1.5rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 1.25rem;
+}
+
+.model-search-field {
+  position: relative;
+}
+
+.model-search-field .icon {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 0.8rem;
+  color: var(--muted-foreground);
+  transform: translateY(-50%);
+}
+
+.model-search-field .ui-input {
+  padding-left: 2.4rem;
+}
+
+.model-settings-section {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.model-settings-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.model-settings-section-heading h3 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.model-settings-section-heading span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-option-list {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 1.5);
+}
+
+.model-option.ui-button {
+  width: 100%;
+  min-height: 3.75rem;
+  height: auto;
+  justify-content: space-between;
+  padding: 0.65rem 0.8rem;
+  border: 0;
+  border-radius: 0;
+  color: var(--foreground);
+  text-align: left;
+}
+
+.model-option + .model-option {
+  border-top: 1px solid var(--border);
+}
+
+.model-option > span:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 0.25rem;
+}
+
+.model-option strong,
+.model-option small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-option strong {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.model-option small {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 450;
+}
+
+.selection-indicator {
+  width: 0.6rem;
+  height: 0.6rem;
+  flex: 0 0 auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+}
+
+.model-option.selected {
+  background: oklch(100% 0 0 / 0.055);
+}
+
+.model-option.selected .selection-indicator {
+  border-color: var(--primary);
+  background: var(--primary);
+  box-shadow: 0 2px 8px oklch(70% 0.24 340 / 0.25);
+}
+
+.effort-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: 0.5rem;
+}
+
+.effort-option.selected {
+  border-color: var(--primary);
+  color: var(--foreground);
+  background: oklch(70% 0.24 340 / 0.12);
+}
+
+.model-settings-empty {
+  margin: 0;
+  padding: 1rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.model-settings-error {
+  margin: 0;
+}
+
+.model-settings-footer {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  padding: 0.8rem 1.25rem max(0.8rem, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
 }
 
 .subagent-session-header {
@@ -1915,17 +2153,6 @@ textarea:disabled {
   }
 }
 
-@media (max-width: 900px) {
-  .session-metadata {
-    border-top: 1px solid var(--border);
-  }
-
-  .session-metadata div:first-child {
-    padding-left: 0;
-    border-left: 0;
-  }
-}
-
 @media (max-width: 767px) {
   body {
     overflow: hidden;
@@ -2034,17 +2261,16 @@ textarea:disabled {
   }
 
   .session-metadata {
-    padding: 0.8rem 0 1rem;
+    padding-block: 0.55rem;
   }
 
-  .session-metadata div {
-    min-width: 0;
-    flex: 1;
+  .session-metadata > div {
+    min-width: 4.5rem;
     padding: 0 0.65rem;
   }
 
-  .session-metadata dd {
-    max-width: 8rem;
+  .session-model-trigger.ui-button {
+    min-height: 2.75rem;
   }
 
   .subagent-activity {
@@ -2105,12 +2331,16 @@ textarea:disabled {
     margin-left: -0.35rem;
   }
 
-  .session-metadata div:nth-child(2) {
-    text-align: center;
+  .session-metadata {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .session-metadata div:last-child {
-    text-align: right;
+  .session-metadata > div:last-child {
+    display: none;
+  }
+
+  .session-effort {
+    display: none;
   }
 
   .composer-footer > span:first-child {

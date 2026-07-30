@@ -86,6 +86,14 @@ function cloneSession(session: Session): Session {
   return {
     ...session,
     capabilities: [...session.capabilities],
+    ...(session.availableModels
+      ? {
+          availableModels: session.availableModels.map((model) => ({
+            ...model,
+            efforts: [...model.efforts],
+          })),
+        }
+      : {}),
     messages: session.messages.map((message) => ({ ...message })),
     activeSubagents: session.activeSubagents.map((subagent) => ({ ...subagent })),
     skillCommands: session.skillCommands.map((command) => ({ ...command })),
@@ -101,6 +109,13 @@ function cloneSessionPatch(patch: SessionPatch): Partial<Omit<Session, "id" | "m
   if (patch.status !== undefined) clone.status = patch.status;
   if (patch.connected !== undefined) clone.connected = patch.connected;
   if (patch.model !== undefined) clone.model = patch.model;
+  if (patch.effort !== undefined) clone.effort = patch.effort;
+  if (patch.availableModels !== undefined) {
+    clone.availableModels = patch.availableModels.map((model) => ({
+      ...model,
+      efforts: [...model.efforts],
+    }));
+  }
   if (patch.contextPercent !== undefined) clone.contextPercent = patch.contextPercent;
   if (patch.createdAt !== undefined) clone.createdAt = patch.createdAt;
   if (patch.lastActivity !== undefined) clone.lastActivity = patch.lastActivity;

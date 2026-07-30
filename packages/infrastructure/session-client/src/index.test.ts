@@ -213,6 +213,27 @@ describe("patchSession", () => {
     expect(sessions[1]).toBe(other);
   });
 
+  it("applies model catalog and effort updates from the host", () => {
+    const sessions = patchSession([SESSION], "session-1", {
+      model: "anthropic/claude-opus-4.7",
+      effort: "max",
+      availableModels: [
+        {
+          provider: "anthropic",
+          id: "claude-opus-4.7",
+          name: "Claude Opus 4.7",
+          efforts: ["low", "medium", "high", "max"],
+        },
+      ],
+    });
+
+    expect(sessions[0]).toMatchObject({
+      model: "anthropic/claude-opus-4.7",
+      effort: "max",
+      availableModels: [{ provider: "anthropic", id: "claude-opus-4.7" }],
+    });
+  });
+
   it("returns the original array when the session ID is absent", () => {
     const sessions = [SESSION];
 

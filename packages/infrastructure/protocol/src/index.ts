@@ -2,8 +2,24 @@ import { z } from "zod";
 
 export const SessionSourceSchema = z.enum(["rpc", "extension", "history"]);
 export const SessionStatusSchema = z.enum(["idle", "running", "waiting", "disconnected", "history"]);
-export const SessionCapabilitySchema = z.enum(["prompt", "steer", "follow_up", "abort", "kill", "resume"]);
+export const SessionCapabilitySchema = z.enum([
+  "prompt",
+  "steer",
+  "follow_up",
+  "abort",
+  "kill",
+  "resume",
+  "model",
+  "effort",
+]);
 
+export const EffortSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+export const SessionModelOptionSchema = z.object({
+  provider: z.string().min(1),
+  id: z.string().min(1),
+  name: z.string().min(1),
+  efforts: z.array(EffortSchema),
+});
 export const TranscriptPresentationSchema = z.enum(["text", "diff"]);
 
 export const TranscriptMessageSchema = z.object({
@@ -53,6 +69,8 @@ export const SessionSchema = z.object({
   status: SessionStatusSchema,
   connected: z.boolean(),
   model: z.string().nullable(),
+  effort: EffortSchema.nullable().optional(),
+  availableModels: z.array(SessionModelOptionSchema).optional(),
   contextPercent: z.number().min(0).max(100).nullable(),
   createdAt: z.string(),
   lastActivity: z.string(),
@@ -110,6 +128,20 @@ export const BrowserCommandSchema = z.union([
     requestId: z.string().min(1),
     sessionId: z.string().min(1),
     command: z.literal("kill"),
+  }),
+  z.object({
+    type: z.literal("session_command"),
+    requestId: z.string().min(1),
+    sessionId: z.string().min(1),
+    command: z.literal("set_model"),
+    model: z.string().regex(/^[^/]+\/.+$/),
+  }),
+  z.object({
+    type: z.literal("session_command"),
+    requestId: z.string().min(1),
+    sessionId: z.string().min(1),
+    command: z.literal("set_effort"),
+    effort: EffortSchema,
   }),
   z
     .object({
@@ -173,6 +205,7 @@ export const ExtensionEventSchema = z.object({
   name: z.string().nullable(),
   model: z.string().nullable(),
   contextPercent: z.number().min(0).max(100).nullable(),
+  effort: EffortSchema.nullable().optional(),
 });
 
 export const ExtensionHeartbeatSchema = z.object({
@@ -181,6 +214,8 @@ export const ExtensionHeartbeatSchema = z.object({
   name: z.string().nullable(),
   model: z.string().nullable(),
   contextPercent: z.number().min(0).max(100).nullable(),
+  effort: EffortSchema.nullable().optional(),
+  availableModels: z.array(SessionModelOptionSchema).optional(),
   idle: z.boolean(),
   skillCommands: z.array(SkillCommandSchema).optional(),
 });
@@ -205,11 +240,18 @@ export const ExtensionCommandSchema = z.discriminatedUnion("command", [
     text: CommandTextSchema,
   }),
   z.object({ requestId: z.string(), command: z.literal("abort") }),
+  z.object({
+    requestId: z.string(),
+    command: z.literal("set_model"),
+    model: z.string().regex(/^[^/]+\/.+$/),
+  }),
+  z.object({ requestId: z.string(), command: z.literal("set_effort"), effort: EffortSchema }),
 ]);
 
 export type AskRequest = z.infer<typeof AskRequestSchema>;
 export type AskResponse = z.infer<typeof AskResponseSchema>;
 export type BrowserCommand = z.infer<typeof BrowserCommandSchema>;
+export type Effort = z.infer<typeof EffortSchema>;
 export type ActiveSubagent = z.infer<typeof ActiveSubagentSchema>;
 export type ExtensionCommand = z.infer<typeof ExtensionCommandSchema>;
 export type ExtensionFrame = z.infer<typeof ExtensionFrameSchema>;
@@ -217,6 +259,7 @@ export type ServerFrame = z.infer<typeof ServerFrameSchema>;
 export type SessionCatalogPage = z.infer<typeof SessionCatalogPageSchema>;
 export type SessionTranscriptResponse = z.infer<typeof SessionTranscriptResponseSchema>;
 export type Session = z.infer<typeof SessionSchema>;
+export type SessionModelOption = z.infer<typeof SessionModelOptionSchema>;
 export type SessionPatch = z.infer<typeof SessionPatchSchema>;
 export type SessionCapability = z.infer<typeof SessionCapabilitySchema>;
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
