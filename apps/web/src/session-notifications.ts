@@ -1,4 +1,4 @@
-import type { Session } from "@omp-remote/protocol";
+import { getMainSessionIds, type Session } from "@omp-remote/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export type SessionNotificationState = "blocked" | "enabled" | "error" | "prompt" | "unsupported";
@@ -21,11 +21,13 @@ export function findSessionNotifications(
 ): SessionNotificationEvent[] {
   if (!previousSessions) return [];
   const previousById = new Map(previousSessions.map((session) => [session.id, session]));
+  const rootSessionIds = getMainSessionIds([...previousSessions, ...sessions]);
   const notifications: SessionNotificationEvent[] = [];
 
   for (const session of sessions) {
     const previous = previousById.get(session.id);
-    if (!previous || !session.connected || session.source === "history") continue;
+    if (!previous || !rootSessionIds.has(session.id) || !session.connected || session.source === "history")
+      continue;
     const displayName = session.name ?? session.cwd;
 
     if (session.status === "waiting" && previous.status !== "waiting") {

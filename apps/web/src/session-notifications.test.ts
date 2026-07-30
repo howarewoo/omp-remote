@@ -21,6 +21,19 @@ const BASE_SESSION: Session = {
   skillCommands: [],
 };
 
+const WORKER_SESSION: Session = {
+  ...BASE_SESSION,
+  id: "session-worker",
+  name: "NotificationWorker",
+  sessionPath: "/work/.omp/session/NotificationWorker.jsonl",
+};
+
+const ACTIVE_WORKER = {
+  id: WORKER_SESSION.id,
+  name: "NotificationWorker",
+  lastActivity: WORKER_SESSION.lastActivity,
+};
+
 describe("findSessionNotifications", () => {
   it("notifies when a running session becomes idle", () => {
     expect(findSessionNotifications([BASE_SESSION], [{ ...BASE_SESSION, status: "idle" }])).toEqual([
@@ -38,6 +51,59 @@ describe("findSessionNotifications", () => {
         title: "Input required",
         body: "Notification work is waiting for input.",
         tag: "session-session-1-waiting",
+      },
+    ]);
+  });
+
+  it("does not notify for a nested worker before active membership is synchronized", () => {
+    expect(
+      findSessionNotifications(
+        [BASE_SESSION, WORKER_SESSION],
+        [BASE_SESSION, { ...WORKER_SESSION, status: "idle" }],
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not notify for a nested worker after active membership clears", () => {
+    const parentWithWorker = { ...BASE_SESSION, activeSubagents: [ACTIVE_WORKER] };
+
+    expect(
+      findSessionNotifications(
+        [parentWithWorker, WORKER_SESSION],
+        [BASE_SESSION, { ...WORKER_SESSION, status: "waiting" }],
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not notify for a nested worker when its parent is absent from one snapshot", () => {
+    expect(
+      findSessionNotifications(
+        [BASE_SESSION, WORKER_SESSION],
+        [{ ...WORKER_SESSION, status: "waiting" }],
+      ),
+    ).toEqual([]);
+    expect(
+      findSessionNotifications(
+        [WORKER_SESSION],
+        [BASE_SESSION, { ...WORKER_SESSION, status: "waiting" }],
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps parent notifications while suppressing its nested worker", () => {
+    expect(
+      findSessionNotifications(
+        [BASE_SESSION, WORKER_SESSION],
+        [
+          { ...BASE_SESSION, status: "idle" },
+          { ...WORKER_SESSION, status: "waiting" },
+        ],
+      ),
+    ).toEqual([
+      {
+        title: "Session idle",
+        body: "Notification work finished and is idle.",
+        tag: "session-session-1-idle",
       },
     ]);
   });

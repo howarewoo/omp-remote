@@ -25,6 +25,10 @@ import {
   sendBrowserFrame,
 } from "./browser-broadcast.js";
 import { normalizeRpcAskEvent } from "./rpc-ask.js";
+import {
+  createCatalogReconciler,
+  createReconciledSessionRegistrar,
+} from "./catalog-reconciliation.js";
 import { resolveGitBranch } from "./git-branch.js";
 import { normalizeRawMessage, normalizeSkillCommands } from "./message-normalizer.js";
 import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
@@ -90,6 +94,15 @@ const extensionSockets = new Map<string, WebSocket>();
 const extensionSessionBySocket = new Map<WebSocket, string>();
 const pendingAskBySession = new Map<string, { request: AskRequest; timeout: NodeJS.Timeout | undefined }>();
 const app = Fastify({ logger: false, bodyLimit: 1024 * 1024 });
+const requestCatalogReconciliation = createCatalogReconciler({
+  refresh: () => sessionCatalog.refresh(),
+  syncActiveSubagents,
+  onError: (error) => logger.error("Could not refresh OMP session history", error),
+});
+const registerExtensionSession = createReconciledSessionRegistrar({
+  registerSession: (session) => registry.upsert(session),
+  requestCatalogReconciliation,
+});
 
 await app.register(fastifyWebsocket, { options: { maxPayload: 1024 * 1024 } });
 
@@ -292,11 +305,13 @@ app.get("/extension", { websocket: true }, (socket, request) => {
       }
       extensionSessionBySocket.set(socket, frame.session.id);
       extensionSockets.set(frame.session.id, socket);
-      registry.upsert({
-        ...frame.session,
-        createdAt: catalogSession?.createdAt ?? frame.session.createdAt ?? frame.session.lastActivity,
-        activeSubagents: catalogSession?.activeSubagents ?? [],
-      });
+      ignoreCatalogReconciliationFailure(
+        registerExtensionSession({
+          ...frame.session,
+          createdAt: catalogSession?.createdAt ?? frame.session.createdAt ?? frame.session.lastActivity,
+          activeSubagents: catalogSession?.activeSubagents ?? [],
+        }),
+      );
       refreshSessionBranch(frame.session.id, frame.session.cwd);
     } else if (frame.type === "heartbeat") {
       const currentSession = registry.get(frame.sessionId);
@@ -364,12 +379,7 @@ logger.info("OMP Remote daemon listening", {
 });
 logger.info("OMP session history indexed", { sessions: initialCatalogDiff.upserted.length });
 const catalogRefreshTimer = setInterval(() => {
-  void sessionCatalog
-    .refresh()
-    .then((diff) => {
-      for (const session of diff.upserted) syncActiveSubagents(session);
-    })
-    .catch((error) => logger.error("Could not refresh OMP session history", error));
+  ignoreCatalogReconciliationFailure(requestCatalogReconciliation());
 }, 10_000);
 catalogRefreshTimer.unref();
 
@@ -499,6 +509,15 @@ async function refreshRpcState(sessionId: string, rpc: RpcSession): Promise<void
   } catch (error) {
     logger.error("Could not refresh OMP RPC state", error, { sessionId });
   }
+}
+function ignoreCatalogReconciliationFailure(reconciliation: Promise<void>): void {
+  void reconciliation.catch((error) => {
+    try {
+      logger.error("Catalog reconciliation failed unexpectedly", error);
+    } catch {
+      // A logging failure cannot be allowed to create another unhandled rejection.
+    }
+  });
 }
 
 function refreshSessionBranch(sessionId: string, cwd: string): void {

@@ -227,7 +227,37 @@ export function compareSessionsByCreation(left: Session, right: Session): number
   return right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id);
 }
 
-export function filterMainSessions(sessions: readonly Session[]): Session[] {
-  const subagentIds = new Set(sessions.flatMap((session) => session.activeSubagents.map(({ id }) => id)));
-  return sessions.filter((session) => !subagentIds.has(session.id));
+export function getMainSessionIds(sessions: readonly Session[]): Set<string> {
+  const mainSessionIds = new Set<string>();
+  const subagentIds = new Set<string>();
+  const sessionPaths = new Set<string>();
+
+  for (const session of sessions) {
+    mainSessionIds.add(session.id);
+    if (session.sessionPath?.endsWith(".jsonl")) sessionPaths.add(session.sessionPath);
+    for (const subagent of session.activeSubagents) subagentIds.add(subagent.id);
+  }
+  for (const subagentId of subagentIds) mainSessionIds.delete(subagentId);
+  for (const session of sessions) {
+    if (hasSessionPathAncestor(session.sessionPath, sessionPaths)) mainSessionIds.delete(session.id);
+  }
+
+  return mainSessionIds;
 }
+
+export function filterMainSessions(sessions: readonly Session[]): Session[] {
+  const mainSessionIds = getMainSessionIds(sessions);
+  return sessions.filter((session) => mainSessionIds.has(session.id));
+}
+
+function hasSessionPathAncestor(sessionPath: string | null, sessionPaths: ReadonlySet<string>): boolean {
+  if (!sessionPath?.endsWith(".jsonl")) return false;
+
+  let separatorIndex = sessionPath.lastIndexOf("/");
+  while (separatorIndex > 0) {
+    if (sessionPaths.has(`${sessionPath.slice(0, separatorIndex)}.jsonl`)) return true;
+    separatorIndex = sessionPath.lastIndexOf("/", separatorIndex - 1);
+  }
+  return false;
+}
+
