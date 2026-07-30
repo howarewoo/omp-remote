@@ -1,6 +1,6 @@
 import type { Session } from "@omp-remote/protocol";
 import { describe, expect, it } from "vitest";
-import { upsertTranscriptMessage } from "./index.js";
+import { patchSession, upsertTranscriptMessage } from "./index.js";
 
 const SESSION: Session = {
   id: "session-1",
@@ -86,5 +86,42 @@ describe("upsertTranscriptMessage", () => {
 
     expect(sessions[1]).toBe(other);
     expect(sessions[0]?.messages).toHaveLength(2);
+  });
+});
+
+describe("patchSession", () => {
+  it("updates only the targeted metadata while preserving stable references", () => {
+    const other = {
+      ...SESSION,
+      id: "session-2",
+      name: "Unrelated session",
+      messages: [],
+    };
+    const original = [SESSION, other];
+
+    const sessions = patchSession(original, "session-1", {
+      name: "Updated session",
+      status: "idle",
+    });
+
+    expect(SESSION).toMatchObject({
+      name: "Stream test",
+      status: "running",
+    });
+    expect(sessions).not.toBe(original);
+    expect(sessions[0]).toEqual({
+      ...SESSION,
+      name: "Updated session",
+      status: "idle",
+    });
+    expect(sessions[0]).not.toBe(SESSION);
+    expect(sessions[0]?.messages).toBe(SESSION.messages);
+    expect(sessions[1]).toBe(other);
+  });
+
+  it("returns the original array when the session ID is absent", () => {
+    const sessions = [SESSION];
+
+    expect(patchSession(sessions, "missing-session", { status: "idle" })).toBe(sessions);
   });
 });

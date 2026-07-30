@@ -9,3 +9,4 @@
 - [service-preserves-executable-path](service-preserves-executable-path.md) `gotcha` scope=`scripts/**,apps/daemon/**` — Background services must preserve installer PATH for command-by-name child spawns
 - [single-daemon-authority](single-daemon-authority.md) `gotcha` scope=`package.json,scripts/*.mjs,apps/*/src/**,packages/infrastructure/*/src/**` — Live streams and commands never cross daemon processes
 - [turbo-dev-env-allowlist](turbo-dev-env-allowlist.md) `gotcha` scope=`turbo.json,package.json,apps/*/vite.config.ts` — Turbo strict mode filters undeclared development environment values
+- [bounded-websocket-broadcasts](bounded-websocket-broadcasts.md) `pattern` scope=`apps/daemon/**` — Bound WebSocket queues before shared serialization

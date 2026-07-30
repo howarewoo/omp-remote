@@ -46,6 +46,15 @@ export const SessionSchema = z.object({
   skillCommands: z.array(SkillCommandSchema).default([]),
 });
 
+export const SessionPatchSchema = SessionSchema.omit({ id: true, messages: true })
+  .partial()
+  .extend({
+    branch: SessionSchema.shape.branch.unwrap().optional(),
+    activeSubagents: SessionSchema.shape.activeSubagents.unwrap().optional(),
+    skillCommands: SessionSchema.shape.skillCommands.unwrap().optional(),
+  })
+  .strict();
+
 export const SessionCatalogPageSchema = z.object({
   sessions: z.array(SessionSchema),
   total: z.number().int().nonnegative(),
@@ -90,6 +99,11 @@ export const BrowserCommandSchema = z.union([
 export const ServerFrameSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("snapshot"), sessions: z.array(SessionSchema) }),
   z.object({ type: z.literal("session_upsert"), session: SessionSchema }),
+  z.object({
+    type: z.literal("session_update"),
+    sessionId: z.string().min(1),
+    patch: SessionPatchSchema,
+  }),
   z.object({
     type: z.literal("transcript_upsert"),
     sessionId: z.string().min(1),
@@ -165,6 +179,7 @@ export type ServerFrame = z.infer<typeof ServerFrameSchema>;
 export type SessionCatalogPage = z.infer<typeof SessionCatalogPageSchema>;
 export type SessionTranscriptResponse = z.infer<typeof SessionTranscriptResponseSchema>;
 export type Session = z.infer<typeof SessionSchema>;
+export type SessionPatch = z.infer<typeof SessionPatchSchema>;
 export type SessionCapability = z.infer<typeof SessionCapabilitySchema>;
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 export type SkillCommand = z.infer<typeof SkillCommandSchema>;

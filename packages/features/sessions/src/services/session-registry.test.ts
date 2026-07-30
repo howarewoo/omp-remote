@@ -1,4 +1,4 @@
-import type { Session } from "@omp-remote/protocol";
+import type { Session, SessionPatch } from "@omp-remote/protocol";
 import { describe, expect, it } from "vitest";
 import { SessionRegistry } from "./session-registry.js";
 
@@ -133,6 +133,157 @@ describe("SessionRegistry", () => {
         message: expect.objectContaining({ id: "message-1", text: "Live text", streaming: true }),
       },
     ]);
+  });
+
+  it("emits a detached metadata patch while retaining the complete session", () => {
+    const registry = new SessionRegistry();
+    const existingMessage: Session["messages"][number] = {
+      id: "message-1",
+      role: "assistant",
+      text: "Keep me",
+      timestamp: "2026-07-28T17:01:00.000Z",
+      streaming: false,
+      presentation: "text",
+    };
+    registry.upsert({ ...BASE_SESSION, messages: [existingMessage] });
+    const events: unknown[] = [];
+    let emittedPatch: SessionPatch | undefined;
+    registry.subscribe((event) => {
+      events.push(event);
+      if (event.type === "session_update") emittedPatch = event.patch;
+    });
+    const capabilities: Session["capabilities"] = ["prompt", "abort"];
+    const activeSubagents: Session["activeSubagents"] = [
+      {
+        id: "subagent-2",
+        name: "PatchAgent",
+        lastActivity: "2026-07-28T18:00:00.000Z",
+      },
+    ];
+    const skillCommands: Session["skillCommands"] = [
+      { name: "skill:seo", description: "Inspect search visibility" },
+    ];
+
+    const updated = registry.update("session-1", {
+      status: "running",
+      capabilities,
+      activeSubagents,
+      skillCommands,
+    });
+
+    const expectedPatch = {
+      status: "running",
+      capabilities: ["prompt", "abort"],
+      activeSubagents: [
+        {
+          id: "subagent-2",
+          name: "PatchAgent",
+          lastActivity: "2026-07-28T18:00:00.000Z",
+        },
+      ],
+      skillCommands: [{ name: "skill:seo", description: "Inspect search visibility" }],
+    };
+    expect(events).toEqual([
+      {
+        type: "session_update",
+        sessionId: "session-1",
+        patch: expectedPatch,
+      },
+    ]);
+    expect(registry.get("session-1")).toEqual({
+      ...BASE_SESSION,
+      ...expectedPatch,
+      messages: [existingMessage],
+    });
+
+    const callerSubagent = activeSubagents[0];
+    const callerSkillCommand = skillCommands[0];
+    if (!callerSubagent || !callerSkillCommand) {
+      throw new Error("Expected caller-owned mutable metadata");
+    }
+    capabilities.push("kill");
+    callerSubagent.name = "Caller mutation";
+    callerSkillCommand.description = "Caller mutation";
+
+    expect(events).toEqual([
+      {
+        type: "session_update",
+        sessionId: "session-1",
+        patch: expectedPatch,
+      },
+    ]);
+    expect(registry.get("session-1")).toEqual({
+      ...BASE_SESSION,
+      ...expectedPatch,
+      messages: [existingMessage],
+    });
+
+    if (!updated) throw new Error("Expected the updated session");
+    const returnedSubagent = updated.activeSubagents[0];
+    const returnedSkillCommand = updated.skillCommands[0];
+    if (!returnedSubagent || !returnedSkillCommand) {
+      throw new Error("Expected returned mutable metadata");
+    }
+    updated.capabilities.push("resume");
+    returnedSubagent.name = "Returned mutation";
+    returnedSkillCommand.description = "Returned mutation";
+
+    expect(events).toEqual([
+      {
+        type: "session_update",
+        sessionId: "session-1",
+        patch: expectedPatch,
+      },
+    ]);
+    expect(registry.get("session-1")).toEqual({
+      ...BASE_SESSION,
+      ...expectedPatch,
+      messages: [existingMessage],
+    });
+    expect(capabilities).toEqual(["prompt", "abort", "kill"]);
+    expect(activeSubagents[0]?.name).toBe("Caller mutation");
+    expect(skillCommands[0]?.description).toBe("Caller mutation");
+
+    if (!emittedPatch?.capabilities || !emittedPatch.activeSubagents || !emittedPatch.skillCommands) {
+      throw new Error("Expected a session update with mutable metadata arrays");
+    }
+    const emittedSubagent = emittedPatch.activeSubagents[0];
+    const emittedSkillCommand = emittedPatch.skillCommands[0];
+    if (!emittedSubagent || !emittedSkillCommand) {
+      throw new Error("Expected emitted mutable metadata");
+    }
+    emittedPatch.capabilities.push("resume");
+    emittedSubagent.name = "Emitted mutation";
+    emittedSkillCommand.description = "Emitted mutation";
+
+    expect(registry.get("session-1")).toEqual({
+      ...BASE_SESSION,
+      ...expectedPatch,
+      messages: [existingMessage],
+    });
+
+    const snapshot = registry.get("session-1");
+    snapshot?.capabilities.push("kill");
+    if (snapshot?.activeSubagents[0]) snapshot.activeSubagents[0].name = "Snapshot mutation";
+    if (snapshot?.skillCommands[0]) snapshot.skillCommands[0].description = "Snapshot mutation";
+
+    expect(emittedPatch).toEqual({
+      ...expectedPatch,
+      capabilities: ["prompt", "abort", "resume"],
+      activeSubagents: [
+        {
+          id: "subagent-2",
+          name: "Emitted mutation",
+          lastActivity: "2026-07-28T18:00:00.000Z",
+        },
+      ],
+      skillCommands: [{ name: "skill:seo", description: "Emitted mutation" }],
+    });
+    expect(registry.get("session-1")).toEqual({
+      ...BASE_SESSION,
+      ...expectedPatch,
+      messages: [existingMessage],
+    });
   });
 
   it("returns detached snapshots", () => {

@@ -5,6 +5,7 @@ import {
   ExtensionHeartbeatSchema,
   filterMainSessions,
   SessionCatalogPageSchema,
+  SessionPatchSchema,
   SessionSchema,
   SessionTranscriptResponseSchema,
   TranscriptMessageSchema,
@@ -340,5 +341,39 @@ describe("ServerFrameSchema", () => {
       sessionId: "session-1",
       message: { text: "Streaming now", streaming: true },
     });
+  });
+
+  it("accepts compact session metadata updates", () => {
+    expect(
+      ServerFrameSchema.parse({
+        type: "session_update",
+        sessionId: "session-1",
+        patch: {
+          status: "running",
+          capabilities: ["prompt", "abort"],
+        },
+      }),
+    ).toEqual({
+      type: "session_update",
+      sessionId: "session-1",
+      patch: {
+        status: "running",
+        capabilities: ["prompt", "abort"],
+      },
+    });
+  });
+});
+
+describe("SessionPatchSchema", () => {
+  it.each([
+    ["id", { id: "replacement-session" }],
+    ["messages", { messages: [] }],
+  ])("rejects an own %s key instead of stripping it", (_key, forbiddenField) => {
+    expect(
+      SessionPatchSchema.safeParse({
+        status: "running",
+        ...forbiddenField,
+      }).success,
+    ).toBe(false);
   });
 });
