@@ -28,6 +28,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
+      injectRegister: false,
       manifest: {
         name: "OMP Remote",
         short_name: "OMP Remote",
@@ -43,8 +44,10 @@ export default defineConfig({
         ],
       },
       workbox: {
+        clientsClaim: true,
         navigateFallback: "/index.html",
         globPatterns: ["**/*.{js,css,html,png,svg,woff2}"],
+        skipWaiting: true,
       },
     }),
   ],
