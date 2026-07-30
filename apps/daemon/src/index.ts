@@ -148,13 +148,17 @@ app.get("/ws", { websocket: true }, (socket, request) => {
     const rpcSession = rpcSessions.get(command.sessionId);
     if (rpcSession) {
       try {
-        const rpcCommand: RpcFrame =
-          command.command === "abort"
-            ? { type: "abort" }
-            : command.command === "follow_up"
+        if (command.command === "kill") {
+          await rpcSession.terminate();
+        } else if (command.command === "abort") {
+          await rpcSession.request({ type: "abort" });
+        } else {
+          const rpcCommand: RpcFrame =
+            command.command === "follow_up"
               ? { type: "follow_up", message: command.text }
               : { type: command.command, message: command.text };
-        await rpcSession.request(rpcCommand);
+          await rpcSession.request(rpcCommand);
+        }
         sendFrame(socket, { type: "command_result", requestId: command.requestId, ok: true, error: null });
       } catch (error) {
         sendFrame(socket, {
@@ -164,6 +168,16 @@ app.get("/ws", { websocket: true }, (socket, request) => {
           error: error instanceof Error ? error.message : "OMP rejected the command",
         });
       }
+      return;
+    }
+
+    if (command.command === "kill") {
+      sendFrame(socket, {
+        type: "command_result",
+        requestId: command.requestId,
+        ok: false,
+        error: "Only dashboard-launched sessions can be killed.",
+      });
       return;
     }
 
@@ -347,7 +361,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
     contextPercent,
     createdAt: catalogSession?.createdAt ?? now,
     lastActivity: now,
-    capabilities: ["prompt", "steer", "follow_up", "abort", "resume"],
+    capabilities: ["prompt", "steer", "follow_up", "abort", "kill", "resume"],
     messages: [],
     sessionPath: stateResponse.data.sessionFile ?? null,
     activeSubagents: catalogSession?.activeSubagents ?? [],

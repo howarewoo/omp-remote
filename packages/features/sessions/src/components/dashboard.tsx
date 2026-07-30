@@ -36,6 +36,10 @@ export function getComposerAction(
   return session.status === "running" && session.capabilities.includes("abort") ? "abort" : null;
 }
 
+export function canKillSession(session: Pick<Session, "capabilities">): boolean {
+  return session.capabilities.includes("kill");
+}
+
 type DiffLineKind = "meta" | "context" | "removed" | "added";
 
 type DiffLine = {
@@ -418,6 +422,7 @@ export interface DashboardProps {
   onLaunch(cwd: string, resume: string | null): Promise<void>;
   onCommand(sessionId: string, command: ComposerMode, text: string): Promise<void>;
   onAbort(sessionId: string): Promise<void>;
+  onKill(sessionId: string): Promise<void>;
   onSearchHistory(query: string): Promise<void>;
   onLoadMoreHistory(): Promise<void>;
   onLoadTranscript(sessionId: string): Promise<void>;
@@ -704,6 +709,7 @@ function DashboardContent({
   onLaunch,
   onCommand,
   onAbort,
+  onKill,
   onSearchHistory,
   onLoadMoreHistory,
   onLoadTranscript,
@@ -716,6 +722,7 @@ function DashboardContent({
   const [launchOpen, setLaunchOpen] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [abortOpen, setAbortOpen] = useState(false);
+  const [killOpen, setKillOpen] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
   const [activeHistoryQuery, setActiveHistoryQuery] = useState("");
   const [transcriptLoadingId, setTranscriptLoadingId] = useState<string | null>(null);
@@ -841,6 +848,22 @@ function DashboardContent({
     } catch (abortFailure) {
       setCommandError(
         abortFailure instanceof Error ? abortFailure.message : "The active run could not be interrupted",
+      );
+    } finally {
+      setCommandState("idle");
+    }
+  };
+
+  const killSelectedSession = async () => {
+    if (!selectedSession) return;
+    setCommandState("sending");
+    setCommandError(null);
+    try {
+      await onKill(selectedSession.id);
+      setKillOpen(false);
+    } catch (killFailure) {
+      setCommandError(
+        killFailure instanceof Error ? killFailure.message : "The session process could not be terminated",
       );
     } finally {
       setCommandState("idle");
@@ -1023,6 +1046,22 @@ function DashboardContent({
                   <span aria-hidden="true" />
                   {SESSION_STATUS_LABEL[selectedSession.status]}
                 </Badge>
+                {canKillSession(selectedSession) ? (
+                  <Button
+                    className="kill-session-button"
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Kill ${selectedSession.name ?? "session"}`}
+                    title="Kill session"
+                    onClick={() => {
+                      setCommandError(null);
+                      setKillOpen(true);
+                    }}
+                  >
+                    <Icon name="power" />
+                  </Button>
+                ) : null}
               </>
             ) : (
               <h1>OMP Remote</h1>
@@ -1311,13 +1350,52 @@ function DashboardContent({
           </Button>
         </footer>
       </Dialog>
+
+      <Dialog
+        open={killOpen}
+        onOpenChange={setKillOpen}
+        dismissible={commandState !== "sending"}
+        title="Kill this session?"
+        description="This ends the OMP process and its active run. The transcript stays available as a saved session."
+      >
+        {commandError ? (
+          <p className="inline-error" role="alert">
+            {commandError}
+          </p>
+        ) : null}
+        <footer className="dialog-actions kill-dialog-actions">
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={commandState === "sending"}
+            onClick={() => setKillOpen(false)}
+          >
+            Keep session
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            disabled={commandState === "sending"}
+            aria-busy={commandState === "sending"}
+            onClick={() => void killSelectedSession()}
+          >
+            {commandState === "sending" ? "Killing…" : "Kill session"}
+          </Button>
+        </footer>
+      </Dialog>
     </div>
   );
 }
 
-function Icon({ name }: { name: "plus" | "search" | "send" | "stop" }) {
+function Icon({ name }: { name: "plus" | "power" | "search" | "send" | "stop" }) {
   const paths = {
     plus: <path d="M12 5v14M5 12h14" />,
+    power: (
+      <>
+        <path d="M12 3v9" />
+        <path d="M7.1 5.7a8 8 0 1 0 9.8 0" />
+      </>
+    ),
     search: <path d="m21 21-4.4-4.4m2.4-5.1a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" />,
     send: <path d="m4 4 17 8-17 8 3-8-3-8Zm3 8h14" />,
     stop: <rect x="7" y="7" width="10" height="10" rx="1" />,

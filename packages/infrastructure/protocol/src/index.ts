@@ -2,7 +2,7 @@ import { z } from "zod";
 
 export const SessionSourceSchema = z.enum(["rpc", "extension", "history"]);
 export const SessionStatusSchema = z.enum(["idle", "running", "waiting", "disconnected", "history"]);
-export const SessionCapabilitySchema = z.enum(["prompt", "steer", "follow_up", "abort", "resume"]);
+export const SessionCapabilitySchema = z.enum(["prompt", "steer", "follow_up", "abort", "kill", "resume"]);
 
 export const TranscriptPresentationSchema = z.enum(["text", "diff"]);
 
@@ -72,6 +72,12 @@ export const BrowserCommandSchema = z.union([
     requestId: z.string().min(1),
     sessionId: z.string().min(1),
     command: z.literal("abort"),
+  }),
+  z.object({
+    type: z.literal("session_command"),
+    requestId: z.string().min(1),
+    sessionId: z.string().min(1),
+    command: z.literal("kill"),
   }),
 ]);
 

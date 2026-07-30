@@ -6,9 +6,17 @@ interface DialogProps {
   children: ReactNode;
   title: string;
   description?: string;
+  dismissible?: boolean;
 }
 
-export function Dialog({ open, onOpenChange, children, title, description }: DialogProps) {
+export function Dialog({
+  open,
+  onOpenChange,
+  children,
+  title,
+  description,
+  dismissible = true,
+}: DialogProps) {
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -31,14 +39,16 @@ export function Dialog({ open, onOpenChange, children, title, description }: Dia
       aria-describedby={description ? descriptionId : undefined}
       onCancel={(event) => {
         event.preventDefault();
-        onOpenChange(false);
+        if (dismissible) onOpenChange(false);
       }}
-      onClose={() => onOpenChange(false)}
+      onClose={() => {
+        if (dismissible) onOpenChange(false);
+      }}
       onClick={(event) => {
-        if (event.target === event.currentTarget) onOpenChange(false);
+        if (dismissible && event.target === event.currentTarget) onOpenChange(false);
       }}
       onKeyDown={(event) => {
-        if (event.key === "Escape") onOpenChange(false);
+        if (dismissible && event.key === "Escape") onOpenChange(false);
       }}
     >
       <div data-slot="dialog-content" className="ui-dialog-content">

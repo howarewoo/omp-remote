@@ -15,6 +15,7 @@ export default function App() {
       onLaunch={client.launch}
       onCommand={client.command}
       onAbort={client.abort}
+      onKill={client.kill}
       onSearchHistory={client.searchHistory}
       onLoadMoreHistory={client.loadMoreHistory}
       onLoadTranscript={client.loadTranscript}

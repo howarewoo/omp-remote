@@ -2,6 +2,7 @@ import type { Session } from "@omp-remote/protocol";
 import { isValidElement, type ReactNode } from "react";
 import { describe, expect, it } from "vitest";
 import {
+  canKillSession,
   formatSubagentActivityLabel,
   getComposerAction,
   formatSystemTextPreview,
@@ -55,6 +56,15 @@ describe("getComposerAction", () => {
         "",
       ),
     ).toBeNull();
+  });
+});
+
+describe("canKillSession", () => {
+  it("allows killing only sessions that advertise the capability", () => {
+    expect(canKillSession({ ...BASE_SESSION, capabilities: [...BASE_SESSION.capabilities, "kill"] })).toBe(
+      true,
+    );
+    expect(canKillSession(BASE_SESSION)).toBe(false);
   });
 });
 
