@@ -54,6 +54,17 @@ describe("BrowserCommandSchema", () => {
     ).toMatchObject({ command: "abort" });
   });
 
+  it("accepts kill without command text", () => {
+    expect(
+      BrowserCommandSchema.parse({
+        type: "session_command",
+        requestId: "kill-1",
+        sessionId: "session-1",
+        command: "kill",
+      }),
+    ).toMatchObject({ command: "kill" });
+  });
+
   it("rejects empty non-abort commands", () => {
     expect(() =>
       BrowserCommandSchema.parse({

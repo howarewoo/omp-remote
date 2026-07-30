@@ -25,6 +25,7 @@ export interface SessionClient {
   launch(cwd: string, resume: string | null): Promise<void>;
   command(sessionId: string, command: "prompt" | "steer" | "follow_up", text: string): Promise<void>;
   abort(sessionId: string): Promise<void>;
+  kill(sessionId: string): Promise<void>;
   searchHistory(query: string): Promise<void>;
   loadMoreHistory(): Promise<void>;
   loadTranscript(sessionId: string): Promise<void>;
@@ -226,6 +227,11 @@ export function useSessionClient(): SessionClient {
       send({ type: "session_command", requestId: crypto.randomUUID(), sessionId, command: "abort" }),
     [send],
   );
+  const kill = useCallback(
+    (sessionId: string) =>
+      send({ type: "session_command", requestId: crypto.randomUUID(), sessionId, command: "kill" }),
+    [send],
+  );
 
   const sessions = useMemo(
     () =>
@@ -249,6 +255,7 @@ export function useSessionClient(): SessionClient {
     launch,
     command,
     abort,
+    kill,
     searchHistory,
     loadMoreHistory,
     loadTranscript,

@@ -841,6 +841,15 @@ textarea:disabled {
   flex: 0 0 auto;
 }
 
+.kill-session-button {
+  color: var(--omp-red);
+}
+
+.kill-session-button:hover:not(:disabled) {
+  color: var(--destructive-foreground);
+  background: oklch(62% 0.2 25 / 0.16);
+}
+
 .system-alert {
   display: flex;
   gap: 0.65rem;
@@ -1779,6 +1788,10 @@ textarea:disabled {
   margin-top: 0.5rem;
 }
 
+.kill-dialog-actions .ui-button {
+  min-height: 2.75rem;
+}
+
 @keyframes pulse {
   0%,
   100% {
@@ -1990,6 +2003,14 @@ textarea:disabled {
   .composer-footer {
     min-height: 0;
     justify-content: flex-end;
+  }
+
+  .kill-dialog-actions {
+    flex-direction: column;
+  }
+
+  .kill-dialog-actions .ui-button {
+    width: 100%;
   }
 }
 

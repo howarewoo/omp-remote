@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { once } from "node:events";
 import { TextDecoder } from "node:util";
 import { z } from "zod";
 
@@ -149,8 +150,11 @@ export class RpcSession {
     return () => this.#listeners.delete(listener);
   }
 
-  stop(): void {
-    this.#child?.stdin.end();
+  async terminate(): Promise<void> {
+    const child = this.#child;
+    if (!child) throw new Error("OMP RPC session is not connected");
+    if (!child.kill("SIGTERM")) throw new Error("OMP RPC process could not be terminated");
+    await once(child, "exit");
   }
 
   #consume(chunk: string): void {
