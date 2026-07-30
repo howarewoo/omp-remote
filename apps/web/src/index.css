@@ -2055,6 +2055,14 @@ textarea:disabled {
   }
 }
 
+@supports (-webkit-touch-callout: none) {
+  @media (display-mode: standalone) and (max-width: 767px) {
+    .composer {
+      padding-bottom: 0;
+    }
+  }
+}
+
 @media (max-width: 430px) {
   .session-header-primary {
     gap: 0.45rem;
