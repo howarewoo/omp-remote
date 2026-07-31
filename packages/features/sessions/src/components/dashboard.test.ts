@@ -497,6 +497,8 @@ const DASHBOARD_DEFAULTS = {
   onCommand: vi.fn().mockResolvedValue(undefined),
   onAbort: vi.fn().mockResolvedValue(undefined),
   onKill: vi.fn().mockResolvedValue(undefined),
+  onSetModel: vi.fn().mockResolvedValue(undefined),
+  onSetEffort: vi.fn().mockResolvedValue(undefined),
   onRespondToAsk: vi.fn().mockResolvedValue(undefined),
   onSearchHistory: vi.fn().mockResolvedValue(undefined),
   onLoadMoreHistory: vi.fn().mockResolvedValue(undefined),
