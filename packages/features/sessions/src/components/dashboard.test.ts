@@ -1,19 +1,44 @@
 import type { AskRequest, Session } from "@omp-remote/protocol";
 import type * as ReactModule from "react";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const reactHarness = vi.hoisted(() => ({
+  effectsEnabled: true,
+  stateIndex: 0,
+  refIndex: 0,
+  refValues: [] as { current: unknown }[],
+  stateValues: [] as unknown[],
+}));
 
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof ReactModule>();
   return {
     ...actual,
-    useEffect: (effect: Parameters<typeof actual.useEffect>[0]) => void effect(),
+    useEffect: (effect: Parameters<typeof actual.useEffect>[0]) => {
+      if (reactHarness.effectsEnabled) void effect();
+    },
+    useLayoutEffect: (effect: Parameters<typeof actual.useLayoutEffect>[0]) => {
+      if (reactHarness.effectsEnabled) void effect();
+    },
     useMemo: <T>(factory: () => T) => factory(),
-    useRef: <T>(initial: T) => ({ current: initial }),
-    useState: <T>(initial: T | (() => T)) => [
-      typeof initial === "function" ? (initial as () => T)() : initial,
-      vi.fn(),
-    ],
+    useRef: <T>(initial: T) => {
+      const index = reactHarness.refIndex++;
+      if (!(index in reactHarness.refValues)) reactHarness.refValues[index] = { current: initial };
+      return reactHarness.refValues[index] as { current: T };
+    },
+    useState: <T>(initial: T | (() => T)) => {
+      const index = reactHarness.stateIndex++;
+      const stateValues = reactHarness.stateValues;
+      if (!(index in stateValues)) {
+        stateValues[index] = typeof initial === "function" ? (initial as () => T)() : initial;
+      }
+      const setValue = (next: T | ((current: T) => T)) => {
+        const current = stateValues[index] as T;
+        stateValues[index] = typeof next === "function" ? (next as (value: T) => T)(current) : next;
+      };
+      return [stateValues[index] as T, setValue] as const;
+    },
   };
 });
 
@@ -23,6 +48,14 @@ vi.mock("./ui/sidebar.js", async (importOriginal) => {
     ...actual,
     useSidebar: () => ({ isMobile: false, setOpenMobile: vi.fn() }),
   };
+});
+
+beforeEach(() => {
+  reactHarness.effectsEnabled = true;
+  reactHarness.refIndex = 0;
+  reactHarness.refValues = [];
+  reactHarness.stateIndex = 0;
+  reactHarness.stateValues = [];
 });
 
 import {
@@ -505,7 +538,17 @@ const DASHBOARD_DEFAULTS = {
   onLoadTranscript: vi.fn().mockResolvedValue(undefined),
 };
 
-function renderControlledDashboard(props: ControlledDashboardProps): ReactNode {
+function renderControlledDashboard(
+  props: ControlledDashboardProps,
+  options: { preserveState?: boolean; effectsEnabled?: boolean } = {},
+): ReactNode {
+  if (!options.preserveState) {
+    reactHarness.refValues = [];
+    reactHarness.stateValues = [];
+  }
+  reactHarness.refIndex = 0;
+  reactHarness.stateIndex = 0;
+  reactHarness.effectsEnabled = options.effectsEnabled ?? true;
   const dashboard = Dashboard(props) as ReactElement<{
     children: ReactElement<ControlledDashboardProps>;
   }>;
@@ -529,6 +572,25 @@ function findHostText(node: ReactNode, hostType: string): string | undefined {
     return Array.isArray(children) ? children.join("") : String(children ?? "");
   }
   return findHostText(element.props.children, hostType);
+}
+
+function findElements(
+  node: ReactNode,
+  predicate: (element: ReactElement<Record<string, unknown>>) => boolean,
+): ReactElement<Record<string, unknown>>[] {
+  if (node === null || node === undefined || typeof node === "boolean") return [];
+  if (Array.isArray(node)) return node.flatMap((child) => findElements(child, predicate));
+  if (!isValidElement(node)) return [];
+  const element = node as ReactElement<Record<string, unknown> & { children?: ReactNode }>;
+  return [...(predicate(element) ? [element] : []), ...findElements(element.props.children, predicate)];
+}
+
+function textContent(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === "boolean") return "";
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textContent).join("");
+  if (!isValidElement(node)) return "";
+  return textContent((node as ReactElement<{ children?: ReactNode }>).props.children);
 }
 
 describe("controlled dashboard selection", () => {
@@ -618,5 +680,299 @@ describe("controlled dashboard selection", () => {
 
     expect(findHostText(output, "h1")).toBe("Bootstrap");
     expect(onSelectedSessionChange).toHaveBeenCalledWith("session-1");
+  });
+});
+
+const CONFIGURABLE_SESSION: Session = {
+  ...BASE_SESSION,
+  capabilities: [...BASE_SESSION.capabilities, "model", "effort"],
+  effort: "medium",
+  availableModels: [
+    {
+      provider: "openai",
+      id: "gpt-5.6",
+      name: "GPT-5.6",
+      efforts: ["low", "medium", "high", "xhigh"],
+    },
+    {
+      provider: "anthropic",
+      id: "claude-opus-4.7",
+      name: "Claude Opus 4.7",
+      efforts: ["low", "medium", "high", "max"],
+    },
+  ],
+};
+
+function configurationProps(
+  session: Session,
+  callbacks: Partial<Pick<DashboardProps, "onSetModel" | "onSetEffort">> = {},
+): ControlledDashboardProps {
+  return {
+    sessions: [session],
+    sessionsReady: true,
+    historyLoading: false,
+    hasMoreHistory: false,
+    connection: "connected",
+    error: null,
+    notificationState: "enabled",
+    selectedSessionId: session.id,
+    onSelectedSessionChange: vi.fn(),
+    ...DASHBOARD_DEFAULTS,
+    ...callbacks,
+  };
+}
+
+function findConfigurationTrigger(output: ReactNode, kind: "model" | "effort") {
+  const label = `Change ${kind}.`;
+  return findElements(
+    output,
+    (element) =>
+      typeof element.props["aria-label"] === "string" && element.props["aria-label"].startsWith(label),
+  )[0];
+}
+
+function findConfigurationDrawer(output: ReactNode, title: "Model" | "Effort") {
+  return findElements(
+    output,
+    (element) =>
+      element.props.showSwipeHandle === true &&
+      textContent(element.props.children as ReactNode).includes(title),
+  )[0];
+}
+
+describe("session model and effort selectors", () => {
+  it("renders separate tappable Model and Effort selector cells", () => {
+    const output = renderControlledDashboard(configurationProps(CONFIGURABLE_SESSION));
+
+    expect(findConfigurationTrigger(output, "model")?.props.disabled).not.toBe(true);
+    expect(findConfigurationTrigger(output, "effort")?.props.disabled).not.toBe(true);
+    expect(
+      findElements(output, (element) => element.type === "dt").map((element) => textContent(element)),
+    ).toEqual(["Model", "Effort", "Context", "Updated"]);
+  });
+
+  it("opens a populated model-only drawer", () => {
+    const props = configurationProps(CONFIGURABLE_SESSION);
+    let output = renderControlledDashboard(props);
+
+    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+
+    const drawer = findConfigurationDrawer(output, "Model");
+    expect(drawer?.props.open).toBe(true);
+    expect(textContent(drawer?.props.children as ReactNode)).toContain("GPT-5.6");
+    expect(textContent(drawer?.props.children as ReactNode)).toContain("Claude Opus 4.7");
+    expect(textContent(drawer?.props.children as ReactNode)).not.toContain("Effort");
+  });
+
+  it("keeps only the most recently opened configuration drawer open", () => {
+    const props = configurationProps(CONFIGURABLE_SESSION);
+    let output = renderControlledDashboard(props);
+
+    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    expect(findConfigurationDrawer(output, "Model")?.props.open).toBe(true);
+    expect(findConfigurationDrawer(output, "Effort")?.props.open).toBe(false);
+
+    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    expect(findConfigurationDrawer(output, "Model")?.props.open).toBe(false);
+    expect(findConfigurationDrawer(output, "Effort")?.props.open).toBe(true);
+  });
+
+  it("opens truthful recovery guidance when configuration data is unavailable", () => {
+    const staleProps = configurationProps(BASE_SESSION);
+    let output = renderControlledDashboard(staleProps);
+
+    expect(findConfigurationTrigger(output, "model")?.props.disabled).not.toBe(true);
+    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(staleProps, { preserveState: true, effectsEnabled: false });
+    expect(textContent(findConfigurationDrawer(output, "Model")?.props.children as ReactNode)).toMatch(
+      /restart/i,
+    );
+
+    const disconnectedLiveSession: Session = {
+      ...BASE_SESSION,
+      connected: false,
+      status: "disconnected",
+    };
+    const disconnectedLiveProps = configurationProps(disconnectedLiveSession);
+    output = renderControlledDashboard(disconnectedLiveProps);
+    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(disconnectedLiveProps, {
+      preserveState: true,
+      effectsEnabled: false,
+    });
+    expect(textContent(findConfigurationDrawer(output, "Model")?.props.children as ReactNode)).toMatch(
+      /restart/i,
+    );
+
+    output = renderControlledDashboard(disconnectedLiveProps);
+    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(disconnectedLiveProps, {
+      preserveState: true,
+      effectsEnabled: false,
+    });
+    expect(textContent(findConfigurationDrawer(output, "Effort")?.props.children as ReactNode)).toMatch(
+      /restart/i,
+    );
+
+    const historySession: Session = {
+      ...BASE_SESSION,
+      connected: false,
+      source: "history",
+      status: "history",
+    };
+    const historyProps = configurationProps(historySession);
+    output = renderControlledDashboard(historyProps);
+    expect(findConfigurationTrigger(output, "effort")?.props.disabled).not.toBe(true);
+    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(historyProps, { preserveState: true, effectsEnabled: false });
+    expect(textContent(findConfigurationDrawer(output, "Effort")?.props.children as ReactNode)).toMatch(
+      /resume/i,
+    );
+  });
+
+  it("sends only an effort command when an available effort is selected", async () => {
+    const onSetModel = vi.fn().mockResolvedValue(undefined);
+    const onSetEffort = vi.fn().mockResolvedValue(undefined);
+    const props = configurationProps(CONFIGURABLE_SESSION, { onSetModel, onSetEffort });
+    let output = renderControlledDashboard(props);
+
+    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    const effortDrawerText = textContent(
+      findConfigurationDrawer(output, "Effort")?.props.children as ReactNode,
+    );
+    expect(effortDrawerText).toContain("Extra high");
+    expect(effortDrawerText).not.toContain("Claude Opus 4.7");
+    expect(effortDrawerText).not.toContain("Max");
+    const highOption = findElements(
+      findConfigurationDrawer(output, "Effort")?.props.children as ReactNode,
+      (element) => textContent(element) === "High",
+    )[0];
+    (highOption?.props.onClick as (() => void) | undefined)?.();
+    await Promise.resolve();
+
+    expect(onSetEffort).toHaveBeenCalledWith(CONFIGURABLE_SESSION.id, "high");
+    expect(onSetModel).not.toHaveBeenCalled();
+  });
+
+  it("shows request errors only in the drawer that initiated them", async () => {
+    const modelProps = configurationProps(CONFIGURABLE_SESSION, {
+      onSetModel: vi.fn().mockRejectedValue(new Error("Model request failed")),
+    });
+    let output = renderControlledDashboard(modelProps);
+
+    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(modelProps, { preserveState: true, effectsEnabled: false });
+    const alternateModel = findElements(
+      findConfigurationDrawer(output, "Model")?.props.children as ReactNode,
+      (element) =>
+        typeof element.props.onClick === "function" && textContent(element).includes("Claude Opus 4.7"),
+    )[0];
+    (alternateModel?.props.onClick as (() => void) | undefined)?.();
+    await Promise.resolve();
+    output = renderControlledDashboard(modelProps, { preserveState: true, effectsEnabled: false });
+    expect(textContent(findConfigurationDrawer(output, "Model")?.props.children as ReactNode)).toContain(
+      "Model request failed",
+    );
+
+    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(modelProps, { preserveState: true, effectsEnabled: false });
+    expect(textContent(findConfigurationDrawer(output, "Effort")?.props.children as ReactNode)).not.toContain(
+      "Model request failed",
+    );
+
+    const effortProps = configurationProps(CONFIGURABLE_SESSION, {
+      onSetEffort: vi.fn().mockRejectedValue(new Error("Effort request failed")),
+    });
+    output = renderControlledDashboard(effortProps);
+    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(effortProps, { preserveState: true, effectsEnabled: false });
+    const highEffort = findElements(
+      findConfigurationDrawer(output, "Effort")?.props.children as ReactNode,
+      (element) => typeof element.props.onClick === "function" && textContent(element) === "High",
+    )[0];
+    (highEffort?.props.onClick as (() => void) | undefined)?.();
+    await Promise.resolve();
+    output = renderControlledDashboard(effortProps, { preserveState: true, effectsEnabled: false });
+    expect(textContent(findConfigurationDrawer(output, "Effort")?.props.children as ReactNode)).toContain(
+      "Effort request failed",
+    );
+
+    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(effortProps, { preserveState: true, effectsEnabled: false });
+    expect(textContent(findConfigurationDrawer(output, "Model")?.props.children as ReactNode)).not.toContain(
+      "Effort request failed",
+    );
+  });
+
+  it("ignores stale configuration completions after switching sessions", async () => {
+    let rejectFirstModelRequest: (reason: Error) => void = () => undefined;
+    const firstModelRequest = new Promise<void>((_resolve, reject) => {
+      rejectFirstModelRequest = reject;
+    });
+    let resolveSecondEffortRequest: () => void = () => undefined;
+    const secondEffortRequest = new Promise<void>((resolve) => {
+      resolveSecondEffortRequest = resolve;
+    });
+    const secondSession: Session = {
+      ...CONFIGURABLE_SESSION,
+      id: "session-2",
+      name: "Second session",
+    };
+    const firstProps: ControlledDashboardProps = {
+      ...configurationProps(CONFIGURABLE_SESSION),
+      sessions: [CONFIGURABLE_SESSION, secondSession],
+      onSetModel: vi.fn().mockReturnValue(firstModelRequest),
+    };
+    let output = renderControlledDashboard(firstProps);
+
+    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(firstProps, { preserveState: true, effectsEnabled: false });
+    const alternateModel = findElements(
+      findConfigurationDrawer(output, "Model")?.props.children as ReactNode,
+      (element) =>
+        typeof element.props.onClick === "function" && textContent(element).includes("Claude Opus 4.7"),
+    )[0];
+    (alternateModel?.props.onClick as (() => void) | undefined)?.();
+
+    const secondProps: ControlledDashboardProps = {
+      ...firstProps,
+      selectedSessionId: secondSession.id,
+      onSetEffort: vi.fn().mockReturnValue(secondEffortRequest),
+    };
+    renderControlledDashboard(secondProps, { preserveState: true });
+    output = renderControlledDashboard(secondProps, {
+      preserveState: true,
+      effectsEnabled: false,
+    });
+    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(secondProps, {
+      preserveState: true,
+      effectsEnabled: false,
+    });
+    const highEffort = findElements(
+      findConfigurationDrawer(output, "Effort")?.props.children as ReactNode,
+      (element) => typeof element.props.onClick === "function" && textContent(element) === "High",
+    )[0];
+    (highEffort?.props.onClick as (() => void) | undefined)?.();
+
+    rejectFirstModelRequest(new Error("Old session model failure"));
+    await Promise.resolve();
+    output = renderControlledDashboard(secondProps, {
+      preserveState: true,
+      effectsEnabled: false,
+    });
+    const effortDrawer = findConfigurationDrawer(output, "Effort");
+    expect(textContent(effortDrawer?.props.children as ReactNode)).not.toContain("Old session model failure");
+    expect(
+      findElements(effortDrawer?.props.children as ReactNode, (element) => textContent(element) === "High")[0]
+        ?.props.disabled,
+    ).toBe(true);
+
+    resolveSecondEffortRequest();
+    await Promise.resolve();
   });
 });
