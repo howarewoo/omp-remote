@@ -57,6 +57,21 @@ const NOTIFICATION_CONTROL: Record<NotificationState, NotificationControl> = {
   unsupported: { disabled: true, label: "Session notifications unsupported" },
 };
 
+export function WorkingIndicator({ status }: { status: Session["status"] }) {
+  if (status !== "running") return null;
+
+  return (
+    <Badge className="working-indicator" role="status">
+      <span className="working-indicator-dots" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+      Working
+    </Badge>
+  );
+}
+
 export function isNearTranscriptBottom(
   scrollHeight: number,
   scrollTop: number,
@@ -1395,6 +1410,7 @@ function DashboardContent({
     selectedSession?.id,
     selectedSession?.messages.length,
     selectedSession?.messages.at(-1)?.text,
+    selectedSession?.status,
   ]);
 
   useEffect(() => {
@@ -1911,6 +1927,7 @@ function DashboardContent({
                     }
                   />
                 ) : null}
+                <WorkingIndicator status={selectedSession.status} />
               </div>
               {showScrollToBottom ? (
                 <Button
@@ -2162,23 +2179,26 @@ function DashboardContent({
           if (!open) setViewedSubagent(null);
         }}
       >
-        {viewedSubagentSession?.messages.length ? (
-          viewedSubagentSession.messages.map((entry) => <TranscriptEntry entry={entry} key={entry.id} />)
-        ) : (
-          <div className="empty-transcript">
-            <span className="terminal-prompt" aria-hidden="true">
-              π
-            </span>
-            <strong>
-              {viewedSubagentSession ? "Waiting for subagent output" : "Connecting to subagent"}
-            </strong>
-            <p>
-              {viewedSubagentSession
-                ? "Live output will appear here as the subagent works."
-                : "The session will appear as soon as the host publishes it."}
-            </p>
-          </div>
-        )}
+        <>
+          {viewedSubagentSession?.messages.length ? (
+            viewedSubagentSession.messages.map((entry) => <TranscriptEntry entry={entry} key={entry.id} />)
+          ) : (
+            <div className="empty-transcript">
+              <span className="terminal-prompt" aria-hidden="true">
+                π
+              </span>
+              <strong>
+                {viewedSubagentSession ? "Waiting for subagent output" : "Connecting to subagent"}
+              </strong>
+              <p>
+                {viewedSubagentSession
+                  ? "Live output will appear here as the subagent works."
+                  : "The session will appear as soon as the host publishes it."}
+              </p>
+            </div>
+          )}
+          {viewedSubagentSession ? <WorkingIndicator status={viewedSubagentSession.status} /> : null}
+        </>
       </SubagentSessionViewer>
 
       <Drawer
