@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { dirname } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 
 const DEFAULT_EXTENSION_URL = "ws://127.0.0.1:4387/extension";
@@ -151,7 +153,7 @@ export function isRpcMode(argv: readonly string[] = process.argv): boolean {
 }
 
 export default function ompRemoteExtension(pi: ExtensionAPI): void {
-  if (isRpcMode()) return;
+  const rpcMode = isRpcMode();
   const { z } = pi.zod;
   const CommandSchema = z.discriminatedUnion("command", [
     z.object({
@@ -309,6 +311,8 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
   };
 
   pi.on("session_start", async (_event, ctx) => {
+    const sessionFile = ctx.sessionManager.getSessionFile();
+    if (rpcMode && (!sessionFile?.endsWith(".jsonl") || !existsSync(`${dirname(sessionFile)}.jsonl`))) return;
     context = ctx;
     active = true;
     connect();
