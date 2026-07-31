@@ -164,6 +164,24 @@ export const BrowserCommandSchema = z.union([
     .strict(),
 ]);
 
+export const CommandResultSchema = z.object({
+  type: z.literal("command_result"),
+  requestId: z.string(),
+  outcome: z.discriminatedUnion("status", [
+    z.object({
+      status: z.literal("ok"),
+      value: z.discriminatedUnion("type", [
+        z.object({ type: z.literal("launch"), sessionId: z.string().min(1) }),
+        z.object({ type: z.literal("void") }),
+      ]),
+    }),
+    z.object({
+      status: z.literal("error"),
+      error: z.string().nullable(),
+    }),
+  ]),
+});
+
 export const ServerFrameSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("snapshot"),
@@ -193,12 +211,7 @@ export const ServerFrameSchema = z.discriminatedUnion("type", [
     type: z.literal("saved_working_directories"),
     savedWorkingDirectories: z.array(z.string().trim().min(1)),
   }),
-  z.object({
-    type: z.literal("command_result"),
-    requestId: z.string(),
-    ok: z.boolean(),
-    error: z.string().nullable(),
-  }),
+  CommandResultSchema,
   z.object({ type: z.literal("error"), message: z.string() }),
 ]);
 
@@ -266,6 +279,7 @@ export const ExtensionCommandSchema = z.discriminatedUnion("command", [
 export type AskRequest = z.infer<typeof AskRequestSchema>;
 export type AskResponse = z.infer<typeof AskResponseSchema>;
 export type BrowserCommand = z.infer<typeof BrowserCommandSchema>;
+export type CommandResult = z.infer<typeof CommandResultSchema>;
 export type Effort = z.infer<typeof EffortSchema>;
 export type ActiveSubagent = z.infer<typeof ActiveSubagentSchema>;
 export type ExtensionCommand = z.infer<typeof ExtensionCommandSchema>;

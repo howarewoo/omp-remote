@@ -200,8 +200,7 @@ app.get("/ws", { websocket: true }, (socket, request) => {
         sendToBrowser(socket, {
           type: "command_result",
           requestId: command.requestId,
-          ok: true,
-          error: null,
+          outcome: { status: "ok", value: { type: "void" } },
         });
       } catch (error) {
         logger.error("Could not update saved working directories", error, {
@@ -211,8 +210,10 @@ app.get("/ws", { websocket: true }, (socket, request) => {
         sendToBrowser(socket, {
           type: "command_result",
           requestId: command.requestId,
-          ok: false,
-          error: error instanceof Error ? error.message : "Saved working directories could not be updated",
+          outcome: {
+            status: "error",
+            error: error instanceof Error ? error.message : "Saved working directories could not be updated",
+          },
         });
       }
       return;
@@ -220,20 +221,21 @@ app.get("/ws", { websocket: true }, (socket, request) => {
 
     if (command.type === "launch") {
       try {
-        await launchRpcSession(command.cwd, command.resume);
+        const session = await launchRpcSession(command.cwd, command.resume);
         sendToBrowser(socket, {
           type: "command_result",
           requestId: command.requestId,
-          ok: true,
-          error: null,
+          outcome: { status: "ok", value: { type: "launch", sessionId: session.id } },
         });
       } catch (error) {
         logger.error("Failed to launch OMP RPC session", error, { cwd: command.cwd });
         sendToBrowser(socket, {
           type: "command_result",
           requestId: command.requestId,
-          ok: false,
-          error: error instanceof Error ? error.message : "OMP could not start",
+          outcome: {
+            status: "error",
+            error: error instanceof Error ? error.message : "OMP could not start",
+          },
         });
       }
       return;
@@ -253,8 +255,10 @@ app.get("/ws", { websocket: true }, (socket, request) => {
         sendToBrowser(socket, {
           type: "command_result",
           requestId: command.requestId,
-          ok: false,
-          error: "This question is no longer waiting for an answer.",
+          outcome: {
+            status: "error",
+            error: "This question is no longer waiting for an answer.",
+          },
         });
         return;
       }
@@ -264,15 +268,16 @@ app.get("/ws", { websocket: true }, (socket, request) => {
         sendToBrowser(socket, {
           type: "command_result",
           requestId: command.requestId,
-          ok: true,
-          error: null,
+          outcome: { status: "ok", value: { type: "void" } },
         });
       } catch (error) {
         sendToBrowser(socket, {
           type: "command_result",
           requestId: command.requestId,
-          ok: false,
-          error: error instanceof Error ? error.message : "OMP rejected the answer",
+          outcome: {
+            status: "error",
+            error: error instanceof Error ? error.message : "OMP rejected the answer",
+          },
         });
       }
       return;
@@ -302,15 +307,16 @@ app.get("/ws", { websocket: true }, (socket, request) => {
         sendToBrowser(socket, {
           type: "command_result",
           requestId: command.requestId,
-          ok: true,
-          error: null,
+          outcome: { status: "ok", value: { type: "void" } },
         });
       } catch (error) {
         sendToBrowser(socket, {
           type: "command_result",
           requestId: command.requestId,
-          ok: false,
-          error: error instanceof Error ? error.message : "OMP rejected the command",
+          outcome: {
+            status: "error",
+            error: error instanceof Error ? error.message : "OMP rejected the command",
+          },
         });
       }
       return;
@@ -320,8 +326,7 @@ app.get("/ws", { websocket: true }, (socket, request) => {
       sendToBrowser(socket, {
         type: "command_result",
         requestId: command.requestId,
-        ok: false,
-        error: "Only dashboard-launched sessions can be killed.",
+        outcome: { status: "error", error: "Only dashboard-launched sessions can be killed." },
       });
       return;
     }
@@ -334,8 +339,7 @@ app.get("/ws", { websocket: true }, (socket, request) => {
     sendToBrowser(socket, {
       type: "command_result",
       requestId: command.requestId,
-      ok: false,
-      error: "This OMP session is no longer connected.",
+      outcome: { status: "error", error: "This OMP session is no longer connected." },
     });
   });
   socket.on("close", () => browserSockets.delete(socket));
@@ -407,8 +411,9 @@ app.get("/extension", { websocket: true }, (socket, request) => {
       broadcast({
         type: "command_result",
         requestId: frame.requestId,
-        ok: frame.ok,
-        error: frame.error,
+        outcome: frame.ok
+          ? { status: "ok", value: { type: "void" } }
+          : { status: "error", error: frame.error },
       });
     }
   });

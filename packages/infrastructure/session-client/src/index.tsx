@@ -2,6 +2,7 @@ import {
   type AskRequest,
   type AskResponse,
   type BrowserCommand,
+  type CommandResult,
   compareSessionsByCreation,
   type Effort,
   ServerFrameSchema,
@@ -16,7 +17,12 @@ const RECONNECT_DELAY_MS = 1_500;
 const CATALOG_PAGE_SIZE = 100;
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
-type PendingCommand = { resolve: () => void; reject: (error: Error) => void };
+type SuccessfulCommandValue = Extract<CommandResult["outcome"], { status: "ok" }>["value"];
+type PendingCommand = {
+  commandType: BrowserCommand["type"];
+  resolve: (value: string | undefined) => void;
+  reject: (error: Error) => void;
+};
 
 export interface SessionClient {
   sessions: Session[];
@@ -27,7 +33,7 @@ export interface SessionClient {
   hasMoreHistory: boolean;
   connection: ConnectionState;
   error: string | null;
-  launch(cwd: string, resume: string | null): Promise<void>;
+  launch(cwd: string, resume: string | null): Promise<string>;
   saveWorkingDirectory(cwd: string): Promise<void>;
   removeWorkingDirectory(cwd: string): Promise<void>;
   command(sessionId: string, command: "prompt" | "steer" | "follow_up", text: string): Promise<void>;
@@ -108,8 +114,17 @@ export function useSessionClient(): SessionClient {
           const pending = pendingRef.current.get(frame.requestId);
           if (!pending) return;
           pendingRef.current.delete(frame.requestId);
-          if (frame.ok) pending.resolve();
-          else pending.reject(new Error(frame.error ?? "The host rejected the command"));
+          if (frame.outcome.status === "error") {
+            pending.reject(new Error(frame.outcome.error ?? "The host rejected the command"));
+          } else {
+            try {
+              pending.resolve(commandResultValue(pending.commandType, frame.outcome.value));
+            } catch (error) {
+              pending.reject(
+                error instanceof Error ? error : new Error("The host returned an invalid command result"),
+              );
+            }
+          }
         } else if (frame.type === "error") {
           setConnectionError(frame.message);
         }
@@ -236,83 +251,90 @@ export function useSessionClient(): SessionClient {
     };
   }, [catalogLoads]);
 
-  const send = useCallback((frame: BrowserCommand): Promise<void> => {
+  const send = useCallback((frame: BrowserCommand): Promise<string | undefined> => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return Promise.reject(new Error("The host is not connected"));
     }
-    return new Promise<void>((resolve, reject) => {
-      pendingRef.current.set(frame.requestId, { resolve, reject });
+    return new Promise<string | undefined>((resolve, reject) => {
+      pendingRef.current.set(frame.requestId, { commandType: frame.type, resolve, reject });
       socket.send(JSON.stringify(frame));
     });
   }, []);
 
+  const sendVoid = useCallback(
+    (frame: BrowserCommand): Promise<void> => send(frame).then(() => undefined),
+    [send],
+  );
   const launch = useCallback(
     (cwd: string, resume: string | null) =>
-      send({ type: "launch", requestId: crypto.randomUUID(), cwd, resume }),
+      send({ type: "launch", requestId: crypto.randomUUID(), cwd, resume }).then((sessionId) => {
+        if (!sessionId) throw new Error("The host did not identify the launched session");
+        return sessionId;
+      }),
     [send],
   );
   const saveWorkingDirectory = useCallback(
-    (cwd: string) => send({ type: "save_working_directory", requestId: crypto.randomUUID(), cwd }),
-    [send],
+    (cwd: string) => sendVoid({ type: "save_working_directory", requestId: crypto.randomUUID(), cwd }),
+    [sendVoid],
   );
   const removeWorkingDirectory = useCallback(
-    (cwd: string) => send({ type: "remove_working_directory", requestId: crypto.randomUUID(), cwd }),
-    [send],
+    (cwd: string) => sendVoid({ type: "remove_working_directory", requestId: crypto.randomUUID(), cwd }),
+    [sendVoid],
   );
   const command = useCallback(
     (sessionId: string, commandName: "prompt" | "steer" | "follow_up", text: string) =>
-      send({
+      sendVoid({
         type: "session_command",
         requestId: crypto.randomUUID(),
         sessionId,
         command: commandName,
         text,
       }),
-    [send],
+    [sendVoid],
   );
   const abort = useCallback(
     (sessionId: string) =>
-      send({ type: "session_command", requestId: crypto.randomUUID(), sessionId, command: "abort" }),
-    [send],
+      sendVoid({ type: "session_command", requestId: crypto.randomUUID(), sessionId, command: "abort" }),
+    [sendVoid],
   );
   const kill = useCallback(
     (sessionId: string) =>
-      send({ type: "session_command", requestId: crypto.randomUUID(), sessionId, command: "kill" }),
-    [send],
+      sendVoid({ type: "session_command", requestId: crypto.randomUUID(), sessionId, command: "kill" }),
+    [sendVoid],
   );
   const setModel = useCallback(
     (sessionId: string, model: string) =>
-      send({
+      sendVoid({
         type: "session_command",
         requestId: crypto.randomUUID(),
         sessionId,
         command: "set_model",
         model,
       }),
-    [send],
+    [sendVoid],
   );
   const setEffort = useCallback(
     (sessionId: string, effort: Effort) =>
-      send({
+      sendVoid({
         type: "session_command",
         requestId: crypto.randomUUID(),
         sessionId,
         command: "set_effort",
         effort,
       }),
-    [send],
+    [sendVoid],
   );
   const respondToAsk = useCallback(
     (sessionId: string, askRequestId: string, response: AskResponse) =>
-      send({
+      sendVoid({
         type: "ask_response",
         requestId: crypto.randomUUID(),
         sessionId,
         askRequestId,
         response,
       }),
-    [send],
+    [sendVoid],
   );
 
   const sessions = useMemo(
@@ -348,6 +370,18 @@ export function useSessionClient(): SessionClient {
     loadMoreHistory,
     loadTranscript,
   };
+}
+
+export function commandResultValue(
+  commandType: BrowserCommand["type"],
+  value: SuccessfulCommandValue,
+): string | undefined {
+  if (commandType === "launch") {
+    if (value.type !== "launch") throw new Error("The host did not identify the launched session");
+    return value.sessionId;
+  }
+  if (value.type !== "void") throw new Error("The host returned a launch result for a different command");
+  return undefined;
 }
 
 export function sessionSourcesReady(liveSnapshotReady: boolean, baselineCatalogReady: boolean): boolean {

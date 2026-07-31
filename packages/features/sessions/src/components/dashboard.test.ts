@@ -844,7 +844,7 @@ const DASHBOARD_DEFAULTS = {
   askRequests: [] as AskRequest[],
   savedWorkingDirectories: [] as string[],
   onEnableNotifications: vi.fn().mockResolvedValue(undefined),
-  onLaunch: vi.fn().mockResolvedValue(undefined),
+  onLaunch: vi.fn().mockResolvedValue("created-session"),
   onSaveWorkingDirectory: vi.fn().mockResolvedValue(undefined),
   onRemoveWorkingDirectory: vi.fn().mockResolvedValue(undefined),
   onCommand: vi.fn().mockResolvedValue(undefined),
@@ -1254,6 +1254,152 @@ describe("controlled dashboard selection", () => {
 
     expect(findHostText(output, "h1")).toBe("Bootstrap");
     expect(onSelectedSessionChange).toHaveBeenCalledWith("session-1");
+  });
+});
+
+describe("dashboard launch selection", () => {
+  const baseProps = {
+    sessions: [BASE_SESSION],
+    sessionsReady: true,
+    historyLoading: false,
+    hasMoreHistory: false,
+    connection: "connected" as const,
+    error: null,
+    notificationState: "enabled" as const,
+    selectedSessionId: BASE_SESSION.id,
+    ...DASHBOARD_DEFAULTS,
+  };
+
+  it("selects the exact session returned by a successful new launch and resets the modal", async () => {
+    const onLaunch = vi.fn().mockResolvedValue("new-session-id");
+    const onSelectedSessionChange = vi.fn();
+    const props = { ...baseProps, onLaunch, onSelectedSessionChange };
+    let output = renderControlledDashboard(props);
+    const newSessionButton = findElements(output, (element) => textContent(element) === "New session")[0];
+    (newSessionButton?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    const cwdInput = findElements(output, (element) => element.props.id === "launch-cwd")[0];
+    (cwdInput?.props.onChange as ((event: { target: { value: string } }) => void) | undefined)?.({
+      target: { value: " /work/new-project " },
+    });
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    const form = findElements(output, (element) => element.props.className === "launch-form")[0];
+    const reset = vi.fn();
+    vi.stubGlobal(
+      "FormData",
+      class {
+        get() {
+          return " resume-session ";
+        }
+      },
+    );
+    try {
+      await (
+        form?.props.onSubmit as
+          | ((event: { preventDefault(): void; currentTarget: { reset(): void } }) => Promise<void>)
+          | undefined
+      )?.({ preventDefault: vi.fn(), currentTarget: { reset } });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(onLaunch).toHaveBeenCalledWith("/work/new-project", "resume-session");
+    expect(onSelectedSessionChange).toHaveBeenCalledOnce();
+    expect(onSelectedSessionChange).toHaveBeenCalledWith("new-session-id");
+    expect(reset).toHaveBeenCalledOnce();
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    expect(
+      findElements(output, (element) => element.props.title === "Start an OMP session")[0]?.props.open,
+    ).toBe(false);
+  });
+
+  it("selects the exact session returned by a successful resume", async () => {
+    const historySession = {
+      ...BASE_SESSION,
+      source: "history" as const,
+      status: "history" as const,
+      connected: false,
+    };
+    const onLaunch = vi.fn().mockResolvedValue("resumed-session-id");
+    const onSelectedSessionChange = vi.fn();
+    const output = renderControlledDashboard({
+      ...baseProps,
+      sessions: [historySession],
+      selectedSessionId: historySession.id,
+      onLaunch,
+      onSelectedSessionChange,
+    });
+    const resumeButton = findElements(output, (element) => textContent(element) === "Resume session")[0];
+    (resumeButton?.props.onClick as (() => void) | undefined)?.();
+    await Promise.resolve();
+
+    expect(onLaunch).toHaveBeenCalledWith(historySession.cwd, historySession.sessionPath);
+    expect(onSelectedSessionChange).toHaveBeenCalledOnce();
+    expect(onSelectedSessionChange).toHaveBeenCalledWith("resumed-session-id");
+  });
+
+  it("does not select a session when resume fails", async () => {
+    const historySession = {
+      ...BASE_SESSION,
+      source: "history" as const,
+      status: "history" as const,
+      connected: false,
+    };
+    const onSelectedSessionChange = vi.fn();
+    const output = renderControlledDashboard({
+      ...baseProps,
+      sessions: [historySession],
+      selectedSessionId: historySession.id,
+      onLaunch: vi.fn().mockRejectedValue(new Error("resume failed")),
+      onSelectedSessionChange,
+    });
+    const resumeButton = findElements(output, (element) => textContent(element) === "Resume session")[0];
+    (resumeButton?.props.onClick as (() => void) | undefined)?.();
+    await Promise.resolve();
+
+    expect(onSelectedSessionChange).not.toHaveBeenCalled();
+  });
+
+  it("does not select or reset the modal when a new launch fails", async () => {
+    const onLaunch = vi.fn().mockRejectedValue(new Error("launch failed"));
+    const onSelectedSessionChange = vi.fn();
+    const props = { ...baseProps, onLaunch, onSelectedSessionChange };
+    let output = renderControlledDashboard(props);
+    const newSessionButton = findElements(output, (element) => textContent(element) === "New session")[0];
+    (newSessionButton?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    const cwdInput = findElements(output, (element) => element.props.id === "launch-cwd")[0];
+    (cwdInput?.props.onChange as ((event: { target: { value: string } }) => void) | undefined)?.({
+      target: { value: "/work/failing-project" },
+    });
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    const form = findElements(output, (element) => element.props.className === "launch-form")[0];
+    const reset = vi.fn();
+    vi.stubGlobal(
+      "FormData",
+      class {
+        get() {
+          return "";
+        }
+      },
+    );
+    try {
+      await (
+        form?.props.onSubmit as
+          | ((event: { preventDefault(): void; currentTarget: { reset(): void } }) => Promise<void>)
+          | undefined
+      )?.({ preventDefault: vi.fn(), currentTarget: { reset } });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(onSelectedSessionChange).not.toHaveBeenCalled();
+    expect(reset).not.toHaveBeenCalled();
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    expect(textContent(output)).toContain("launch failed");
+    expect(
+      findElements(output, (element) => element.props.title === "Start an OMP session")[0]?.props.open,
+    ).toBe(true);
   });
 });
 
