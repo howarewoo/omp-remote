@@ -2,6 +2,9 @@
   "artifacts": {
     "specPlan": "markdown"
   },
+  "commit": {
+    "command": "pnpm format"
+  },
   "models": {},
   "review": {},
   "respond": {},
