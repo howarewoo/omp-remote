@@ -68,7 +68,7 @@ import {
   getActiveAskRequest,
   getComposerAction,
   getSkillSuggestions,
-  groupSessionsByConnection,
+  groupSessionsForSidebar,
   isNearTranscriptBottom,
   parseInlineTranscript,
   parseTranscriptBlocks,
@@ -161,34 +161,47 @@ describe("canKillSession", () => {
   });
 });
 
-describe("groupSessionsByConnection", () => {
-  it("lists connected sessions before disconnected sessions while preserving their order", () => {
+describe("groupSessionsForSidebar", () => {
+  it("separates live terminal and daemon-hosted sessions before disconnected sessions", () => {
     const sessions = [
       { ...BASE_SESSION, id: "disconnected-new", connected: false, status: "disconnected" as const },
-      { ...BASE_SESSION, id: "connected-new" },
-      { ...BASE_SESSION, id: "connected-old" },
-      { ...BASE_SESSION, id: "disconnected-old", connected: false, status: "history" as const },
+      { ...BASE_SESSION, id: "terminal-new", source: "extension" as const },
+      { ...BASE_SESSION, id: "daemon-new" },
+      { ...BASE_SESSION, id: "terminal-old", source: "extension" as const },
+      { ...BASE_SESSION, id: "daemon-old" },
+      {
+        ...BASE_SESSION,
+        id: "disconnected-old",
+        connected: false,
+        source: "history" as const,
+        status: "history" as const,
+      },
     ];
 
-    expect(groupSessionsByConnection(sessions)).toEqual([
+    expect(groupSessionsForSidebar(sessions)).toEqual([
       {
-        id: "connected",
-        label: "Connected",
-        sessions: [sessions[1], sessions[2]],
+        id: "terminal",
+        label: "Live terminal sessions",
+        sessions: [sessions[1], sessions[3]],
+      },
+      {
+        id: "daemon",
+        label: "Live daemon-hosted sessions",
+        sessions: [sessions[2], sessions[4]],
       },
       {
         id: "disconnected",
         label: "Disconnected",
-        sessions: [sessions[0], sessions[3]],
+        sessions: [sessions[0], sessions[5]],
       },
     ]);
   });
 
-  it("omits empty connection sections", () => {
-    expect(groupSessionsByConnection([BASE_SESSION])).toEqual([
+  it("omits empty sidebar sections", () => {
+    expect(groupSessionsForSidebar([BASE_SESSION])).toEqual([
       {
-        id: "connected",
-        label: "Connected",
+        id: "daemon",
+        label: "Live daemon-hosted sessions",
         sessions: [BASE_SESSION],
       },
     ]);

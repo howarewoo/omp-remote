@@ -39,8 +39,8 @@ import { cn } from "./ui/utils.js";
 
 type ComposerMode = "prompt" | "steer" | "follow_up";
 type SessionSection = {
-  id: "connected" | "disconnected";
-  label: "Connected" | "Disconnected";
+  id: "terminal" | "daemon" | "disconnected";
+  label: "Live terminal sessions" | "Live daemon-hosted sessions" | "Disconnected";
   sessions: Session[];
 };
 type NotificationState = "blocked" | "enabled" | "error" | "prompt" | "unsupported";
@@ -451,16 +451,22 @@ export function parseTranscriptBlocks(text: string): TranscriptBlock[] {
   return blocks;
 }
 
-export function groupSessionsByConnection(sessions: Session[]): SessionSection[] {
-  const connected: Session[] = [];
+export function groupSessionsForSidebar(sessions: Session[]): SessionSection[] {
+  const terminal: Session[] = [];
+  const daemon: Session[] = [];
   const disconnected: Session[] = [];
 
   for (const session of sessions) {
-    (session.connected ? connected : disconnected).push(session);
+    if (!session.connected) {
+      disconnected.push(session);
+    } else {
+      (session.source === "extension" ? terminal : daemon).push(session);
+    }
   }
 
   const sections: SessionSection[] = [
-    { id: "connected", label: "Connected", sessions: connected },
+    { id: "terminal", label: "Live terminal sessions", sessions: terminal },
+    { id: "daemon", label: "Live daemon-hosted sessions", sessions: daemon },
     { id: "disconnected", label: "Disconnected", sessions: disconnected },
   ];
   return sections.filter((section) => section.sessions.length > 0);
@@ -827,7 +833,7 @@ function DashboardContent({
   const { isMobile, setOpenMobile } = useSidebar();
 
   const mainSessions = useMemo(() => filterMainSessions(sessions), [sessions]);
-  const sessionSections = useMemo(() => groupSessionsByConnection(mainSessions), [mainSessions]);
+  const sessionSections = useMemo(() => groupSessionsForSidebar(mainSessions), [mainSessions]);
   const selectedSession = useMemo(
     () =>
       mainSessions.find((session) => session.id === selectedSessionId) ??
@@ -1186,7 +1192,7 @@ function DashboardContent({
                 >
                   <h2 className="session-group-heading" id={`session-group-${section.id}`}>
                     <span>{section.label}</span>
-                    {section.id === "connected" ? (
+                    {section.id !== "disconnected" ? (
                       <span>
                         {section.sessions.length.toLocaleString()}
                         <span className="sr-only">
