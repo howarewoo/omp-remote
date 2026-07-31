@@ -2009,26 +2009,6 @@ textarea:disabled {
   font-size: 0.5625rem;
 }
 
-.live-copy {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.4rem;
-  margin-bottom: 0.5rem;
-  color: oklch(80% 0.07 200);
-  font-family: var(--font-mono);
-  font-size: 0.5625rem;
-}
-
-.live-copy::before {
-  width: 0.35rem;
-  height: 0.35rem;
-  border-radius: 50%;
-  background: var(--cyan);
-  content: "";
-  animation: pulse 1.8s ease-in-out infinite;
-}
-
 .history-controls {
   display: flex;
   flex: 0 0 auto;
