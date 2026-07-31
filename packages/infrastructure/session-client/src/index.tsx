@@ -21,12 +21,15 @@ type PendingCommand = { resolve: () => void; reject: (error: Error) => void };
 export interface SessionClient {
   sessions: Session[];
   askRequests: AskRequest[];
+  savedWorkingDirectories: string[];
   sessionsReady: boolean;
   historyLoading: boolean;
   hasMoreHistory: boolean;
   connection: ConnectionState;
   error: string | null;
   launch(cwd: string, resume: string | null): Promise<void>;
+  saveWorkingDirectory(cwd: string): Promise<void>;
+  removeWorkingDirectory(cwd: string): Promise<void>;
   command(sessionId: string, command: "prompt" | "steer" | "follow_up", text: string): Promise<void>;
   abort(sessionId: string): Promise<void>;
   kill(sessionId: string): Promise<void>;
@@ -46,6 +49,7 @@ export function useSessionClient(): SessionClient {
   const transcriptAbortRef = useRef<AbortController | null>(null);
   const [liveSessions, setLiveSessions] = useState<Session[]>([]);
   const [askRequests, setAskRequests] = useState<AskRequest[]>([]);
+  const [savedWorkingDirectories, setSavedWorkingDirectories] = useState<string[]>([]);
   const [historySessions, setHistorySessions] = useState<Session[]>([]);
   const [liveSessionsReady, setLiveSessionsReady] = useState(false);
   const [historySessionsReady, setHistorySessionsReady] = useState(false);
@@ -84,6 +88,7 @@ export function useSessionClient(): SessionClient {
         if (frame.type === "snapshot") {
           setLiveSessions(frame.sessions);
           setAskRequests(frame.askRequests);
+          setSavedWorkingDirectories(frame.savedWorkingDirectories);
           setLiveSessionsReady(true);
         } else if (frame.type === "session_upsert") {
           setLiveSessions((current) => upsertSession(current, frame.session));
@@ -97,6 +102,8 @@ export function useSessionClient(): SessionClient {
           setAskRequests((current) => removeAskRequest(current, frame.sessionId, frame.requestId));
         } else if (frame.type === "session_removed") {
           setLiveSessions((current) => current.filter((session) => session.id !== frame.sessionId));
+        } else if (frame.type === "saved_working_directories") {
+          setSavedWorkingDirectories(frame.savedWorkingDirectories);
         } else if (frame.type === "command_result") {
           const pending = pendingRef.current.get(frame.requestId);
           if (!pending) return;
@@ -245,6 +252,14 @@ export function useSessionClient(): SessionClient {
       send({ type: "launch", requestId: crypto.randomUUID(), cwd, resume }),
     [send],
   );
+  const saveWorkingDirectory = useCallback(
+    (cwd: string) => send({ type: "save_working_directory", requestId: crypto.randomUUID(), cwd }),
+    [send],
+  );
+  const removeWorkingDirectory = useCallback(
+    (cwd: string) => send({ type: "remove_working_directory", requestId: crypto.randomUUID(), cwd }),
+    [send],
+  );
   const command = useCallback(
     (sessionId: string, commandName: "prompt" | "steer" | "follow_up", text: string) =>
       send({
@@ -314,12 +329,15 @@ export function useSessionClient(): SessionClient {
   return {
     sessions,
     askRequests,
+    savedWorkingDirectories,
     sessionsReady: sessionSourcesReady(liveSessionsReady, historySessionsReady),
     historyLoading,
     hasMoreHistory: historyNextOffset !== null,
     connection,
     error: historyError ?? connectionError,
     launch,
+    saveWorkingDirectory,
+    removeWorkingDirectory,
     command,
     abort,
     kill,

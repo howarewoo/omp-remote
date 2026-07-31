@@ -538,8 +538,11 @@ type ControlledDashboardProps = DashboardProps & {
 
 const DASHBOARD_DEFAULTS = {
   askRequests: [] as AskRequest[],
+  savedWorkingDirectories: [] as string[],
   onEnableNotifications: vi.fn().mockResolvedValue(undefined),
   onLaunch: vi.fn().mockResolvedValue(undefined),
+  onSaveWorkingDirectory: vi.fn().mockResolvedValue(undefined),
+  onRemoveWorkingDirectory: vi.fn().mockResolvedValue(undefined),
   onCommand: vi.fn().mockResolvedValue(undefined),
   onAbort: vi.fn().mockResolvedValue(undefined),
   onKill: vi.fn().mockResolvedValue(undefined),

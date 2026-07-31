@@ -111,6 +111,16 @@ export const BrowserCommandSchema = z.union([
     resume: z.string().trim().min(1).nullable(),
   }),
   z.object({
+    type: z.literal("save_working_directory"),
+    requestId: z.string().min(1),
+    cwd: z.string().trim().min(1),
+  }),
+  z.object({
+    type: z.literal("remove_working_directory"),
+    requestId: z.string().min(1),
+    cwd: z.string().trim().min(1),
+  }),
+  z.object({
     type: z.literal("session_command"),
     requestId: z.string().min(1),
     sessionId: z.string().min(1),
@@ -159,6 +169,7 @@ export const ServerFrameSchema = z.discriminatedUnion("type", [
     type: z.literal("snapshot"),
     sessions: z.array(SessionSchema),
     askRequests: z.array(AskRequestSchema).default([]),
+    savedWorkingDirectories: z.array(z.string().trim().min(1)).default([]),
   }),
   z.object({ type: z.literal("session_upsert"), session: SessionSchema }),
   z.object({
@@ -178,6 +189,10 @@ export const ServerFrameSchema = z.discriminatedUnion("type", [
     requestId: z.string().min(1),
   }),
   z.object({ type: z.literal("session_removed"), sessionId: z.string() }),
+  z.object({
+    type: z.literal("saved_working_directories"),
+    savedWorkingDirectories: z.array(z.string().trim().min(1)),
+  }),
   z.object({
     type: z.literal("command_result"),
     requestId: z.string(),

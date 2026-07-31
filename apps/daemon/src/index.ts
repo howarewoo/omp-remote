@@ -1,35 +1,36 @@
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import { createLogger } from "@omp-remote/observability";
 import { type RpcFrame, RpcSession } from "@omp-remote/omp-rpc";
 import {
-  BrowserCommandSchema,
   type AskRequest,
+  BrowserCommandSchema,
   EffortSchema,
   ExtensionFrameSchema,
-  SessionCatalogPageSchema,
-  SessionTranscriptResponseSchema,
   type ServerFrame,
   type Session,
+  SessionCatalogPageSchema,
   type SessionModelOption,
+  SessionTranscriptResponseSchema,
 } from "@omp-remote/protocol";
 import { SessionRegistry } from "@omp-remote/sessions/services";
 import Fastify from "fastify";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { z } from "zod";
 import {
-  broadcastBrowserFrame,
   type BrowserFrameDeliveryResult,
+  broadcastBrowserFrame,
   sendBrowserFrame,
 } from "./browser-broadcast.js";
-import { normalizeRpcAskEvent } from "./rpc-ask.js";
 import { createCatalogReconciler, createReconciledSessionRegistrar } from "./catalog-reconciliation.js";
 import { resolveGitBranch } from "./git-branch.js";
 import { normalizeRawMessage, normalizeSkillCommands } from "./message-normalizer.js";
+import { normalizeRpcAskEvent } from "./rpc-ask.js";
+import { SavedWorkingDirectoryStore } from "./saved-working-directories.js";
 import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
 
 const MAX_MESSAGES = 200;
@@ -103,6 +104,7 @@ const CatalogQuerySchema = z.object({
 const SessionParamsSchema = z.object({ sessionId: z.string().min(1) });
 
 const environment = EnvironmentSchema.parse(process.env);
+const savedWorkingDirectories = await SavedWorkingDirectoryStore.load();
 const sessionCatalog = new SessionCatalog(
   await resolveSessionRoots(homedir(), process.env.PI_CODING_AGENT_DIR),
 );
@@ -171,6 +173,7 @@ app.get("/ws", { websocket: true }, (socket, request) => {
     type: "snapshot",
     sessions: registry.list(),
     askRequests: [...pendingAskBySession.values()].map(({ request: askRequest }) => askRequest),
+    savedWorkingDirectories: savedWorkingDirectories.list(),
   });
   socket.on("message", async (raw) => {
     const command = (() => {
@@ -183,6 +186,37 @@ app.get("/ws", { websocket: true }, (socket, request) => {
       }
     })();
     if (!command) return;
+
+    if (command.type === "save_working_directory" || command.type === "remove_working_directory") {
+      try {
+        const directories =
+          command.type === "save_working_directory"
+            ? await savedWorkingDirectories.save(command.cwd)
+            : await savedWorkingDirectories.remove(command.cwd);
+        broadcast({
+          type: "saved_working_directories",
+          savedWorkingDirectories: directories,
+        });
+        sendToBrowser(socket, {
+          type: "command_result",
+          requestId: command.requestId,
+          ok: true,
+          error: null,
+        });
+      } catch (error) {
+        logger.error("Could not update saved working directories", error, {
+          cwd: command.cwd,
+          operation: command.type,
+        });
+        sendToBrowser(socket, {
+          type: "command_result",
+          requestId: command.requestId,
+          ok: false,
+          error: error instanceof Error ? error.message : "Saved working directories could not be updated",
+        });
+      }
+      return;
+    }
 
     if (command.type === "launch") {
       try {

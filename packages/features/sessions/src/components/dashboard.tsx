@@ -486,6 +486,7 @@ export function getActiveAskRequest(
 export interface DashboardProps {
   sessions: Session[];
   askRequests: AskRequest[];
+  savedWorkingDirectories: string[];
   sessionsReady: boolean;
   historyLoading: boolean;
   hasMoreHistory: boolean;
@@ -496,6 +497,8 @@ export interface DashboardProps {
   onSelectedSessionChange(sessionId: string): void;
   onEnableNotifications(): Promise<void>;
   onLaunch(cwd: string, resume: string | null): Promise<void>;
+  onSaveWorkingDirectory(cwd: string): Promise<void>;
+  onRemoveWorkingDirectory(cwd: string): Promise<void>;
   onCommand(sessionId: string, command: ComposerMode, text: string): Promise<void>;
   onAbort(sessionId: string): Promise<void>;
   onKill(sessionId: string): Promise<void>;
@@ -782,6 +785,7 @@ function DashboardContent({
   sessionsReady,
   sessions,
   askRequests,
+  savedWorkingDirectories,
   historyLoading,
   hasMoreHistory,
   connection,
@@ -791,6 +795,8 @@ function DashboardContent({
   onSelectedSessionChange,
   onEnableNotifications,
   onLaunch,
+  onSaveWorkingDirectory,
+  onRemoveWorkingDirectory,
   onCommand,
   onAbort,
   onKill,
@@ -809,6 +815,13 @@ function DashboardContent({
   const [commandError, setCommandError] = useState<string | null>(null);
   const [launchOpen, setLaunchOpen] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  const [launchCwd, setLaunchCwd] = useState("");
+  const [launchState, setLaunchState] = useState<"idle" | "sending">("idle");
+  const [savedDirectoryPending, setSavedDirectoryPending] = useState<{
+    action: "save" | "remove";
+    cwd: string;
+  } | null>(null);
+  const [savedDirectoryError, setSavedDirectoryError] = useState<string | null>(null);
   const [abortOpen, setAbortOpen] = useState(false);
   const [killOpen, setKillOpen] = useState(false);
   const [configurationDrawer, setConfigurationDrawer] = useState<"model" | "effort" | null>(null);
@@ -952,19 +965,57 @@ function DashboardContent({
 
   const submitLaunch = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const cwd = String(form.get("cwd") ?? "").trim();
-    const resume = String(form.get("resume") ?? "").trim();
+    if (launchState === "sending") return;
+    const formElement = event.currentTarget;
+    const cwd = launchCwd.trim();
+    const resume = String(new FormData(formElement).get("resume") ?? "").trim();
     if (!cwd) return;
+    setLaunchState("sending");
     setLaunchError(null);
     try {
       await onLaunch(cwd, resume || null);
       setLaunchOpen(false);
-      event.currentTarget.reset();
+      setLaunchCwd("");
+      formElement.reset();
     } catch (launchFailure) {
       setLaunchError(
         launchFailure instanceof Error ? launchFailure.message : "OMP could not start the session",
       );
+    } finally {
+      setLaunchState("idle");
+    }
+  };
+
+  const saveWorkingDirectory = async () => {
+    const cwd = launchCwd.trim();
+    if (!cwd || savedDirectoryPending) return;
+    setSavedDirectoryPending({ action: "save", cwd });
+    setSavedDirectoryError(null);
+    try {
+      await onSaveWorkingDirectory(cwd);
+    } catch (saveFailure) {
+      setSavedDirectoryError(
+        saveFailure instanceof Error ? saveFailure.message : "The working directory could not be saved",
+      );
+    } finally {
+      setSavedDirectoryPending(null);
+    }
+  };
+
+  const removeWorkingDirectory = async (cwd: string) => {
+    if (savedDirectoryPending) return;
+    setSavedDirectoryPending({ action: "remove", cwd });
+    setSavedDirectoryError(null);
+    try {
+      await onRemoveWorkingDirectory(cwd);
+    } catch (removeFailure) {
+      setSavedDirectoryError(
+        removeFailure instanceof Error
+          ? removeFailure.message
+          : "The saved working directory could not be removed",
+      );
+    } finally {
+      setSavedDirectoryPending(null);
     }
   };
 
@@ -1931,22 +1982,67 @@ function DashboardContent({
 
       <Dialog
         open={launchOpen}
-        onOpenChange={setLaunchOpen}
+        onOpenChange={(open) => {
+          setLaunchOpen(open);
+          if (!open) {
+            setSavedDirectoryError(null);
+            setLaunchError(null);
+          }
+        }}
         title="Start an OMP session"
         description="Choose a working directory. Add a saved session ID or JSONL path to resume it."
       >
         <form className="launch-form" onSubmit={submitLaunch}>
-          <label htmlFor="launch-cwd">
-            <span>Working directory</span>
-            <Input
-              id="launch-cwd"
-              name="cwd"
-              required
-              placeholder="/Users/you/project"
-              autoComplete="off"
-              autoFocus
-            />
-          </label>
+          <div className="launch-field">
+            <label htmlFor="launch-cwd">Working directory</label>
+            <div className="launch-cwd-control">
+              <Input
+                id="launch-cwd"
+                name="cwd"
+                required
+                placeholder="/Users/you/project"
+                autoComplete="off"
+                autoFocus
+                value={launchCwd}
+                onChange={(event) => setLaunchCwd(event.target.value)}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!launchCwd.trim() || savedDirectoryPending !== null}
+                onClick={() => void saveWorkingDirectory()}
+              >
+                {savedDirectoryPending?.action === "save" ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </div>
+          {savedWorkingDirectories.length > 0 ? (
+            <section className="saved-directory-list" aria-label="Saved working directories">
+              {savedWorkingDirectories.map((cwd) => (
+                <div className="saved-directory-item" key={cwd}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className="saved-directory-select"
+                    disabled={savedDirectoryPending !== null}
+                    onClick={() => setLaunchCwd(cwd)}
+                  >
+                    {cwd}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Remove saved working directory ${cwd}`}
+                    disabled={savedDirectoryPending !== null}
+                    onClick={() => void removeWorkingDirectory(cwd)}
+                  >
+                    <Icon name="trash" />
+                  </Button>
+                </div>
+              ))}
+            </section>
+          ) : null}
           <label htmlFor="launch-resume">
             <span>
               Resume ID or path <small>Optional</small>
@@ -1958,16 +2054,28 @@ function DashboardContent({
               autoComplete="off"
             />
           </label>
+          {savedDirectoryError ? (
+            <p className="inline-error saved-directory-error" role="alert">
+              {savedDirectoryError}
+            </p>
+          ) : null}
           {launchError ? (
             <p className="inline-error" role="alert">
               {launchError}
             </p>
           ) : null}
           <footer className="dialog-actions">
-            <Button type="button" variant="ghost" onClick={() => setLaunchOpen(false)}>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={launchState === "sending"}
+              onClick={() => setLaunchOpen(false)}
+            >
               Cancel
             </Button>
-            <Button type="submit">Start session</Button>
+            <Button type="submit" disabled={launchState === "sending"}>
+              {launchState === "sending" ? "Starting…" : "Start session"}
+            </Button>
           </footer>
         </form>
       </Dialog>
@@ -2032,7 +2140,7 @@ function DashboardContent({
 function Icon({
   name,
 }: {
-  name: "bell" | "close" | "down" | "plus" | "power" | "search" | "send" | "stop" | "up";
+  name: "bell" | "close" | "down" | "plus" | "power" | "search" | "send" | "stop" | "trash" | "up";
 }) {
   const paths = {
     bell: (
@@ -2053,6 +2161,13 @@ function Icon({
     search: <path d="m21 21-4.4-4.4m2.4-5.1a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" />,
     send: <path d="m4 4 17 8-17 8 3-8-3-8Zm3 8h14" />,
     stop: <rect x="7" y="7" width="10" height="10" rx="1" />,
+    trash: (
+      <>
+        <path d="M4 7h16" />
+        <path d="m9 7 1-3h4l1 3" />
+        <path d="m6 7 1 14h10l1-14M10 11v6M14 11v6" />
+      </>
+    ),
     up: <path d="m6 15 6-6 6 6" />,
   } as const;
   return (
