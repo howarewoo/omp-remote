@@ -2056,25 +2056,32 @@ function DashboardContent({
                     placeholder="Redirect the current run…"
                     rows={1}
                     onKeyDown={(event) => {
-                      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                        event.currentTarget.form?.requestSubmit();
+                      if (event.nativeEvent.isComposing) return;
+                      if (event.key === "Enter" && event.shiftKey) return;
+                      if (visibleSkillSuggestions.length > 0) {
+                        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                          event.preventDefault();
+                          const direction = event.key === "ArrowDown" ? 1 : -1;
+                          setActiveSkillIndex(
+                            (current) =>
+                              (current + direction + visibleSkillSuggestions.length) %
+                              visibleSkillSuggestions.length,
+                          );
+                        } else if (
+                          (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey) ||
+                          event.key === "Tab"
+                        ) {
+                          event.preventDefault();
+                          if (activeSkillSuggestion) selectSkillSuggestion(activeSkillSuggestion.name);
+                        } else if (event.key === "Escape") {
+                          event.preventDefault();
+                          setAutocompleteDismissedFor(message);
+                        }
                         return;
                       }
-                      if (visibleSkillSuggestions.length === 0) return;
-                      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                      if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey) {
                         event.preventDefault();
-                        const direction = event.key === "ArrowDown" ? 1 : -1;
-                        setActiveSkillIndex(
-                          (current) =>
-                            (current + direction + visibleSkillSuggestions.length) %
-                            visibleSkillSuggestions.length,
-                        );
-                      } else if (event.key === "Enter" || event.key === "Tab") {
-                        event.preventDefault();
-                        if (activeSkillSuggestion) selectSkillSuggestion(activeSkillSuggestion.name);
-                      } else if (event.key === "Escape") {
-                        event.preventDefault();
-                        setAutocompleteDismissedFor(message);
+                        event.currentTarget.form?.requestSubmit();
                       }
                     }}
                   />
@@ -2096,9 +2103,6 @@ function DashboardContent({
                   >
                     <Icon name={composerAction === "abort" ? "stop" : "send"} />
                   </Button>
-                </div>
-                <div className="composer-footer">
-                  <span>⌘ ↵ to send</span>
                 </div>
               </form>
             )}
