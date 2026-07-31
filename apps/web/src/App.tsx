@@ -32,6 +32,7 @@ export default function App() {
       <Dashboard
         sessions={client.sessions}
         askRequests={client.askRequests}
+        savedWorkingDirectories={client.savedWorkingDirectories}
         sessionsReady={client.sessionsReady}
         historyLoading={client.historyLoading}
         hasMoreHistory={client.hasMoreHistory}
@@ -42,6 +43,8 @@ export default function App() {
         onSelectedSessionChange={onSelectedSessionChange}
         onEnableNotifications={notifications.enable}
         onLaunch={client.launch}
+        onSaveWorkingDirectory={client.saveWorkingDirectory}
+        onRemoveWorkingDirectory={client.removeWorkingDirectory}
         onCommand={client.command}
         onAbort={client.abort}
         onKill={client.kill}

@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   BrowserCommandSchema,
-  ExtensionRegisterSchema,
   ExtensionHeartbeatSchema,
+  ExtensionRegisterSchema,
   filterMainSessions,
+  ServerFrameSchema,
   SessionCatalogPageSchema,
   SessionPatchSchema,
   SessionSchema,
   SessionTranscriptResponseSchema,
   TranscriptMessageSchema,
-  ServerFrameSchema,
 } from "./index.js";
 
 describe("BrowserCommandSchema", () => {
@@ -44,6 +44,36 @@ describe("BrowserCommandSchema", () => {
       }),
     ).toMatchObject({ command, text });
   });
+
+  it.each(["save_working_directory", "remove_working_directory"] as const)(
+    "accepts and trims %s commands",
+    (type) => {
+      expect(
+        BrowserCommandSchema.parse({
+          type,
+          requestId: `${type}-1`,
+          cwd: "  /workspace/project  ",
+        }),
+      ).toEqual({
+        type,
+        requestId: `${type}-1`,
+        cwd: "/workspace/project",
+      });
+    },
+  );
+
+  it.each(["save_working_directory", "remove_working_directory"] as const)(
+    "rejects an empty cwd for %s commands",
+    (type) => {
+      expect(() =>
+        BrowserCommandSchema.parse({
+          type,
+          requestId: `${type}-1`,
+          cwd: " ",
+        }),
+      ).toThrow();
+    },
+  );
 
   it("accepts abort without command text", () => {
     expect(
@@ -505,6 +535,32 @@ describe("ExtensionRegisterSchema", () => {
 });
 
 describe("ServerFrameSchema", () => {
+  it("defaults saved working directories for legacy snapshots", () => {
+    expect(
+      ServerFrameSchema.parse({
+        type: "snapshot",
+        sessions: [],
+      }),
+    ).toEqual({
+      type: "snapshot",
+      sessions: [],
+      askRequests: [],
+      savedWorkingDirectories: [],
+    });
+  });
+
+  it("accepts authoritative saved working directory updates", () => {
+    expect(
+      ServerFrameSchema.parse({
+        type: "saved_working_directories",
+        savedWorkingDirectories: ["/workspace/one", "  /workspace/two  "],
+      }),
+    ).toEqual({
+      type: "saved_working_directories",
+      savedWorkingDirectories: ["/workspace/one", "/workspace/two"],
+    });
+  });
+
   it("accepts incremental transcript updates", () => {
     expect(
       ServerFrameSchema.parse({
