@@ -1120,19 +1120,28 @@ export function ToolTranscriptText({ entry }: { entry: Session["messages"][numbe
   if (todo) return <MemoizedTodoToolTranscript entry={entry} todo={todo} />;
 
   const readFilename = entry.toolName === "read" ? getReadToolFilename(entry.text) : null;
+  const isWrite = entry.toolName === "write";
 
   return (
-    <details className="tool-message-disclosure" open={entry.toolName === "edit"}>
+    <details
+      className={cn("tool-message-disclosure", isWrite && "write-tool-disclosure")}
+      open={entry.toolName === "edit" || isWrite}
+    >
       <summary>
         <TranscriptEntryHeader
           entry={entry}
           authorLabel={readFilename ? `read ${readFilename}` : (entry.toolName ?? entry.role)}
           collapsible
         />
-        {readFilename ? null : (
+        {readFilename || isWrite ? null : (
           <pre className="tool-message-preview">{formatToolTextPreview(entry.text)}</pre>
         )}
       </summary>
+      {isWrite ? (
+        <div className="write-tool-output-divider">
+          <span>Output</span>
+        </div>
+      ) : null}
       <TranscriptEntryContent entry={entry} />
     </details>
   );

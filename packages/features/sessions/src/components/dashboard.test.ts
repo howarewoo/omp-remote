@@ -419,6 +419,32 @@ describe("ToolTranscriptText", () => {
     expect(block.props.open).toBe(true);
   });
 
+  it("renders write output in a distinct open frame with a labeled divider and full result", () => {
+    const text = ["Wrote 42 bytes to", "packages/features/sessions/src/components/dashboard.tsx"].join("\n");
+    const disclosure = ToolTranscriptText({
+      entry: {
+        id: "write-1",
+        role: "tool",
+        toolName: "write",
+        text,
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    });
+    const nodes = renderTranscriptNodes(disclosure);
+
+    expect(disclosure.type).toBe("details");
+    expect(disclosure.props.open).toBe(true);
+    expect(disclosure.props.className).toBe("tool-message-disclosure write-tool-disclosure");
+    expect(disclosure.props.children[0].type).toBe("summary");
+    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("write");
+    expect(nodes.find((node) => node.className === "write-tool-output-divider")?.text).toBe("Output");
+    expect(nodes.find((node) => node.className === "transcript-message")?.text).toContain(
+      "packages/features/sessions/src/components/dashboard.tsx",
+    );
+  });
+
   it("routes canonical todo output to a closed progress summary and state list", () => {
     const entry = {
       id: "todo-1",
