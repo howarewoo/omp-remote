@@ -480,7 +480,7 @@ export function getActiveAskRequest(
   askRequests: readonly AskRequest[],
   selectedSessionId: string | null,
 ): AskRequest | null {
-  return askRequests.find((request) => request.sessionId === selectedSessionId) ?? askRequests[0] ?? null;
+  return askRequests.find((request) => request.sessionId === selectedSessionId) ?? null;
 }
 
 export interface DashboardProps {
@@ -688,6 +688,246 @@ export function formatToolTextPreview(text: string): string {
   return /\S/.test(preview) ? preview : "No tool output";
 }
 
+export type TodoTaskState = "pending" | "in-progress" | "completed" | "blocked" | "dropped";
+
+export type TodoTask = {
+  label: string;
+  state: TodoTaskState;
+  reason?: string;
+};
+
+export type TodoPhase = {
+  name: string;
+  state: TodoTaskState;
+  tasks: TodoTask[];
+};
+
+export type TodoOverallProgress = {
+  done: number;
+  total: number;
+  open?: number;
+  blocked?: number;
+};
+
+export type TodoActivePhase = {
+  index: number;
+  total: number;
+  name: string;
+  done: number;
+  taskTotal: number;
+};
+
+export type TodoResult = {
+  overall: TodoOverallProgress;
+  activePhase?: TodoActivePhase;
+  phases: TodoPhase[];
+};
+
+const TODO_STATE_LABEL: Record<TodoTaskState, string> = {
+  pending: "Pending",
+  "in-progress": "In progress",
+  completed: "Completed",
+  blocked: "Blocked",
+  dropped: "Dropped",
+};
+
+function getTodoPhaseState(tasks: TodoTask[]): TodoTaskState {
+  if (tasks.every((task) => task.state === "dropped")) return "dropped";
+  if (tasks.every((task) => task.state === "completed" || task.state === "dropped")) return "completed";
+  if (tasks.some((task) => task.state === "in-progress")) return "in-progress";
+  if (tasks.some((task) => task.state === "blocked")) return "blocked";
+  return "pending";
+}
+
+export function parseTodoResult(text: string): TodoResult | null {
+  const lines = text
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .filter((line) => line.length > 0);
+  const overallPattern = /^Overall: (\d+)\/(\d+) done(?:, (\d+) open)?(?:, (\d+) blocked)?\.$/;
+  const overallIndex = lines.findIndex((line) => overallPattern.test(line));
+  if (overallIndex === -1) return null;
+  for (let preambleIndex = 0; preambleIndex < overallIndex; preambleIndex += 1) {
+    if (lines[preambleIndex]?.startsWith("Errors:")) return null;
+  }
+  const overallLine = lines[overallIndex];
+  if (overallLine === undefined) return null;
+  const overallMatch = overallPattern.exec(overallLine);
+  if (!overallMatch) return null;
+  const doneText = overallMatch?.[1];
+  const totalText = overallMatch?.[2];
+  if (doneText === undefined || totalText === undefined) return null;
+
+  const done = Number(doneText);
+  const total = Number(totalText);
+  const open = overallMatch[3] === undefined ? undefined : Number(overallMatch[3]);
+  const blocked = overallMatch[4] === undefined ? undefined : Number(overallMatch[4]);
+  if (
+    !Number.isSafeInteger(done) ||
+    !Number.isSafeInteger(total) ||
+    total < 1 ||
+    (open !== undefined && !Number.isSafeInteger(open)) ||
+    (blocked !== undefined && !Number.isSafeInteger(blocked)) ||
+    done > total ||
+    ((open !== undefined || blocked !== undefined) && done + (open ?? 0) + (blocked ?? 0) !== total)
+  ) {
+    return null;
+  }
+
+  let lineIndex = overallIndex + 1;
+  let activePhase: TodoResult["activePhase"];
+  const activeMatch = /^Active phase (\d+)\/(\d+) "([^"\n]+)" \((\d+)\/(\d+)\)(?:\.| — .+)$/.exec(
+    lines[lineIndex] ?? "",
+  );
+  if (activeMatch) {
+    const indexText = activeMatch[1];
+    const totalText = activeMatch[2];
+    const name = activeMatch[3];
+    const doneText = activeMatch[4];
+    const taskTotalText = activeMatch[5];
+    if (
+      indexText === undefined ||
+      totalText === undefined ||
+      name === undefined ||
+      doneText === undefined ||
+      taskTotalText === undefined
+    ) {
+      return null;
+    }
+    const parsedActivePhase: TodoActivePhase = {
+      index: Number(indexText),
+      total: Number(totalText),
+      name,
+      done: Number(doneText),
+      taskTotal: Number(taskTotalText),
+    };
+    if (
+      !Number.isSafeInteger(parsedActivePhase.index) ||
+      !Number.isSafeInteger(parsedActivePhase.total) ||
+      !Number.isSafeInteger(parsedActivePhase.done) ||
+      !Number.isSafeInteger(parsedActivePhase.taskTotal) ||
+      parsedActivePhase.index < 1 ||
+      parsedActivePhase.index > parsedActivePhase.total ||
+      parsedActivePhase.taskTotal < 1 ||
+      parsedActivePhase.done > parsedActivePhase.taskTotal ||
+      parsedActivePhase.name.trim() !== parsedActivePhase.name
+    ) {
+      return null;
+    }
+    activePhase = parsedActivePhase;
+    lineIndex += 1;
+  }
+
+  const phases: TodoPhase[] = [];
+  let currentPhase: TodoPhase | undefined;
+  for (; lineIndex < lines.length; lineIndex += 1) {
+    const line = lines[lineIndex];
+    if (line === undefined) return null;
+    const phaseMatch = /^  ([^:\n]+):$/.exec(line);
+    const phaseName = phaseMatch?.[1];
+    if (phaseName !== undefined) {
+      if (phaseName.trim() !== phaseName) return null;
+      currentPhase = { name: phaseName, state: "pending", tasks: [] };
+      phases.push(currentPhase);
+      continue;
+    }
+
+    const taskMatch =
+      /^    - \[([ xX])\] (.+?)(?: \((pending|in progress|completed|blocked|dropped)(?:: ([^)]+))?\))?$/.exec(
+        line,
+      );
+    const checkbox = taskMatch?.[1];
+    const label = taskMatch?.[2];
+    const stateText = taskMatch?.[3];
+    const reason = taskMatch?.[4];
+    if (
+      !taskMatch ||
+      !currentPhase ||
+      checkbox === undefined ||
+      label === undefined ||
+      label.trim() !== label ||
+      (reason !== undefined && (stateText !== "blocked" || reason.trim() !== reason))
+    ) {
+      return null;
+    }
+
+    const checked = checkbox.toLowerCase() === "x";
+    const explicitState: TodoTaskState | undefined =
+      stateText === "in progress"
+        ? "in-progress"
+        : stateText === "pending" ||
+            stateText === "completed" ||
+            stateText === "blocked" ||
+            stateText === "dropped"
+          ? stateText
+          : undefined;
+    if (
+      (checked && explicitState !== undefined && explicitState !== "completed") ||
+      (!checked && explicitState === "completed")
+    ) {
+      return null;
+    }
+    currentPhase.tasks.push({
+      label,
+      state: explicitState ?? (checked ? "completed" : "pending"),
+      ...(reason === undefined ? {} : { reason }),
+    });
+  }
+
+  if (phases.length === 0 || phases.some((phase) => phase.tasks.length === 0)) return null;
+  let parsedTaskCount = 0;
+  let parsedDoneCount = 0;
+  let parsedOpenCount = 0;
+  let parsedBlockedCount = 0;
+  for (const phase of phases) {
+    for (const task of phase.tasks) {
+      parsedTaskCount += 1;
+      if (task.state === "completed" || task.state === "dropped") parsedDoneCount += 1;
+      else if (task.state === "blocked") parsedBlockedCount += 1;
+      else parsedOpenCount += 1;
+    }
+  }
+  if (
+    parsedTaskCount !== total ||
+    parsedDoneCount !== done ||
+    parsedOpenCount !== (open ?? 0) ||
+    parsedBlockedCount !== (blocked ?? 0)
+  ) {
+    return null;
+  }
+
+  for (const phase of phases) phase.state = getTodoPhaseState(phase.tasks);
+  if (activePhase) {
+    const phase = phases[activePhase.index - 1];
+    if (phase === undefined) return null;
+    let activeDoneCount = 0;
+    for (const task of phase.tasks) {
+      if (task.state === "completed" || task.state === "dropped") activeDoneCount += 1;
+    }
+    if (
+      activePhase.total !== phases.length ||
+      phase.name !== activePhase.name ||
+      phase.tasks.length !== activePhase.taskTotal ||
+      activeDoneCount !== activePhase.done
+    ) {
+      return null;
+    }
+  } else if (done !== total) {
+    return null;
+  }
+
+  return {
+    overall: {
+      done,
+      total,
+      ...(open === undefined ? {} : { open }),
+      ...(blocked === undefined ? {} : { blocked }),
+    },
+    ...(activePhase ? { activePhase } : {}),
+    phases,
+  };
+}
+
 export const TranscriptText = memo(function TranscriptText({ text }: { text: string }) {
   const blocks = useMemo(() => parseTranscriptBlocks(text || "…"), [text]);
 
@@ -750,7 +990,108 @@ function TranscriptEntryContent({ entry }: { entry: Session["messages"][number] 
   );
 }
 
+export function TodoToolTranscript({
+  entry,
+  todo,
+}: {
+  entry: Session["messages"][number];
+  todo: TodoResult;
+}) {
+  const activePhase = todo.activePhase ? todo.phases[todo.activePhase.index - 1] : undefined;
+  let activeTask = activePhase?.tasks.find((task) => task.state === "in-progress");
+  if (!activeTask) {
+    for (const phase of todo.phases) {
+      activeTask = phase.tasks.find((task) => task.state === "in-progress");
+      if (activeTask) break;
+    }
+  }
+  activeTask ??= activePhase?.tasks.find((task) => task.state === "blocked" || task.state === "pending");
+  const blocked = todo.overall.blocked ?? 0;
+  const open = todo.overall.open ?? todo.overall.total - todo.overall.done - blocked;
+  const hasDroppedTasks = todo.phases.some((phase) => phase.tasks.some((task) => task.state === "dropped"));
+  const terminalLabel = hasDroppedTasks ? "No tasks remain" : "All tasks complete";
+  const terminalState: TodoTaskState = hasDroppedTasks ? "dropped" : "completed";
+  const progressVerb = hasDroppedTasks ? "resolved" : "complete";
+
+  return (
+    <details className="tool-message-disclosure todo-tool-disclosure">
+      <summary>
+        <TranscriptEntryHeader entry={entry} collapsible />
+        <div className="todo-tool-summary">
+          <div className="todo-progress-copy">
+            <strong>
+              {todo.overall.done}/{todo.overall.total} {progressVerb}
+            </strong>
+            <span className="todo-progress-counts">
+              <span>{open} open</span>
+              {blocked > 0 ? <span className="todo-blocked-count">{blocked} blocked</span> : null}
+            </span>
+          </div>
+          <progress
+            aria-label={`Overall todo progress: ${todo.overall.done} of ${
+              todo.overall.total
+            } tasks ${progressVerb}`}
+            max={todo.overall.total}
+            value={todo.overall.done}
+          />
+          <div className="todo-active-task">
+            <span
+              aria-hidden="true"
+              className="todo-state-marker"
+              data-state={
+                activeTask?.state ?? (todo.overall.done === todo.overall.total ? terminalState : "pending")
+              }
+            />
+            <span>
+              <span className="sr-only">{activeTask ? `${TODO_STATE_LABEL[activeTask.state]}: ` : ""}</span>
+              {activeTask?.label ??
+                (todo.overall.done === todo.overall.total ? terminalLabel : `${open} tasks open`)}
+            </span>
+          </div>
+        </div>
+      </summary>
+      <div className="todo-phase-list">
+        {todo.phases.map((phase, phaseIndex) => (
+          <section className="todo-phase" key={`${phaseIndex}:${phase.name}`}>
+            <header>
+              <h3>{phase.name}</h3>
+              <Badge className={`todo-state-badge todo-state-${phase.state}`}>
+                {TODO_STATE_LABEL[phase.state]}
+              </Badge>
+            </header>
+            <ul>
+              {phase.tasks.map((task, taskIndex) => (
+                <li key={`${taskIndex}:${task.label}`}>
+                  <span aria-hidden="true" className="todo-state-marker" data-state={task.state} />
+                  <span className="todo-task-label">
+                    <span className="sr-only">{TODO_STATE_LABEL[task.state]}: </span>
+                    {task.label}
+                    {task.reason ? (
+                      <span className="todo-task-reason">
+                        <span className="sr-only">Blocked reason: </span>
+                        {task.reason}
+                      </span>
+                    ) : null}
+                  </span>
+                  <Badge aria-hidden="true" className={`todo-state-badge todo-state-${task.state}`}>
+                    {TODO_STATE_LABEL[task.state]}
+                  </Badge>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+const MemoizedTodoToolTranscript = memo(TodoToolTranscript);
+
 export function ToolTranscriptText({ entry }: { entry: Session["messages"][number] }) {
+  const todo = entry.toolName === "todo" ? parseTodoResult(entry.text) : null;
+  if (todo) return <MemoizedTodoToolTranscript entry={entry} todo={todo} />;
+
   return (
     <details className="tool-message-disclosure" open={entry.toolName === "edit"}>
       <summary>
@@ -781,6 +1122,121 @@ export function TranscriptEntry({ entry }: { entry: Session["messages"][number] 
     </article>
   );
 }
+
+export interface AskToolCallProps {
+  request: AskRequest;
+  connection: "connecting" | "connected" | "disconnected";
+  onRespond(response: AskResponse): Promise<void>;
+}
+
+export function AskToolCall({ request, connection, onRespond }: AskToolCallProps) {
+  const [draft, setDraft] = useState(request.initialValue ?? "");
+  const [state, setState] = useState<"idle" | "sending">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const sending = state === "sending";
+  const answerId = `ask-answer-${encodeURIComponent(request.sessionId)}-${encodeURIComponent(
+    request.requestId,
+  )}`;
+
+  const respond = async (response: AskResponse) => {
+    if (sending) return;
+    setState("sending");
+    setError(null);
+    try {
+      await onRespond(response);
+      globalThis.document?.querySelector<HTMLElement>("#composer-message")?.focus();
+    } catch (responseFailure) {
+      setError(
+        responseFailure instanceof Error ? responseFailure.message : "Your answer could not be delivered",
+      );
+      setState("idle");
+    }
+  };
+
+  return (
+    <article
+      className="transcript-entry transcript-tool transcript-ask"
+      aria-busy={sending}
+      aria-labelledby={`${answerId}-title`}
+    >
+      <header className="ask-header">
+        <span className="message-author">
+          <i aria-hidden="true">?</i>
+          <span>ask</span>
+        </span>
+        <span className="ask-status">{sending ? "Sending response…" : "Waiting for your response"}</span>
+      </header>
+      <strong className="ask-title" id={`${answerId}-title`}>
+        {request.title}
+      </strong>
+      {request.kind === "select" ? (
+        <>
+          <div className="ask-options">
+            {request.options.map((option, index) => (
+              <Button
+                type="button"
+                variant="outline"
+                className="ask-option"
+                disabled={sending || connection !== "connected"}
+                onClick={() => void respond({ value: option })}
+                key={`${option}-${index}`}
+              >
+                {option}
+              </Button>
+            ))}
+          </div>
+          <footer className="ask-actions">
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={sending}
+              onClick={() => void respond({ cancelled: true })}
+            >
+              Cancel
+            </Button>
+          </footer>
+        </>
+      ) : (
+        <form
+          className="ask-answer-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void respond({ value: draft });
+          }}
+        >
+          <label htmlFor={answerId}>Your answer</label>
+          <Textarea
+            id={answerId}
+            className="ask-textarea"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            disabled={sending || connection !== "connected"}
+            rows={5}
+          />
+          <footer className="ask-actions">
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={sending}
+              onClick={() => void respond({ cancelled: true })}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={sending || connection !== "connected"} aria-busy={sending}>
+              {sending ? "Answering…" : "Answer"}
+            </Button>
+          </footer>
+        </form>
+      )}
+      {error ? (
+        <p className="inline-error ask-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </article>
+  );
+}
+
 function DashboardContent({
   sessionsReady,
   sessions,
@@ -831,9 +1287,6 @@ function DashboardContent({
     drawer: "model" | "effort";
     message: string;
   } | null>(null);
-  const [askDraft, setAskDraft] = useState("");
-  const [askState, setAskState] = useState<"idle" | "sending">("idle");
-  const [askError, setAskError] = useState<string | null>(null);
   const [historyQuery, setHistoryQuery] = useState("");
   const [activeHistoryQuery, setActiveHistoryQuery] = useState("");
   const [transcriptLoadingId, setTranscriptLoadingId] = useState<string | null>(null);
@@ -855,11 +1308,6 @@ function DashboardContent({
     [mainSessions, selectedSessionId, sessionSections],
   );
   const activeAskRequest = getActiveAskRequest(askRequests, selectedSession?.id ?? null);
-  const activeAskSession = activeAskRequest
-    ? sessions.find((session) => session.id === activeAskRequest.sessionId)
-    : null;
-  const activeAskSessionName =
-    activeAskSession?.name ?? activeAskSession?.cwd.split("/").filter(Boolean).at(-1) ?? "OMP session";
   const composerAction = selectedSession ? getComposerAction(selectedSession, message) : null;
   const skillSuggestions = useMemo(
     () => getSkillSuggestions(message, selectedSession?.skillCommands ?? []),
@@ -896,12 +1344,6 @@ function DashboardContent({
   }, [onSelectedSessionChange, selectedSession, selectedSessionId, sessionsReady]);
 
   useEffect(() => {
-    setAskDraft(activeAskRequest?.initialValue ?? "");
-    setAskError(null);
-    setAskState("idle");
-  }, [activeAskRequest?.initialValue, activeAskRequest?.requestId]);
-
-  useEffect(() => {
     followTranscriptRef.current = true;
     setShowScrollToBottom(false);
   }, [selectedSession?.id]);
@@ -924,7 +1366,13 @@ function DashboardContent({
     if (!transcript || !followTranscriptRef.current) return;
     transcript.scrollTop = transcript.scrollHeight;
     setShowScrollToBottom(false);
-  }, [selectedSession?.id, selectedSession?.messages.length, selectedSession?.messages.at(-1)?.text]);
+  }, [
+    activeAskRequest?.requestId,
+    activeAskRequest?.sessionId,
+    selectedSession?.id,
+    selectedSession?.messages.length,
+    selectedSession?.messages.at(-1)?.text,
+  ]);
 
   useEffect(() => {
     if (selectedSession?.source !== "history" || loadedTranscriptIdRef.current === selectedSession.id) return;
@@ -1150,20 +1598,6 @@ function DashboardContent({
         configurationRequestRef.current = null;
         setConfigurationPending(null);
       }
-    }
-  };
-
-  const respondToActiveAsk = async (response: AskResponse) => {
-    if (!activeAskRequest || askState === "sending") return;
-    setAskState("sending");
-    setAskError(null);
-    try {
-      await onRespondToAsk(activeAskRequest.sessionId, activeAskRequest.requestId, response);
-    } catch (responseFailure) {
-      setAskError(
-        responseFailure instanceof Error ? responseFailure.message : "Your answer could not be delivered",
-      );
-      setAskState("idle");
     }
   };
 
@@ -1395,6 +1829,86 @@ function DashboardContent({
             className="session-workspace"
             aria-label={`Controls for ${selectedSession.name ?? selectedSession.cwd}`}
           >
+            <Separator />
+
+            <div className="transcript-region">
+              <div
+                ref={transcriptRef}
+                className="transcript"
+                onScroll={(event) => {
+                  const target = event.currentTarget;
+                  const isNearBottom = isNearTranscriptBottom(
+                    target.scrollHeight,
+                    target.scrollTop,
+                    target.clientHeight,
+                  );
+                  followTranscriptRef.current = isNearBottom;
+                  setShowScrollToBottom(!isNearBottom);
+                }}
+              >
+                <div
+                  className="transcript-messages"
+                  role="log"
+                  aria-live="polite"
+                  aria-label="Session transcript"
+                >
+                  {transcriptLoadingId === selectedSession.id ? (
+                    <div className="empty-transcript" role="status">
+                      <span className="status-orbit" aria-hidden="true" />
+                      <strong>Reading session transcript</strong>
+                      <p>Large transcripts stay on the host and load only when selected.</p>
+                    </div>
+                  ) : selectedSession.messages.length === 0 && !activeAskRequest ? (
+                    <div className="empty-transcript">
+                      <span className="terminal-prompt" aria-hidden="true">
+                        π
+                      </span>
+                      <strong>
+                        {selectedSession.source === "history"
+                          ? "No text messages in this session"
+                          : "Ready for an instruction"}
+                      </strong>
+                      <p>
+                        {selectedSession.source === "history"
+                          ? "Resume the session to continue working."
+                          : "Prompt OMP below. Live output will appear here as it arrives."}
+                      </p>
+                    </div>
+                  ) : (
+                    selectedSession.messages.map((entry) => <TranscriptEntry entry={entry} key={entry.id} />)
+                  )}
+                </div>
+                {activeAskRequest ? (
+                  <AskToolCall
+                    key={`${activeAskRequest.sessionId}:${activeAskRequest.requestId}`}
+                    request={activeAskRequest}
+                    connection={connection}
+                    onRespond={(response) =>
+                      onRespondToAsk(activeAskRequest.sessionId, activeAskRequest.requestId, response)
+                    }
+                  />
+                ) : null}
+              </div>
+              {showScrollToBottom ? (
+                <Button
+                  className="scroll-to-bottom-button"
+                  type="button"
+                  size="icon"
+                  variant="outline"
+                  aria-label="Scroll to latest output"
+                  title="Scroll to latest output"
+                  onClick={() => {
+                    const transcript = transcriptRef.current;
+                    if (!transcript) return;
+                    followTranscriptRef.current = true;
+                    transcript.scrollTop = transcript.scrollHeight;
+                    setShowScrollToBottom(false);
+                  }}
+                >
+                  <Icon name="down" />
+                </Button>
+              ) : null}
+            </div>
             {selectedSession.activeSubagents.length > 0 ? (
               <section className="subagent-activity" aria-label="Active subagents" aria-live="polite">
                 <strong className="subagent-activity-heading">
@@ -1421,73 +1935,6 @@ function DashboardContent({
                 </ul>
               </section>
             ) : null}
-
-            <Separator />
-
-            <div className="transcript-region">
-              <div
-                ref={transcriptRef}
-                className="transcript"
-                role="log"
-                aria-live="polite"
-                aria-label="Session transcript"
-                onScroll={(event) => {
-                  const target = event.currentTarget;
-                  const isNearBottom = isNearTranscriptBottom(
-                    target.scrollHeight,
-                    target.scrollTop,
-                    target.clientHeight,
-                  );
-                  followTranscriptRef.current = isNearBottom;
-                  setShowScrollToBottom(!isNearBottom);
-                }}
-              >
-                {transcriptLoadingId === selectedSession.id ? (
-                  <div className="empty-transcript" role="status">
-                    <span className="status-orbit" aria-hidden="true" />
-                    <strong>Reading session transcript</strong>
-                    <p>Large transcripts stay on the host and load only when selected.</p>
-                  </div>
-                ) : selectedSession.messages.length === 0 ? (
-                  <div className="empty-transcript">
-                    <span className="terminal-prompt" aria-hidden="true">
-                      π
-                    </span>
-                    <strong>
-                      {selectedSession.source === "history"
-                        ? "No text messages in this session"
-                        : "Ready for an instruction"}
-                    </strong>
-                    <p>
-                      {selectedSession.source === "history"
-                        ? "Resume the session to continue working."
-                        : "Prompt OMP below. Live output will appear here as it arrives."}
-                    </p>
-                  </div>
-                ) : (
-                  selectedSession.messages.map((entry) => <TranscriptEntry entry={entry} key={entry.id} />)
-                )}
-              </div>
-              {showScrollToBottom ? (
-                <Button
-                  className="scroll-to-bottom-button"
-                  type="button"
-                  size="icon"
-                  variant="outline"
-                  aria-label="Scroll to latest output"
-                  title="Scroll to latest output"
-                  onClick={() => {
-                    const transcript = transcriptRef.current;
-                    if (!transcript) return;
-                    followTranscriptRef.current = true;
-                    transcript.scrollTop = transcript.scrollHeight;
-                    setShowScrollToBottom(false);
-                  }}
-                >
-                  <Icon name="down" />
-                </Button>
-              ) : null}
-            </div>
 
             <dl className="session-metadata">
               <div className="session-configuration-metadata">
@@ -1897,88 +2344,6 @@ function DashboardContent({
           </DrawerFooter>
         </DrawerContent>
       </Drawer>
-
-      <Dialog
-        open={activeAskRequest !== null}
-        onOpenChange={(open) => {
-          if (!open) void respondToActiveAsk({ cancelled: true });
-        }}
-        dismissible={askState !== "sending"}
-        title={activeAskRequest?.title ?? "OMP needs your input"}
-        description={`${activeAskSessionName} is waiting for your response.`}
-      >
-        {activeAskRequest?.kind === "select" ? (
-          <div className="ask-options" aria-busy={askState === "sending"}>
-            {activeAskRequest.options.map((option, index) => (
-              <Button
-                type="button"
-                variant="outline"
-                className="ask-option"
-                disabled={askState === "sending" || connection !== "connected"}
-                onClick={() => void respondToActiveAsk({ value: option })}
-                key={`${option}-${index}`}
-              >
-                {option}
-              </Button>
-            ))}
-          </div>
-        ) : (
-          <form
-            className="ask-answer-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void respondToActiveAsk({ value: askDraft });
-            }}
-          >
-            <label className="sr-only" htmlFor="ask-answer">
-              Your answer
-            </label>
-            <Textarea
-              id="ask-answer"
-              className="ask-textarea"
-              value={askDraft}
-              onChange={(event) => setAskDraft(event.target.value)}
-              disabled={askState === "sending" || connection !== "connected"}
-              rows={5}
-              autoFocus
-            />
-            <footer className="dialog-actions ask-dialog-actions">
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={askState === "sending"}
-                onClick={() => void respondToActiveAsk({ cancelled: true })}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="submit"
-                disabled={askState === "sending" || connection !== "connected"}
-                aria-busy={askState === "sending"}
-              >
-                {askState === "sending" ? "Answering…" : "Answer"}
-              </Button>
-            </footer>
-          </form>
-        )}
-        {activeAskRequest?.kind === "select" ? (
-          <footer className="dialog-actions ask-dialog-actions">
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={askState === "sending"}
-              onClick={() => void respondToActiveAsk({ cancelled: true })}
-            >
-              Cancel
-            </Button>
-          </footer>
-        ) : null}
-        {askError ? (
-          <p className="inline-error ask-error" role="alert">
-            {askError}
-          </p>
-        ) : null}
-      </Dialog>
 
       <Dialog
         open={launchOpen}
