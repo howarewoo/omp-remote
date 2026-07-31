@@ -11,4 +11,5 @@
 - [single-daemon-authority](single-daemon-authority.md) `gotcha` scope=`package.json,scripts/*.mjs,apps/*/src/**,packages/infrastructure/*/src/**` — Live streams and commands never cross daemon processes
 - [subagent-identity-from-session-path](subagent-identity-from-session-path.md) `gotcha` scope=`apps/*/src/**,packages/infrastructure/*/src/**,packages/features/sessions/src/**` — Nested session paths identify subagents; activeSubagents only reports current activity
 - [turbo-dev-env-allowlist](turbo-dev-env-allowlist.md) `gotcha` scope=`turbo.json,package.json,apps/*/vite.config.ts` — Turbo strict mode filters undeclared development environment values
+- [typed-fixtures-follow-required-props](typed-fixtures-follow-required-props.md) `gotcha` scope=`packages/features/*/src/**/*.test.ts` — Typed shared fixtures must track required prop additions
 - [bounded-websocket-broadcasts](bounded-websocket-broadcasts.md) `pattern` scope=`apps/daemon/**` — Bound WebSocket queues before shared serialization
