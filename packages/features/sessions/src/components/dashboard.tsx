@@ -1437,9 +1437,6 @@ function DashboardContent({
               </div>
             ) : (
               <form className="composer" onSubmit={submitMessage}>
-                {selectedSession.status === "running" ? (
-                  <span className="live-copy">Live output connected</span>
-                ) : null}
                 <div className="composer-field">
                   <label className="sr-only" htmlFor="composer-message">
                     Steer current run
