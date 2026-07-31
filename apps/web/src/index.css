@@ -1772,8 +1772,11 @@ textarea:disabled {
   background: var(--omp-tool-message);
 }
 
-.transcript-entry > :is(.system-message-disclosure, .tool-message-disclosure) {
+.transcript-entry > .system-message-disclosure {
   width: min(100%, 74ch);
+}
+
+.transcript-entry > :is(.system-message-disclosure, .tool-message-disclosure) {
   min-width: 0;
   color: var(--omp-gray);
   font-family: var(--font-mono);
