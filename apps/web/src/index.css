@@ -869,10 +869,11 @@ textarea:disabled {
 .session-metadata {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(10rem, 1.5fr) minmax(7rem, 1fr) minmax(4.5rem, auto) minmax(5rem, auto);
   align-items: stretch;
   margin: 0;
   padding: 0.65rem 0 0.75rem;
+  overflow-x: auto;
   border-top: 1px solid var(--border);
 }
 
@@ -2302,10 +2303,6 @@ textarea:disabled {
 
   .session-header-primary .sidebar-trigger {
     margin-left: -0.35rem;
-  }
-
-  .session-metadata {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .session-metadata > div {
