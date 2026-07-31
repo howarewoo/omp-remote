@@ -3,7 +3,7 @@ import { type FileHandle, open, opendir, readdir, stat } from "node:fs/promises"
 import { basename, dirname, extname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { compareSessionsByCreation, type Session, type TranscriptMessage } from "@omp-remote/protocol";
-import { normalizeRawMessage } from "./message-normalizer.js";
+import { normalizeRawMessage, ReadTargetTracker } from "./message-normalizer.js";
 
 const METADATA_READ_BYTES = 16 * 1024;
 const MAX_TRANSCRIPT_MESSAGES = 200;
@@ -275,10 +275,11 @@ async function readSessionMetadata(path: string): Promise<SessionMetadata | null
 async function readTranscript(path: string): Promise<TranscriptMessage[]> {
   const ring = new Array<TranscriptMessage>(MAX_TRANSCRIPT_MESSAGES);
   let messageCount = 0;
+  const readTargetTracker = new ReadTargetTracker();
   const lines = createInterface({ input: createReadStream(path), crlfDelay: Number.POSITIVE_INFINITY });
   for await (const line of lines) {
     const record = parseRecord(line);
-    const message = record ? normalizeTranscriptMessage(record) : null;
+    const message = record ? normalizeTranscriptMessage(record, readTargetTracker) : null;
     if (!message) continue;
     ring[messageCount % MAX_TRANSCRIPT_MESSAGES] = message;
     messageCount += 1;
@@ -288,7 +289,10 @@ async function readTranscript(path: string): Promise<TranscriptMessage[]> {
   return [...ring.slice(start), ...ring.slice(0, start)];
 }
 
-function normalizeTranscriptMessage(record: Record<string, unknown>): TranscriptMessage | null {
+function normalizeTranscriptMessage(
+  record: Record<string, unknown>,
+  readTargetTracker: ReadTargetTracker,
+): TranscriptMessage | null {
   if (record.type !== "message" || !isRecord(record.message)) return null;
   const timestamp = normalizeTimestamp(record.timestamp ?? record.message.timestamp);
   return normalizeRawMessage(
@@ -300,6 +304,7 @@ function normalizeTranscriptMessage(record: Record<string, unknown>): Transcript
       omitEmptyText: true,
       maxTextLength: MAX_TRANSCRIPT_TEXT,
       ignoreRawId: true,
+      readTargetTracker,
     },
   );
 }

@@ -959,11 +959,148 @@ export const TranscriptText = memo(function TranscriptText({ text }: { text: str
   );
 });
 
-function getReadToolFilename(text: string): string | null {
-  const path = text.match(/^\[([^\]\r\n]+)#[\dA-Fa-f]{4}\](?:\r?\n|$)/)?.[1];
-  if (!path) return null;
+function getReadToolFilename(text: string, readTarget?: string): string | null {
+  const target = readTarget ?? text.match(/^\[([^\]\r\n]+)#[\dA-Fa-f]{4}\](?:\r?\n|$)/)?.[1];
+  if (!target) return null;
 
+  const { path } = splitReadTarget(target);
   return path.slice(path.lastIndexOf("/") + 1) || null;
+}
+type TranscriptEntryMessage = Session["messages"][number];
+
+export type TranscriptEntryGroup =
+  | { kind: "entry"; entry: TranscriptEntryMessage }
+  | { kind: "read-group"; entries: TranscriptEntryMessage[] };
+
+export function groupTranscriptEntries(entries: readonly TranscriptEntryMessage[]): TranscriptEntryGroup[] {
+  const groups: TranscriptEntryGroup[] = [];
+  let pendingReads: TranscriptEntryMessage[] = [];
+
+  const flushReads = () => {
+    if (pendingReads.length === 1) {
+      groups.push({ kind: "entry", entry: pendingReads[0] as TranscriptEntryMessage });
+    } else if (pendingReads.length > 1) {
+      groups.push({ kind: "read-group", entries: pendingReads });
+    }
+    pendingReads = [];
+  };
+
+  for (const entry of entries) {
+    if (entry.role === "tool" && entry.toolName === "read") {
+      pendingReads.push(entry);
+      continue;
+    }
+    flushReads();
+    groups.push({ kind: "entry", entry });
+  }
+  flushReads();
+
+  return groups;
+}
+
+function splitReadTarget(target: string): { path: string; selector: string } {
+  const lastSlash = target.lastIndexOf("/");
+  const selectorIndex = target.indexOf(":", lastSlash + 1);
+  return selectorIndex === -1
+    ? { path: target, selector: "" }
+    : { path: target.slice(0, selectorIndex), selector: target.slice(selectorIndex) };
+}
+
+function normalizeAbsolutePath(path: string): string | null {
+  if (!path.startsWith("/")) return null;
+  const segments: string[] = [];
+  for (const segment of path.split("/")) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") {
+      segments.pop();
+    } else {
+      segments.push(segment);
+    }
+  }
+  return `/${segments.join("/")}`;
+}
+
+export function formatReadTarget(target: string, cwd: string): string {
+  const { path, selector } = splitReadTarget(target);
+  const normalizedPath = normalizeAbsolutePath(path);
+  const normalizedCwd = normalizeAbsolutePath(cwd);
+  if (!normalizedPath || !normalizedCwd) return target;
+  if (normalizedPath === normalizedCwd) return `.${selector}`;
+
+  const cwdPrefix = normalizedCwd === "/" ? "/" : `${normalizedCwd}/`;
+  if (!normalizedPath.startsWith(cwdPrefix)) return target;
+  return `${normalizedPath.slice(cwdPrefix.length)}${selector}`;
+}
+
+function getReadTarget(entry: TranscriptEntryMessage): string {
+  return (
+    entry.readTarget ??
+    entry.text.match(/^\[([^\]\r\n]+)#[\dA-Fa-f]{4}\](?:\r?\n|$)/)?.[1] ??
+    "Unknown target"
+  );
+}
+
+export function GroupedReadTranscript({
+  entries,
+  cwd,
+}: {
+  entries: readonly TranscriptEntryMessage[];
+  cwd: string;
+}) {
+  const firstEntry = entries[0];
+  if (!firstEntry) return null;
+
+  return (
+    <article className="transcript-entry transcript-tool transcript-read-group">
+      <details className="tool-message-disclosure grouped-read-disclosure">
+        <summary>
+          <TranscriptEntryHeader entry={firstEntry} authorLabel={`Read (${entries.length})`} collapsible />
+          <ul className="read-target-tree" aria-label="Read targets">
+            {entries.map((entry, index) => (
+              <li key={entry.id}>
+                <span aria-hidden="true">{index === entries.length - 1 ? "└─ " : "├─ "}</span>
+                <span>{formatReadTarget(getReadTarget(entry), cwd)}</span>
+              </li>
+            ))}
+          </ul>
+        </summary>
+        <div className="grouped-read-results">
+          {entries.map((entry) => (
+            <div className="grouped-read-result" key={entry.id}>
+              <ToolTranscriptText entry={entry} />
+            </div>
+          ))}
+        </div>
+      </details>
+    </article>
+  );
+}
+
+export function renderTranscriptMessageItems({
+  messages,
+  cwd,
+}: {
+  messages: readonly TranscriptEntryMessage[];
+  cwd: string;
+}) {
+  return groupTranscriptEntries(messages).map((group) => {
+    if (group.kind === "read-group") {
+      const firstEntry = group.entries[0] as TranscriptEntryMessage;
+      const groupId = `read-group:${firstEntry.id}`;
+      return (
+        <MessageScrollerItem key={groupId} messageId={groupId}>
+          <GroupedReadTranscript entries={group.entries} cwd={cwd} />
+        </MessageScrollerItem>
+      );
+    }
+
+    const { entry } = group;
+    return !entry.text && entry.role !== "tool" ? null : (
+      <MessageScrollerItem key={entry.id} messageId={entry.id} scrollAnchor={entry.role === "user"}>
+        <TranscriptEntry entry={entry} />
+      </MessageScrollerItem>
+    );
+  });
 }
 
 function TranscriptEntryHeader({
@@ -1119,7 +1256,7 @@ export function ToolTranscriptText({ entry }: { entry: Session["messages"][numbe
   const todo = entry.toolName === "todo" ? parseTodoResult(entry.text) : null;
   if (todo) return <MemoizedTodoToolTranscript entry={entry} todo={todo} />;
 
-  const readFilename = entry.toolName === "read" ? getReadToolFilename(entry.text) : null;
+  const readFilename = entry.toolName === "read" ? getReadToolFilename(entry.text, entry.readTarget) : null;
   const isWrite = entry.toolName === "write";
 
   return (
@@ -1897,17 +2034,10 @@ function DashboardContent({
                         </div>
                       </MessageScrollerItem>
                     ) : (
-                      selectedSession.messages.map((entry) =>
-                        !entry.text && entry.role !== "tool" ? null : (
-                          <MessageScrollerItem
-                            key={entry.id}
-                            messageId={entry.id}
-                            scrollAnchor={entry.role === "user"}
-                          >
-                            <TranscriptEntry entry={entry} />
-                          </MessageScrollerItem>
-                        ),
-                      )
+                      renderTranscriptMessageItems({
+                        messages: selectedSession.messages,
+                        cwd: selectedSession.cwd,
+                      })
                     )}
                     {activeAskRequest ? (
                       <MessageScrollerItem
@@ -2170,13 +2300,10 @@ function DashboardContent({
         }}
       >
         {viewedSubagentSession?.messages.length ? (
-          viewedSubagentSession.messages.map((entry) =>
-            !entry.text && entry.role !== "tool" ? null : (
-              <MessageScrollerItem key={entry.id} messageId={entry.id} scrollAnchor={entry.role === "user"}>
-                <TranscriptEntry entry={entry} />
-              </MessageScrollerItem>
-            ),
-          )
+          renderTranscriptMessageItems({
+            messages: viewedSubagentSession.messages,
+            cwd: viewedSubagentSession.cwd,
+          })
         ) : (
           <MessageScrollerItem
             messageId={`subagent-empty:${viewedSubagentSession?.id ?? viewedSubagent?.id ?? "pending"}`}

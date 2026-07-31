@@ -66,10 +66,13 @@ import {
   formatSubagentActivityLabel,
   formatSystemTextPreview,
   formatToolTextPreview,
+  formatReadTarget,
   getActiveAskRequest,
   getComposerAction,
   getSkillSuggestions,
   groupSessionsForSidebar,
+  GroupedReadTranscript,
+  groupTranscriptEntries,
   parseInlineTranscript,
   parseTodoResult,
   parseTranscriptBlocks,
@@ -77,6 +80,7 @@ import {
   TodoToolTranscript,
   ToolTranscriptText,
   TranscriptCodeBlock,
+  renderTranscriptMessageItems,
   TranscriptEntry,
   tokenizeCode,
   WorkingIndicator,
@@ -401,6 +405,154 @@ describe("ToolTranscriptText", () => {
 
     expect(nodes.find((node) => node.className === "message-author")?.text).toContain("read");
     expect(nodes.find((node) => node.className === "tool-message-preview")?.text).toBe(text);
+  });
+
+  it("keeps metadata-backed reads on the existing single-read disclosure", () => {
+    const disclosure = ToolTranscriptText({
+      entry: {
+        id: "read-metadata",
+        role: "tool",
+        toolName: "read",
+        readTarget: "/work/omp-remote/src/index.ts:1-180",
+        text: "canonical read result",
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    });
+    const nodes = renderTranscriptNodes(disclosure);
+
+    expect(disclosure.type).toBe("details");
+    expect(disclosure.props.open).toBe(false);
+    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("read index.ts");
+    expect(nodes.some((node) => node.className === "tool-message-preview")).toBe(false);
+  });
+
+  it("groups only adjacent read entries and preserves their order", () => {
+    const messages: Session["messages"] = [
+      {
+        id: "read-1",
+        role: "tool",
+        toolName: "read",
+        readTarget: "/work/omp-remote/a.ts",
+        text: "alpha",
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+      {
+        id: "read-2",
+        role: "tool",
+        toolName: "read",
+        readTarget: "/work/omp-remote/b.ts",
+        text: "beta",
+        timestamp: "2026-07-29T12:00:01.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        text: "Between reads",
+        timestamp: "2026-07-29T12:00:02.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+      {
+        id: "read-3",
+        role: "tool",
+        toolName: "read",
+        readTarget: "/work/omp-remote/c.ts",
+        text: "gamma",
+        timestamp: "2026-07-29T12:00:03.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    ];
+
+    expect(groupTranscriptEntries(messages)).toEqual([
+      { kind: "read-group", entries: messages.slice(0, 2) },
+      { kind: "entry", entry: messages[2] },
+      { kind: "entry", entry: messages[3] },
+    ]);
+  });
+
+  it("formats grouped targets relative to cwd without allowing parent traversal", () => {
+    expect(formatReadTarget("/work/omp-remote/src/index.ts:1-180", "/work/omp-remote")).toBe(
+      "src/index.ts:1-180",
+    );
+    expect(formatReadTarget("/work/omp-remote/../secret.txt:raw", "/work/omp-remote")).toBe(
+      "/work/omp-remote/../secret.txt:raw",
+    );
+    expect(formatReadTarget("/other/index.ts:5-16,20-30", "/work/omp-remote")).toBe(
+      "/other/index.ts:5-16,20-30",
+    );
+  });
+
+  it("renders a grouped read tree and keeps every result inspectable", () => {
+    const entries: Session["messages"] = [
+      {
+        id: "read-a",
+        role: "tool",
+        toolName: "read",
+        readTarget: "/work/omp-remote/src/a.ts:1-20",
+        text: "alpha contents",
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+      {
+        id: "read-b",
+        role: "tool",
+        toolName: "read",
+        readTarget: "/work/omp-remote/src/b.ts:raw",
+        text: "beta contents",
+        timestamp: "2026-07-29T12:00:01.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    ];
+    const disclosure = GroupedReadTranscript({ entries, cwd: "/work/omp-remote" });
+    const nodes = renderTranscriptNodes(disclosure);
+
+    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("Read (2)");
+    expect(nodes.find((node) => node.className === "read-target-tree")?.text).toBe(
+      "├─ src/a.ts:1-20└─ src/b.ts:raw",
+    );
+    expect(nodes.some((node) => node.text.includes("alpha contents"))).toBe(true);
+    expect(nodes.some((node) => node.text.includes("beta contents"))).toBe(true);
+  });
+
+  it("renders a consecutive read group as one stable scroller item", () => {
+    const messages: Session["messages"] = [
+      {
+        id: "read-first",
+        role: "tool",
+        toolName: "read",
+        readTarget: "/work/omp-remote/a.ts",
+        text: "alpha",
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+      {
+        id: "read-second",
+        role: "tool",
+        toolName: "read",
+        readTarget: "/work/omp-remote/b.ts",
+        text: "beta",
+        timestamp: "2026-07-29T12:00:01.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    ];
+    const rows = renderTranscriptMessageItems({ messages, cwd: "/work/omp-remote" });
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.type).toBe(MessageScrollerItem);
+    expect(rows[0]?.key).toBe("read-group:read-first");
+    expect(rows[0]?.props.messageId).toBe("read-group:read-first");
+    expect(rows[0]?.props.scrollAnchor).toBeUndefined();
   });
 
   it("renders edit output as an open disclosure by default", () => {
@@ -999,6 +1151,59 @@ function composerDashboardProps(session: Session = BASE_SESSION): ControlledDash
     onSelectedSessionChange: vi.fn(),
   };
 }
+
+describe("dashboard grouped read transcript", () => {
+  it("renders adjacent reads as one transcript row without consuming the following message", () => {
+    const readMessages: Session["messages"] = [
+      {
+        id: "dashboard-read-a",
+        role: "tool",
+        toolName: "read",
+        readTarget: "/work/omp-remote/src/a.ts:1-10",
+        text: "alpha dashboard contents",
+        timestamp: "2026-07-31T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+      {
+        id: "dashboard-read-b",
+        role: "tool",
+        toolName: "read",
+        readTarget: "/work/omp-remote/src/b.ts:raw",
+        text: "beta dashboard contents",
+        timestamp: "2026-07-31T12:00:01.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+      {
+        id: "dashboard-assistant",
+        role: "assistant",
+        text: "Reads complete",
+        timestamp: "2026-07-31T12:00:02.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    ];
+    const output = renderControlledDashboard(
+      composerDashboardProps({ ...BASE_SESSION, messages: readMessages }),
+    );
+    const transcript = findElements(output, (element) => element.props.className === "transcript")[0];
+    const rows = findElements(transcript, (element) => element.type === MessageScrollerItem);
+    const groupedRead = findElements(rows[0], (element) => element.type === GroupedReadTranscript)[0];
+    const groupedNodes = renderTranscriptNodes(groupedRead);
+
+    expect(rows.map((row) => row.props.messageId)).toEqual([
+      "read-group:dashboard-read-a",
+      "dashboard-assistant",
+    ]);
+    expect(groupedNodes.find((node) => node.className === "message-author")?.text).toContain("Read (2)");
+    expect(groupedNodes.find((node) => node.className === "read-target-tree")?.text).toBe(
+      "├─ src/a.ts:1-10└─ src/b.ts:raw",
+    );
+    expect(groupedNodes.some((node) => node.text.includes("alpha dashboard contents"))).toBe(true);
+    expect(groupedNodes.some((node) => node.text.includes("beta dashboard contents"))).toBe(true);
+  });
+});
 
 describe("dashboard working status", () => {
   it("appends an announced Working status only to a running main transcript", () => {
