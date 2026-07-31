@@ -59,6 +59,7 @@ beforeEach(() => {
 });
 
 import {
+  AskToolCall,
   canKillSession,
   Dashboard,
   type DashboardProps,
@@ -72,7 +73,9 @@ import {
   isNearTranscriptBottom,
   parseInlineTranscript,
   parseTranscriptBlocks,
+  parseTodoResult,
   SystemTranscriptText,
+  TodoToolTranscript,
   ToolTranscriptText,
   TranscriptCodeBlock,
   TranscriptEntry,
@@ -227,6 +230,110 @@ describe("TranscriptCodeBlock", () => {
   });
 });
 
+const TODO_RESULT_TEXT = [
+  "Remaining items (1):",
+  "  - Build custom todo tool interface [in_progress] (Implementation)",
+  "Overall: 2/4 done, 1 open, 1 blocked.",
+  'Active phase 2/3 "Implementation" (0/1) — earliest phase with open work',
+  "  Research:",
+  "    - [X] Locate todo rendering and UI conventions",
+  "    - [X] Define todo interaction contract",
+  "  Implementation:",
+  "    - [ ] Build custom todo tool interface (in progress)",
+  "  Verification:",
+  "    - [ ] Exercise todo flow in browser (blocked: format probe)",
+].join("\n");
+
+describe("parseTodoResult", () => {
+  it("parses canonical multi-phase progress and derives phase states", () => {
+    expect(parseTodoResult(TODO_RESULT_TEXT)).toEqual({
+      overall: { done: 2, total: 4, open: 1, blocked: 1 },
+      activePhase: { index: 2, total: 3, name: "Implementation", done: 0, taskTotal: 1 },
+      phases: [
+        {
+          name: "Research",
+          state: "completed",
+          tasks: [
+            { label: "Locate todo rendering and UI conventions", state: "completed" },
+            { label: "Define todo interaction contract", state: "completed" },
+          ],
+        },
+        {
+          name: "Implementation",
+          state: "in-progress",
+          tasks: [{ label: "Build custom todo tool interface", state: "in-progress" }],
+        },
+        {
+          name: "Verification",
+          state: "blocked",
+          tasks: [{ label: "Exercise todo flow in browser", state: "blocked", reason: "format probe" }],
+        },
+      ],
+    });
+  });
+
+  it("preserves completed, blocked, and dropped task states", () => {
+    const parsed = parseTodoResult(
+      [
+        "Overall: 2/3 done, 0 open, 1 blocked.",
+        'Active phase 1/1 "Delivery" (2/3).',
+        "  Delivery:",
+        "    - [x] Ship renderer (completed)",
+        "    - [ ] Await approval (blocked: review pending)",
+        "    - [ ] Remove obsolete branch (dropped)",
+      ].join("\n"),
+    );
+
+    expect(parsed?.overall).toEqual({ done: 2, total: 3, open: 0, blocked: 1 });
+    expect(parsed?.phases[0]).toEqual({
+      name: "Delivery",
+      state: "blocked",
+      tasks: [
+        { label: "Ship renderer", state: "completed" },
+        { label: "Await approval", state: "blocked", reason: "review pending" },
+        { label: "Remove obsolete branch", state: "dropped" },
+      ],
+    });
+  });
+
+  it("accepts completed output without an active phase or open count", () => {
+    expect(
+      parseTodoResult(["Overall: 1/1 done.", "  Finish:", "    - [x] Hand off"].join("\n")),
+    ).toMatchObject({
+      overall: { done: 1, total: 1 },
+      phases: [{ state: "completed" }],
+    });
+  });
+
+  it("rejects overall and active counts that contradict task states", () => {
+    expect(parseTodoResult(TODO_RESULT_TEXT.replace("2/4 done, 1 open", "1/4 done, 2 open"))).toBeNull();
+    expect(parseTodoResult(TODO_RESULT_TEXT.replace("(0/1) —", "(1/1) —"))).toBeNull();
+  });
+
+  it("treats omitted open and blocked counts as zero", () => {
+    expect(
+      parseTodoResult(
+        [
+          "Overall: 0/1 done.",
+          'Active phase 1/1 "Work" (0/1).',
+          "  Work:",
+          "    - [ ] Continue work (in progress)",
+        ].join("\n"),
+      ),
+    ).toBeNull();
+    expect(
+      parseTodoResult(
+        [
+          "Overall: 0/1 done.",
+          'Active phase 1/1 "Work" (0/1).',
+          "  Work:",
+          "    - [ ] Await access (blocked)",
+        ].join("\n"),
+      ),
+    ).toBeNull();
+  });
+});
+
 describe("ToolTranscriptText", () => {
   it("renders the last ten output lines in a closed disclosure", () => {
     const text = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n");
@@ -264,6 +371,169 @@ describe("ToolTranscriptText", () => {
     });
 
     expect(block.props.open).toBe(true);
+  });
+
+  it("routes canonical todo output to a closed progress summary and state list", () => {
+    const entry = {
+      id: "todo-1",
+      role: "tool" as const,
+      toolName: "todo",
+      text: TODO_RESULT_TEXT,
+      timestamp: "2026-07-29T12:00:00.000Z",
+      streaming: false,
+      presentation: "text" as const,
+    };
+    const nodes = renderTranscriptNodes(ToolTranscriptText({ entry }));
+
+    expect(nodes.find((node) => node.className === "todo-tool-summary")?.text).toContain("2/4 complete");
+    expect(nodes.find((node) => node.className === "todo-blocked-count")?.text).toBe("1 blocked");
+    expect(nodes.find((node) => node.className === "todo-active-task")?.text).toContain(
+      "In progress: Build custom todo tool interface",
+    );
+    expect(nodes.find((node) => node.className === "todo-task-reason")?.text).toBe(
+      "Blocked reason: format probe",
+    );
+
+    const parsed = parseTodoResult(TODO_RESULT_TEXT);
+    if (!parsed) throw new Error("Expected canonical todo output to parse");
+    const disclosure = TodoToolTranscript({ entry, todo: parsed });
+    expect(disclosure.type).toBe("details");
+    expect(disclosure.props.open).toBeUndefined();
+    expect(nodes.filter((node) => node.type === "ul")).toHaveLength(3);
+    const progress = disclosure.props.children[0].props.children[1].props.children[1];
+    expect({
+      type: progress.type,
+      value: progress.props.value,
+      max: progress.props.max,
+      label: progress.props["aria-label"],
+    }).toEqual({
+      type: "progress",
+      value: 2,
+      max: 4,
+      label: "Overall todo progress: 2 of 4 tasks complete",
+    });
+    expect(
+      nodes.filter((node) => node.className?.includes("todo-state-badge")).map((node) => node.text),
+    ).toEqual(["Completed", "Completed", "Completed", "In progress", "In progress", "Blocked", "Blocked"]);
+  });
+
+  it("uses resolved semantics when dropped tasks contribute to done progress", () => {
+    const mixedText = [
+      "Overall: 1/2 done, 1 open.",
+      'Active phase 1/1 "Work" (1/2).',
+      "  Work:",
+      "    - [ ] Retire legacy path (dropped)",
+      "    - [ ] Build replacement (in progress)",
+    ].join("\n");
+    const mixedTodo = parseTodoResult(mixedText);
+    if (!mixedTodo) throw new Error("Expected mixed dropped todo output to parse");
+    const mixedNodes = renderTranscriptNodes(
+      TodoToolTranscript({
+        entry: {
+          id: "todo-mixed-dropped",
+          role: "tool",
+          toolName: "todo",
+          text: mixedText,
+          timestamp: "2026-07-29T12:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+        todo: mixedTodo,
+      }),
+    );
+    expect(mixedNodes.find((node) => node.className === "todo-tool-summary")?.text).toContain("1/2 resolved");
+
+    const droppedText = ["Overall: 1/1 done.", "  Finish:", "    - [ ] Retire task (dropped)"].join("\n");
+    const droppedTodo = parseTodoResult(droppedText);
+    if (!droppedTodo) throw new Error("Expected all-dropped todo output to parse");
+    const droppedDisclosure = TodoToolTranscript({
+      entry: {
+        id: "todo-all-dropped",
+        role: "tool",
+        toolName: "todo",
+        text: droppedText,
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+      todo: droppedTodo,
+    });
+    const droppedNodes = renderTranscriptNodes(droppedDisclosure);
+    expect(droppedNodes.find((node) => node.className === "todo-active-task")?.text).toBe("No tasks remain");
+    expect(
+      droppedDisclosure.props.children[0].props.children[1].props.children[2].props.children[0].props[
+        "data-state"
+      ],
+    ).toBe("dropped");
+
+    const completedText = ["Overall: 1/1 done.", "  Finish:", "    - [x] Ship task"].join("\n");
+    const completedTodo = parseTodoResult(completedText);
+    if (!completedTodo) throw new Error("Expected completed todo output to parse");
+    const completedDisclosure = TodoToolTranscript({
+      entry: {
+        id: "todo-completed",
+        role: "tool",
+        toolName: "todo",
+        text: completedText,
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+      todo: completedTodo,
+    });
+    const completedNodes = renderTranscriptNodes(completedDisclosure);
+    expect(completedNodes.find((node) => node.className === "todo-active-task")?.text).toBe(
+      "All tasks complete",
+    );
+    expect(
+      completedDisclosure.props.children[0].props.children[1].props.children[2].props.children[0].props[
+        "data-state"
+      ],
+    ).toBe("completed");
+  });
+
+  it("falls back to generic output when a todo result includes errors", () => {
+    const text = [
+      "Errors: failed to update todo state",
+      "Overall: 1/1 done.",
+      "  Finish:",
+      "    - [x] Hand off",
+    ].join("\n");
+    const block = ToolTranscriptText({
+      entry: {
+        id: "todo-error",
+        role: "tool",
+        toolName: "todo",
+        text,
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    });
+
+    expect(parseTodoResult(text)).toBeNull();
+    expect(block.type).toBe("details");
+    expect(block.props.className).toBe("tool-message-disclosure");
+    expect(block.props.children[0].props.children[1].props.children).toContain("Errors:");
+  });
+
+  it("falls back to the generic todo disclosure for malformed output", () => {
+    const text = "Overall: almost done.\nArbitrary output";
+    const block = ToolTranscriptText({
+      entry: {
+        id: "todo-invalid",
+        role: "tool",
+        toolName: "todo",
+        text,
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    });
+
+    expect(block.type).toBe("details");
+    expect(block.props.className).toBe("tool-message-disclosure");
+    expect(block.props.children[0].props.children[1].props.children).toBe(formatToolTextPreview(text));
   });
 
   it("labels an empty tool result", () => {
@@ -331,8 +601,9 @@ describe("getActiveAskRequest", () => {
     expect(requests.map(({ requestId }) => requestId)).toEqual(["ask-2", "ask-1"]);
   });
 
-  it("falls back to the oldest pending request", () => {
-    expect(getActiveAskRequest(requests, "missing-session")).toBe(requests[0]);
+  it("returns only a request belonging to the selected session", () => {
+    expect(getActiveAskRequest(requests, "missing-session")).toBeNull();
+    expect(getActiveAskRequest(requests, null)).toBeNull();
     expect(getActiveAskRequest([], "session-1")).toBeNull();
   });
 });
@@ -425,6 +696,7 @@ describe("parseTranscriptBlocks", () => {
 
 interface RenderedNode {
   className?: string;
+  type?: string;
   text: string;
 }
 
@@ -455,6 +727,7 @@ function renderTranscriptNodes(node: ReactNode): RenderedNode[] {
   const childGroups = (Array.isArray(rawChildren) ? rawChildren : [rawChildren]).map(renderTranscriptNodes);
   return [
     {
+      type: element.type,
       ...(typeof element.props.className === "string" ? { className: element.props.className } : {}),
       text: childGroups.map((children) => children[0]?.text ?? "").join(""),
     },
@@ -608,6 +881,260 @@ function textContent(node: ReactNode): string {
   if (!isValidElement(node)) return "";
   return textContent((node as ReactElement<{ children?: ReactNode }>).props.children);
 }
+
+function renderAskToolCall(
+  request: AskRequest,
+  overrides: Partial<Parameters<typeof AskToolCall>[0]> = {},
+  preserveState = false,
+): ReactNode {
+  if (!preserveState) {
+    reactHarness.refValues = [];
+    reactHarness.stateValues = [];
+  }
+  reactHarness.refIndex = 0;
+  reactHarness.stateIndex = 0;
+  return AskToolCall({
+    request,
+    connection: "connected",
+    onRespond: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  });
+}
+
+const SELECT_ASK: AskRequest = {
+  sessionId: "session-1",
+  requestId: "ask-select",
+  kind: "select",
+  title: "Choose a deployment target",
+  options: ["Preview", "Production"],
+  initialValue: null,
+  expiresAt: null,
+};
+
+const TEXT_ASK: AskRequest = {
+  sessionId: "session-1",
+  requestId: "ask-text",
+  kind: "text",
+  title: "Describe the release",
+  options: [],
+  initialValue: "Initial context",
+  expiresAt: null,
+};
+
+describe("AskToolCall", () => {
+  it("renders transcript-native select controls and sends the selected value", async () => {
+    const onRespond = vi.fn().mockResolvedValue(undefined);
+    const output = renderAskToolCall(SELECT_ASK, { onRespond });
+    const article = findElements(output, (element) => element.type === "article")[0];
+    const preview = findElements(output, (element) => element.props.className === "ask-option")[0];
+
+    expect(article?.props.className).toBe("transcript-entry transcript-tool transcript-ask");
+    expect(textContent(output)).toContain("Choose a deployment target");
+    expect(preview?.props.disabled).toBe(false);
+
+    (preview?.props.onClick as (() => void) | undefined)?.();
+    await Promise.resolve();
+
+    expect(onRespond).toHaveBeenCalledWith({ value: "Preview" });
+  });
+
+  it("keeps text input labelled, does not autofocus it, and submits the current draft", async () => {
+    const onRespond = vi.fn().mockResolvedValue(undefined);
+    const textRequest = { ...TEXT_ASK, sessionId: "session one", requestId: "ask / text" };
+    let output = renderAskToolCall(textRequest, { onRespond });
+    let textarea = findElements(output, (element) => element.props.className === "ask-textarea")[0];
+
+    expect(textarea?.props.value).toBe("Initial context");
+    expect(textarea?.props.autoFocus).toBeUndefined();
+    expect(findElements(output, (element) => element.type === "label")[0]?.props.htmlFor).toBe(
+      textarea?.props.id,
+    );
+    expect(textarea?.props.id).toBe("ask-answer-session%20one-ask%20%2F%20text");
+
+    (textarea?.props.onChange as ((event: { target: { value: string } }) => void) | undefined)?.({
+      target: { value: "Release after smoke checks" },
+    });
+    output = renderAskToolCall(textRequest, { onRespond }, true);
+    textarea = findElements(output, (element) => element.props.className === "ask-textarea")[0];
+    const form = findElements(output, (element) => element.type === "form")[0];
+    const preventDefault = vi.fn();
+    (form?.props.onSubmit as ((event: { preventDefault(): void }) => void) | undefined)?.({
+      preventDefault,
+    });
+    await Promise.resolve();
+
+    expect(textarea?.props.value).toBe("Release after smoke checks");
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(onRespond).toHaveBeenCalledWith({ value: "Release after smoke checks" });
+  });
+  it("sends cancellation and restores composer focus only after success", async () => {
+    const focus = vi.fn();
+    const querySelector = vi.fn().mockReturnValue({ focus });
+    vi.stubGlobal("document", { querySelector });
+    try {
+      const onRespond = vi.fn().mockResolvedValue(undefined);
+      const output = renderAskToolCall(SELECT_ASK, { onRespond });
+      const cancel = findElements(
+        output,
+        (element) => typeof element.props.onClick === "function" && textContent(element) === "Cancel",
+      )[0];
+
+      (cancel?.props.onClick as (() => void) | undefined)?.();
+      await Promise.resolve();
+
+      expect(onRespond).toHaveBeenCalledWith({ cancelled: true });
+      expect(querySelector).toHaveBeenCalledWith("#composer-message");
+      expect(focus).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("disables all actions while pending and leaves cancel available when disconnected", () => {
+    const pending = new Promise<void>(() => {});
+    const onRespond = vi.fn().mockReturnValue(pending);
+    let output = renderAskToolCall(SELECT_ASK, { onRespond });
+    expect(textContent(findElements(output, (element) => element.props.className === "ask-status")[0])).toBe(
+      "Waiting for your response",
+    );
+    const preview = findElements(output, (element) => element.props.className === "ask-option")[0];
+    (preview?.props.onClick as (() => void) | undefined)?.();
+
+    output = renderAskToolCall(SELECT_ASK, { onRespond }, true);
+    expect(findElements(output, (element) => element.type === "article")[0]?.props["aria-busy"]).toBe(true);
+    expect(textContent(findElements(output, (element) => element.props.className === "ask-status")[0])).toBe(
+      "Sending response…",
+    );
+    expect(
+      findElements(output, (element) => element.props.className === "ask-option").every(
+        (element) => element.props.disabled === true,
+      ),
+    ).toBe(true);
+    expect(
+      findElements(
+        output,
+        (element) => typeof element.props.onClick === "function" && textContent(element) === "Cancel",
+      )[0]?.props.disabled,
+    ).toBe(true);
+
+    output = renderAskToolCall(SELECT_ASK, { connection: "disconnected" });
+    expect(
+      findElements(output, (element) => element.props.className === "ask-option")[0]?.props.disabled,
+    ).toBe(true);
+    expect(
+      findElements(
+        output,
+        (element) => typeof element.props.onClick === "function" && textContent(element) === "Cancel",
+      )[0]?.props.disabled,
+    ).toBe(false);
+  });
+
+  it("shows a delivery error, re-enables controls, and does not steal focus", async () => {
+    const querySelector = vi.fn();
+    vi.stubGlobal("document", { querySelector });
+    try {
+      const onRespond = vi.fn().mockRejectedValue(new Error("Host connection dropped"));
+      let output = renderAskToolCall(SELECT_ASK, { onRespond });
+      const preview = findElements(output, (element) => element.props.className === "ask-option")[0];
+      (preview?.props.onClick as (() => void) | undefined)?.();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      output = renderAskToolCall(SELECT_ASK, { onRespond }, true);
+      const alert = findElements(output, (element) => element.props.role === "alert")[0];
+      expect(textContent(alert)).toBe("Host connection dropped");
+      expect(
+        findElements(output, (element) => element.props.className === "ask-option")[0]?.props.disabled,
+      ).toBe(false);
+      expect(querySelector).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("dashboard ask stream", () => {
+  it("places the selected session ask after the messages-only live region without opening a dialog", async () => {
+    const message = {
+      id: "message-1",
+      role: "assistant" as const,
+      text: "Transcript output",
+      presentation: "text" as const,
+      timestamp: "2026-07-31T12:00:00.000Z",
+      streaming: false,
+    };
+    const onRespondToAsk = vi.fn().mockResolvedValue(undefined);
+    const output = renderControlledDashboard({
+      ...DASHBOARD_DEFAULTS,
+      sessions: [{ ...BASE_SESSION, messages: [message] }],
+      askRequests: [SELECT_ASK],
+      sessionsReady: true,
+      historyLoading: false,
+      hasMoreHistory: false,
+      connection: "connected",
+      error: null,
+      notificationState: "unsupported",
+      selectedSessionId: "session-1",
+      onRespondToAsk,
+      onSelectedSessionChange: vi.fn(),
+    });
+    const transcript = findElements(output, (element) => element.props.className === "transcript")[0];
+    const children = transcript?.props.children as ReactElement<Record<string, unknown>>[];
+    const messages = children[0];
+    const ask = children[1];
+
+    expect(transcript?.props.role).toBeUndefined();
+    expect(messages?.props.role).toBe("log");
+    expect(messages?.props["aria-live"]).toBe("polite");
+    expect(ask?.type).toBe(AskToolCall);
+    expect(ask?.key).toBe("session-1:ask-select");
+    await (ask?.props.onRespond as ((response: { value: string }) => Promise<void>) | undefined)?.({
+      value: "Preview",
+    });
+    expect(onRespondToAsk).toHaveBeenCalledWith("session-1", "ask-select", { value: "Preview" });
+    expect(findElements(output, (element) => element.props.open === true)).toHaveLength(0);
+  });
+
+  it("shows an ask in an empty selected session without rendering the ready state", () => {
+    const output = renderControlledDashboard({
+      ...DASHBOARD_DEFAULTS,
+      sessions: [BASE_SESSION],
+      askRequests: [SELECT_ASK],
+      sessionsReady: true,
+      historyLoading: false,
+      hasMoreHistory: false,
+      connection: "connected",
+      error: null,
+      notificationState: "unsupported",
+      selectedSessionId: "session-1",
+      onSelectedSessionChange: vi.fn(),
+    });
+
+    expect(textContent(output)).not.toContain("Ready for an instruction");
+    expect(findElements(output, (element) => element.type === AskToolCall)).toHaveLength(1);
+  });
+
+  it("does not render another session's ask in the selected transcript", () => {
+    const otherAsk = { ...SELECT_ASK, sessionId: "session-2", title: "Other session question" };
+    const output = renderControlledDashboard({
+      ...DASHBOARD_DEFAULTS,
+      sessions: [BASE_SESSION, { ...BASE_SESSION, id: "session-2" }],
+      askRequests: [otherAsk],
+      sessionsReady: true,
+      historyLoading: false,
+      hasMoreHistory: false,
+      connection: "connected",
+      error: null,
+      notificationState: "unsupported",
+      selectedSessionId: "session-1",
+      onSelectedSessionChange: vi.fn(),
+    });
+
+    expect(findElements(output, (element) => element.type === AskToolCall)).toHaveLength(0);
+    expect(textContent(output)).not.toContain("Other session question");
+    expect(textContent(output)).toContain("Ready for an instruction");
+  });
+});
 
 describe("controlled dashboard selection", () => {
   it("uses a requested session instead of the default first session", () => {
