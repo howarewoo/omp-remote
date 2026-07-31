@@ -2,6 +2,19 @@
 
 A phone-first PWA for supervising multiple [Oh My Pi](https://omp.sh) coding sessions from a private Tailnet. A loopback-only host daemon serves the dashboard, launches OMP RPC sessions, and accepts automatic registrations from ordinary terminal OMP sessions.
 
+## Comparison with OMP mobile options
+
+Every option below supports [Oh My Pi](https://omp.sh); tools limited to the upstream Pi Coding Agent are intentionally excluded.
+
+| Solution | OMP integration | Phone interface | Existing terminal sessions | New and parallel sessions | Remote access |
+| --- | --- | --- | --- | --- | --- |
+| **OMP Remote** | Direct OMP SDK and RPC integration, including `ask` responses | Installable PWA | Automatically registers ordinary terminal OMP sessions through an extension | Launch and supervise multiple OMP RPC sessions | Loopback-only daemon served privately through Tailscale; no public application endpoint |
+| [Harness Remote](https://github.com/giuliastro/harness-remote) | Included HTTP/SSE bridge launches `omp acp` | Installable PWA and Android APK | Reads transcript history from sessions created by other OMP processes without modifying OMP state | Create, browse, prompt, stop, and switch models across sessions and saved servers | Loopback by default; non-loopback LAN or VPN access requires Basic Auth |
+| [Agent of Empires](https://github.com/agent-of-empires/agent-of-empires) | OMP through a structured ACP view or raw tmux terminal | Installable PWA with mobile plan panels, tool cards, and swipe approval | Persists and reattaches AoE-managed OMP sessions in tmux | Create and manage parallel sessions with optional worktrees and sandboxes | Built-in Tailscale Funnel or Cloudflare Tunnel with QR and passphrase access |
+| [SSH + tmux](https://github.com/tmux/tmux/wiki) | Raw OMP terminal | Mobile SSH client | Reattaches the exact terminal session | Manually create and manage tmux sessions or windows | User-managed SSH, firewall, and optional private VPN |
+
+Capabilities reflect the linked projects' public documentation and may change.
+
 ## Stack
 
 | Layer | Choice | Version | Why |
