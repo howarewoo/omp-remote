@@ -1911,6 +1911,40 @@ textarea:disabled {
   max-width: 100%;
   color: var(--omp-gray);
 }
+.read-target-tree {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.read-target-tree li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.read-target-tree li > span:last-child {
+  overflow-wrap: anywhere;
+}
+
+.grouped-read-results {
+  display: grid;
+}
+
+.grouped-read-result {
+  min-width: 0;
+  padding-block: 0.35rem;
+}
+
+.grouped-read-result + .grouped-read-result {
+  border-top: 1px solid var(--omp-dark-gray);
+}
+
+.grouped-read-result > .tool-message-disclosure {
+  min-width: 0;
+}
 
 .transcript-tool:has(> .write-tool-disclosure) {
   padding: 0;

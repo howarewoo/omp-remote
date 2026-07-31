@@ -360,6 +360,63 @@ describe("SessionCatalog", () => {
     ]);
   });
 
+  it("preserves requested read selectors by correlating historical tool calls and results", async () => {
+    const root = await makeTemporaryDirectory();
+    const sessionPath = join(root, "project", "read-selectors.jsonl");
+    const records = [":1-180", ":raw"].flatMap((selector, index) => {
+      const toolCallId = `read-call-${index}`;
+      const path = `/workspace/project/src/logs.d.ts${selector}`;
+      return [
+        {
+          type: "message",
+          id: `assistant-read-${index}`,
+          timestamp: `2026-07-29T12:00:0${index}.000Z`,
+          message: {
+            role: "assistant",
+            content: [{ type: "toolCall", toolCallId, name: "read", arguments: { path } }],
+          },
+        },
+        {
+          type: "message",
+          id: `read-result-${index}`,
+          timestamp: `2026-07-29T12:00:1${index}.000Z`,
+          message: {
+            role: "toolResult",
+            toolCallId,
+            toolName: "read",
+            content: `result ${index}`,
+            details: { meta: { source: { value: "/workspace/project/src/logs.d.ts" } } },
+          },
+        },
+      ];
+    });
+    await writeSession(
+      sessionPath,
+      {
+        id: "session-read-selectors",
+        title: "Read selectors",
+        cwd: "/workspace/project",
+        timestamp: "2026-07-29T12:00:00.000Z",
+      },
+      records,
+    );
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    await expect(catalog.transcript("session-read-selectors")).resolves.toEqual([
+      expect.objectContaining({
+        id: "read-result-0",
+        toolName: "read",
+        readTarget: "/workspace/project/src/logs.d.ts:1-180",
+      }),
+      expect.objectContaining({
+        id: "read-result-1",
+        toolName: "read",
+        readTarget: "/workspace/project/src/logs.d.ts:raw",
+      }),
+    ]);
+  });
+
   it("derives id-less message identities from full text before display truncation", async () => {
     const root = await makeTemporaryDirectory();
     const sessionPath = join(root, "project", "long-idless-session.jsonl");

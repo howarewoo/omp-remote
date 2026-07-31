@@ -32,7 +32,7 @@ import {
   getCatalogSessionMetadataPatch,
 } from "./catalog-reconciliation.js";
 import { resolveGitBranch } from "./git-branch.js";
-import { normalizeRawMessage, normalizeSkillCommands } from "./message-normalizer.js";
+import { normalizeRawMessage, normalizeSkillCommands, ReadTargetTracker } from "./message-normalizer.js";
 import { normalizeRpcAskEvent } from "./rpc-ask.js";
 import { SavedWorkingDirectoryStore } from "./saved-working-directories.js";
 import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
@@ -466,6 +466,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
   let sessionId: string | undefined;
   let messageSequence = 0;
   let activeMessageId: string | undefined;
+  const readTargetTracker = new ReadTargetTracker();
   rpc.subscribe((frame) => {
     if (!sessionId) return;
     const askEvent = normalizeRpcAskEvent(sessionId, frame);
@@ -501,6 +502,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
         parsed.data.message,
         parsed.data.type !== "message_end",
         activeMessageId ?? `rpc-message-${sessionId}-${++messageSequence}`,
+        { readTargetTracker },
       );
       if (message) registry.appendMessage(sessionId, message);
       if (parsed.data.type === "message_end") activeMessageId = undefined;
@@ -551,8 +553,18 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
     const messages = Array.isArray(messagesResponse.data)
       ? messagesResponse.data
       : messagesResponse.data.messages;
-    for (const [index, rawMessage] of messages.slice(-MAX_MESSAGES).entries()) {
-      const message = normalizeRawMessage(rawMessage, false, `rpc-history-${sessionId}-${index}`);
+    const visibleMessageStart = Math.max(0, messages.length - MAX_MESSAGES);
+    for (const [index, rawMessage] of messages.entries()) {
+      if (index < visibleMessageStart) {
+        readTargetTracker.observe(rawMessage);
+        continue;
+      }
+      const message = normalizeRawMessage(
+        rawMessage,
+        false,
+        `rpc-history-${sessionId}-${Math.max(0, index - visibleMessageStart)}`,
+        { readTargetTracker },
+      );
       if (message) registry.appendMessage(sessionId, message);
     }
   } catch (error) {
