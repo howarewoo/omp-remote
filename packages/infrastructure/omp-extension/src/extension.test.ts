@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ompRemoteExtension, {
@@ -7,10 +10,64 @@ import ompRemoteExtension, {
 } from "./extension.js";
 
 const originalArgv = [...process.argv];
+const temporaryDirectories: string[] = [];
 
-afterEach(() => {
+type Listener = (event: { data?: string }) => void | Promise<void>;
+
+class FakeWebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly instances: FakeWebSocket[] = [];
+  readonly sent: string[] = [];
+  readonly listeners = new Map<string, Listener[]>();
+  readyState = FakeWebSocket.OPEN;
+
+  constructor() {
+    FakeWebSocket.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: Listener) {
+    this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+  }
+
+  send(data: string) {
+    this.sent.push(data);
+  }
+
+  close() {}
+
+  async emit(type: string, event: { data?: string } = {}) {
+    for (const listener of this.listeners.get(type) ?? []) await listener(event);
+  }
+}
+
+const scalarSchema = {
+  min() {
+    return this;
+  },
+  regex() {
+    return this;
+  },
+};
+const objectSchema = {
+  passthrough() {
+    return this;
+  },
+};
+const zod = {
+  string: () => scalarSchema,
+  enum: () => scalarSchema,
+  literal: () => scalarSchema,
+  unknown: () => scalarSchema,
+  object: () => objectSchema,
+  discriminatedUnion: () => ({ parse: (value: unknown) => value }),
+};
+
+afterEach(async () => {
   process.argv.splice(0, process.argv.length, ...originalArgv);
   vi.unstubAllGlobals();
+  FakeWebSocket.instances.length = 0;
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true })));
 });
 
 describe("normalizeExtensionMessage", () => {
@@ -83,56 +140,19 @@ describe("ompRemoteExtension", () => {
     ]);
   });
 
-  it("applies model and effort commands to the active extension session", async () => {
-    type Listener = (event: { data?: string }) => void | Promise<void>;
-    class FakeWebSocket {
-      static readonly CONNECTING = 0;
-      static readonly OPEN = 1;
-      static readonly instances: FakeWebSocket[] = [];
-      readonly sent: string[] = [];
-      readonly listeners = new Map<string, Listener[]>();
-      readyState = FakeWebSocket.OPEN;
-
-      constructor() {
-        FakeWebSocket.instances.push(this);
-      }
-
-      addEventListener(type: string, listener: Listener) {
-        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
-      }
-
-      send(data: string) {
-        this.sent.push(data);
-      }
-
-      close() {}
-
-      async emit(type: string, event: { data?: string } = {}) {
-        for (const listener of this.listeners.get(type) ?? []) await listener(event);
-      }
+  it.each([
+    { mode: "text", nested: false },
+    { mode: "rpc-ui", nested: true },
+  ])("publishes $mode extension sessions and applies model and effort commands", async ({ mode, nested }) => {
+    process.argv.splice(0, process.argv.length, "node", "omp", "--mode", mode);
+    let sessionFile: string | null = null;
+    if (nested) {
+      const directory = await mkdtemp(join(tmpdir(), "omp-remote-extension-"));
+      temporaryDirectories.push(directory);
+      const parentFile = join(directory, "main.jsonl");
+      await writeFile(parentFile, "", "utf8");
+      sessionFile = join(directory, "main", "Worker.jsonl");
     }
-
-    const scalarSchema = {
-      min() {
-        return this;
-      },
-      regex() {
-        return this;
-      },
-    };
-    const objectSchema = {
-      passthrough() {
-        return this;
-      },
-    };
-    const zod = {
-      string: () => scalarSchema,
-      enum: () => scalarSchema,
-      literal: () => scalarSchema,
-      unknown: () => scalarSchema,
-      object: () => objectSchema,
-      discriminatedUnion: () => ({ parse: (value: unknown) => value }),
-    };
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
     const model = { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" };
     const setModel = vi.fn().mockResolvedValue(true);
@@ -162,7 +182,7 @@ describe("ompRemoteExtension", () => {
         getBranch: () => [],
         getSessionId: () => "session-1",
         getSessionName: () => "Test session",
-        getSessionFile: () => null,
+        getSessionFile: () => sessionFile,
       },
       setInterval: vi.fn(),
       setTimeout: vi.fn(),
@@ -175,6 +195,26 @@ describe("ompRemoteExtension", () => {
     expect(socket).toBeDefined();
     if (!socket) throw new Error("The extension did not open its host connection");
     await socket.emit("open");
+    expect(JSON.parse(socket.sent[0] ?? "")).toMatchObject({
+      type: "register",
+      session: { id: "session-1" },
+    });
+    await handlers.get("message_update")?.(
+      {
+        message: {
+          id: "assistant-1",
+          role: "assistant",
+          content: [{ type: "text", text: "Working" }],
+        },
+      },
+      context,
+    );
+    expect(JSON.parse(socket.sent[1] ?? "")).toMatchObject({
+      type: "event",
+      sessionId: "session-1",
+      event: "message_update",
+      message: { text: "Working", streaming: true },
+    });
 
     await socket.emit("message", {
       data: JSON.stringify({
@@ -201,12 +241,29 @@ describe("ompRemoteExtension", () => {
     });
   });
 
-  it("does not register remote lifecycle handlers inside an RPC child", () => {
-    process.argv.splice(0, process.argv.length, "node", "omp", "--mode", "rpc");
-    const on = vi.fn();
+  it("keeps the RPC root session on the daemon RPC transport", async () => {
+    process.argv.splice(0, process.argv.length, "node", "omp", "--mode", "rpc-ui");
+    const directory = await mkdtemp(join(tmpdir(), "omp-remote-extension-root-"));
+    temporaryDirectories.push(directory);
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const WebSocket = vi.fn();
+    vi.stubGlobal("WebSocket", WebSocket);
 
-    ompRemoteExtension({ on } as unknown as ExtensionAPI);
+    ompRemoteExtension({
+      zod: { z: zod },
+      on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => {
+        handlers.set(event, handler);
+      }),
+    } as unknown as ExtensionAPI);
+    await handlers.get("session_start")?.(
+      {},
+      {
+        sessionManager: {
+          getSessionFile: () => join(directory, "main.jsonl"),
+        },
+      },
+    );
 
-    expect(on).not.toHaveBeenCalled();
+    expect(WebSocket).not.toHaveBeenCalled();
   });
 });
