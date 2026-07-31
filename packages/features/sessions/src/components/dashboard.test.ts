@@ -736,6 +736,37 @@ function renderTranscriptNodes(node: ReactNode): RenderedNode[] {
 }
 
 describe("structured transcript presentation", () => {
+  it("omits empty assistant entries while retaining empty tool disclosures", () => {
+    expect(
+      TranscriptEntry({
+        entry: {
+          id: "empty-assistant",
+          role: "assistant",
+          text: "",
+          timestamp: "2026-07-29T12:00:00.000Z",
+          streaming: true,
+          presentation: "text",
+        },
+      }),
+    ).toBeNull();
+
+    const nodes = renderTranscriptNodes(
+      TranscriptEntry({
+        entry: {
+          id: "empty-tool-result",
+          role: "tool",
+          text: "",
+          timestamp: "2026-07-29T12:00:00.000Z",
+          streaming: true,
+          presentation: "text",
+        },
+      }),
+    );
+
+    expect(nodes.some((node) => node.type === "article")).toBe(true);
+    expect(nodes.find((node) => node.className === "tool-message-preview")?.text).toBe("No tool output");
+  });
+
   it("renders a canonical numbered edit diff with tool identity", () => {
     const nodes = renderTranscriptNodes(
       TranscriptEntry({

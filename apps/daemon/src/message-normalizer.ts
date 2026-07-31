@@ -50,7 +50,7 @@ export function normalizeRawMessage(
       : undefined;
   const isCanonicalEditDiff = canonicalDiff !== undefined;
   const fullText = canonicalDiff ?? extractText(data.content);
-  if (options.omitEmptyText && !fullText) return null;
+  if (!fullText && (options.omitEmptyText || data.role !== "toolResult")) return null;
 
   const timestamp = options.timestamp ?? normalizeRawTimestamp(data.timestamp);
   const resolvedFallbackId = typeof fallbackId === "function" ? fallbackId(fullText, timestamp) : fallbackId;

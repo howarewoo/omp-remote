@@ -105,6 +105,28 @@ describe("normalizeRawMessage", () => {
     });
   });
 
+  it("drops non-text assistant content", () => {
+    expect(
+      normalizeRawMessage(
+        { id: "assistant-thinking", role: "assistant", content: [{ type: "thinking" }] },
+        true,
+        "fallback-id",
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps empty live tool results unless all empty text is explicitly omitted", () => {
+    const raw = { id: "empty-tool-result", role: "toolResult", content: [{ type: "status" }] };
+
+    expect(normalizeRawMessage(raw, true, "fallback-id")).toMatchObject({
+      id: "empty-tool-result",
+      role: "tool",
+      text: "",
+      streaming: true,
+    });
+    expect(normalizeRawMessage(raw, false, "fallback-id", { omitEmptyText: true })).toBeNull();
+  });
+
   it("rejects a present non-string message id", () => {
     expect(
       normalizeRawMessage({ id: 42, role: "assistant", content: "invalid id" }, false, "fallback-id"),

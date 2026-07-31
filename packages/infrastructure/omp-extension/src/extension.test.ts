@@ -1,12 +1,43 @@
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import ompRemoteExtension, { getSessionModelOptions, isRpcMode } from "./extension.js";
+import ompRemoteExtension, {
+  getSessionModelOptions,
+  isRpcMode,
+  normalizeExtensionMessage,
+} from "./extension.js";
 
 const originalArgv = [...process.argv];
 
 afterEach(() => {
   process.argv.splice(0, process.argv.length, ...originalArgv);
   vi.unstubAllGlobals();
+});
+
+describe("normalizeExtensionMessage", () => {
+  it("drops non-text assistant content", () => {
+    expect(
+      normalizeExtensionMessage(
+        { id: "assistant-thinking", role: "assistant", content: [{ type: "thinking" }] },
+        true,
+        "fallback-id",
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps empty live tool results", () => {
+    expect(
+      normalizeExtensionMessage(
+        { id: "empty-tool-result", role: "toolResult", content: [{ type: "status" }] },
+        true,
+        "fallback-id",
+      ),
+    ).toMatchObject({
+      id: "empty-tool-result",
+      role: "tool",
+      text: "",
+      streaming: true,
+    });
+  });
 });
 
 describe("ompRemoteExtension", () => {
