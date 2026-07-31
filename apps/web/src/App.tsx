@@ -2,6 +2,7 @@ import { useSessionClient } from "@omp-remote/session-client";
 import { Dashboard } from "@omp-remote/sessions/components";
 import { useCallback, useState } from "react";
 import { useSessionNotifications } from "./session-notifications.js";
+import { StartupSplash } from "./startup-splash.js";
 
 function requestedSessionId(url: string | URL): string | null {
   return new URL(url).searchParams.get("session");
@@ -27,28 +28,31 @@ export default function App() {
   }, []);
 
   return (
-    <Dashboard
-      sessions={client.sessions}
-      askRequests={client.askRequests}
-      sessionsReady={client.sessionsReady}
-      historyLoading={client.historyLoading}
-      hasMoreHistory={client.hasMoreHistory}
-      connection={client.connection}
-      error={client.error}
-      notificationState={notifications.state}
-      selectedSessionId={selectedSessionId}
-      onSelectedSessionChange={onSelectedSessionChange}
-      onEnableNotifications={notifications.enable}
-      onLaunch={client.launch}
-      onCommand={client.command}
-      onAbort={client.abort}
-      onKill={client.kill}
-      onSetModel={client.setModel}
-      onSetEffort={client.setEffort}
-      onRespondToAsk={client.respondToAsk}
-      onSearchHistory={client.searchHistory}
-      onLoadMoreHistory={client.loadMoreHistory}
-      onLoadTranscript={client.loadTranscript}
-    />
+    <>
+      <Dashboard
+        sessions={client.sessions}
+        askRequests={client.askRequests}
+        sessionsReady={client.sessionsReady}
+        historyLoading={client.historyLoading}
+        hasMoreHistory={client.hasMoreHistory}
+        connection={client.connection}
+        error={client.error}
+        notificationState={notifications.state}
+        selectedSessionId={selectedSessionId}
+        onSelectedSessionChange={onSelectedSessionChange}
+        onEnableNotifications={notifications.enable}
+        onLaunch={client.launch}
+        onCommand={client.command}
+        onAbort={client.abort}
+        onKill={client.kill}
+        onSetModel={client.setModel}
+        onSetEffort={client.setEffort}
+        onRespondToAsk={client.respondToAsk}
+        onSearchHistory={client.searchHistory}
+        onLoadMoreHistory={client.loadMoreHistory}
+        onLoadTranscript={client.loadTranscript}
+      />
+      <StartupSplash ready={client.sessionsReady || Boolean(client.error)} />
+    </>
   );
 }
