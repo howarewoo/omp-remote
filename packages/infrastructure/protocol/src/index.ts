@@ -44,20 +44,69 @@ export const SkillCommandSchema = z.object({
   description: z.string().trim().min(1).optional(),
 });
 
-export const AskRequestSchema = z
+export const AskDialogOptionSchema = z
   .object({
-    sessionId: z.string().min(1),
-    requestId: z.string().min(1),
-    kind: z.enum(["select", "text"]),
-    title: z.string().min(1),
-    options: z.array(z.string()).default([]),
-    initialValue: z.string().nullable().default(null),
-    expiresAt: z.string().nullable().default(null),
+    label: z.string(),
+    description: z.string().optional(),
+    preview: z.string().optional(),
   })
   .strict();
 
+export const AskDialogQuestionSchema = z
+  .object({
+    id: z.string().min(1),
+    question: z.string().min(1),
+    header: z.string().optional(),
+    options: z.array(AskDialogOptionSchema),
+    multi: z.boolean().optional(),
+    recommended: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+  .refine(
+    (question) => question.recommended === undefined || question.recommended < question.options.length,
+    "Recommended option must refer to an available option",
+  );
+
+export const AskDialogResultItemSchema = z
+  .object({
+    id: z.string().min(1),
+    question: z.string().min(1),
+    options: z.array(z.string()),
+    multi: z.boolean(),
+    selectedOptions: z.array(z.string()),
+    customInput: z.string().optional(),
+    note: z.string().optional(),
+    timedOut: z.boolean().optional(),
+  })
+  .strict();
+
+const LegacyAskRequestFields = {
+  sessionId: z.string().min(1),
+  requestId: z.string().min(1),
+  title: z.string().min(1),
+  options: z.array(z.string()).default([]),
+  initialValue: z.string().nullable().default(null),
+  expiresAt: z.string().nullable().default(null),
+};
+
+export const AskRequestSchema = z.discriminatedUnion("kind", [
+  z.object({ ...LegacyAskRequestFields, kind: z.literal("select") }).strict(),
+  z.object({ ...LegacyAskRequestFields, kind: z.literal("text") }).strict(),
+  z
+    .object({
+      sessionId: z.string().min(1),
+      requestId: z.string().min(1),
+      kind: z.literal("rich"),
+      questions: z.array(AskDialogQuestionSchema).min(1),
+      expiresAt: z.string().nullable().default(null),
+    })
+    .strict(),
+]);
+
 export const AskResponseSchema = z.union([
   z.object({ value: z.string() }).strict(),
+  z.object({ kind: z.literal("submit"), results: z.array(AskDialogResultItemSchema) }).strict(),
+  z.object({ kind: z.literal("chat") }).strict(),
   z.object({ cancelled: z.literal(true), timedOut: z.boolean().optional() }).strict(),
 ]);
 
@@ -163,6 +212,13 @@ export const BrowserCommandSchema = z.union([
       response: AskResponseSchema,
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("ask_activity"),
+      sessionId: z.string().min(1),
+      askRequestId: z.string().min(1),
+    })
+    .strict(),
 ]);
 
 export const CommandResultSchema = z.object({
@@ -260,6 +316,19 @@ export const ExtensionFrameSchema = z.discriminatedUnion("type", [
   ExtensionEventSchema,
   ExtensionHeartbeatSchema,
   ExtensionResultSchema,
+  z.object({ type: z.literal("ask_request"), request: AskRequestSchema }),
+  z
+    .object({
+      type: z.literal("ask_activity"),
+      sessionId: z.string().min(1),
+      requestId: z.string().min(1),
+    })
+    .strict(),
+  z.object({
+    type: z.literal("ask_cancelled"),
+    sessionId: z.string().min(1),
+    requestId: z.string().min(1),
+  }),
 ]);
 
 export const ExtensionCommandSchema = z.discriminatedUnion("command", [
@@ -275,10 +344,20 @@ export const ExtensionCommandSchema = z.discriminatedUnion("command", [
     model: z.string().regex(/^[^/]+\/.+$/),
   }),
   z.object({ requestId: z.string(), command: z.literal("set_effort"), effort: EffortSchema }),
+  z.object({ requestId: z.string().min(1), command: z.literal("ask_admitted") }),
+  z.object({
+    requestId: z.string().min(1),
+    command: z.literal("ask_response"),
+    response: AskResponseSchema,
+  }),
+  z.object({ requestId: z.string().min(1), command: z.literal("ask_unavailable") }),
 ]);
 
 export type AskRequest = z.infer<typeof AskRequestSchema>;
 export type AskResponse = z.infer<typeof AskResponseSchema>;
+export type AskDialogOption = z.infer<typeof AskDialogOptionSchema>;
+export type AskDialogQuestion = z.infer<typeof AskDialogQuestionSchema>;
+export type AskDialogResultItem = z.infer<typeof AskDialogResultItemSchema>;
 export type BrowserCommand = z.infer<typeof BrowserCommandSchema>;
 export type CommandResult = z.infer<typeof CommandResultSchema>;
 export type Effort = z.infer<typeof EffortSchema>;

@@ -1,3 +1,5 @@
+import { Radio } from "@base-ui/react/radio";
+import { RadioGroup } from "@base-ui/react/radio-group";
 import {
   type ActiveSubagent,
   type AskRequest,
@@ -518,6 +520,7 @@ export interface DashboardProps {
   onSetModel(sessionId: string, model: string): Promise<void>;
   onSetEffort(sessionId: string, effort: Effort): Promise<void>;
   onRespondToAsk(sessionId: string, askRequestId: string, response: AskResponse): Promise<void>;
+  onAskActivity(sessionId: string, askRequestId: string): Promise<void>;
   onSearchHistory(query: string): Promise<void>;
   onLoadMoreHistory(): Promise<void>;
   onLoadTranscript(sessionId: string): Promise<void>;
@@ -1310,9 +1313,15 @@ export interface AskToolCallProps {
   request: AskRequest;
   connection: "connecting" | "connected" | "disconnected";
   onRespond(response: AskResponse): Promise<void>;
+  onActivity(): void;
 }
 
-export function AskToolCall({ request, connection, onRespond }: AskToolCallProps) {
+export function AskToolCall(props: AskToolCallProps) {
+  return props.request.kind === "rich" ? <RichAskToolCall {...props} /> : <LegacyAskToolCall {...props} />;
+}
+
+function LegacyAskToolCall({ request, connection, onRespond }: AskToolCallProps) {
+  if (request.kind === "rich") return null;
   const [draft, setDraft] = useState(request.initialValue ?? "");
   const [state, setState] = useState<"idle" | "sending">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -1420,6 +1429,251 @@ export function AskToolCall({ request, connection, onRespond }: AskToolCallProps
   );
 }
 
+type RichAnswer = {
+  selectedOptions: string[];
+  customInput: string;
+  note: string;
+};
+
+function RichAskToolCall({ request, connection, onRespond, onActivity }: AskToolCallProps) {
+  if (request.kind !== "rich") return null;
+  const [answers, setAnswers] = useState<RichAnswer[]>(() =>
+    request.questions.map(() => ({ selectedOptions: [], customInput: "", note: "" })),
+  );
+  const [state, setState] = useState<"idle" | "sending">("idle");
+  const [error, setError] = useState<string | null>(null);
+  const sending = state === "sending";
+  const askId = `ask-answer-${encodeURIComponent(request.sessionId)}-${encodeURIComponent(request.requestId)}`;
+  const complete = request.questions.every(
+    (_question, index) =>
+      (answers[index]?.selectedOptions.length ?? 0) > 0 || Boolean(answers[index]?.customInput.trim()),
+  );
+
+  const updateAnswer = (index: number, update: (answer: RichAnswer) => RichAnswer) => {
+    setAnswers((current) => {
+      const answer = current[index];
+      if (!answer) return current;
+      const next = [...current];
+      next[index] = update(answer);
+      return next;
+    });
+  };
+
+  const respond = async (response: AskResponse) => {
+    if (sending) return;
+    setState("sending");
+    setError(null);
+    try {
+      await onRespond(response);
+      globalThis.document?.querySelector<HTMLElement>("#composer-message")?.focus();
+    } catch (responseFailure) {
+      setError(
+        responseFailure instanceof Error ? responseFailure.message : "Your answer could not be delivered",
+      );
+      setState("idle");
+    }
+  };
+
+  const submit = () =>
+    respond({
+      kind: "submit",
+      results: request.questions.map((question, index) => {
+        const answer = answers[index] ?? { selectedOptions: [], customInput: "", note: "" };
+        return {
+          id: question.id,
+          question: question.question,
+          options: question.options.map((option) => option.label),
+          multi: question.multi ?? false,
+          selectedOptions: answer.selectedOptions,
+          ...(answer.customInput.trim() ? { customInput: answer.customInput } : {}),
+          ...(answer.note.trim() ? { note: answer.note } : {}),
+        };
+      }),
+    });
+
+  return (
+    <article
+      className="transcript-entry transcript-tool transcript-ask ask-rich"
+      aria-busy={sending}
+      aria-labelledby={`${askId}-title`}
+    >
+      <header className="ask-header">
+        <span className="message-author">
+          <i aria-hidden="true">?</i>
+          <span>ask</span>
+        </span>
+        <span className="ask-status" aria-live="polite">
+          {sending ? "Sending response…" : "Waiting for your response"}
+        </span>
+      </header>
+      <strong className="ask-title" id={`${askId}-title`}>
+        {request.questions.length === 1 ? "One question" : `${request.questions.length} questions`}
+      </strong>
+      <div className="ask-question-list">
+        {request.questions.map((question, questionIndex) => {
+          const answer = answers[questionIndex] ?? { selectedOptions: [], customInput: "", note: "" };
+          return (
+            <fieldset className="ask-question" key={question.id}>
+              <legend className="ask-question-title" id={`${askId}-${questionIndex}-legend`}>
+                {question.header ? <span className="ask-question-header">{question.header}</span> : null}
+                <span>{question.question}</span>
+              </legend>
+              {question.multi ? (
+                <div className="ask-options">
+                  {question.options.map((option, optionIndex) => {
+                    const selected = answer.selectedOptions.includes(option.label);
+                    return (
+                      <Button
+                        type="button"
+                        variant={selected ? "default" : "outline"}
+                        className="ask-option ask-rich-option"
+                        aria-pressed={selected}
+                        disabled={sending || connection !== "connected"}
+                        onClick={() => {
+                          onActivity();
+                          updateAnswer(questionIndex, (current) => ({
+                            ...current,
+                            selectedOptions: selected
+                              ? current.selectedOptions.filter((label) => label !== option.label)
+                              : [...current.selectedOptions, option.label],
+                          }));
+                        }}
+                        key={`${option.label}-${optionIndex}`}
+                      >
+                        <span className="ask-option-copy">
+                          <span>
+                            {option.label}
+                            {question.recommended === optionIndex ? <Badge>Recommended</Badge> : null}
+                          </span>
+                          {option.description ? (
+                            <span className="ask-option-description">{option.description}</span>
+                          ) : null}
+                          {option.preview ? (
+                            <span className="ask-option-preview">{option.preview}</span>
+                          ) : null}
+                        </span>
+                      </Button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <RadioGroup
+                  className="ask-options"
+                  aria-labelledby={`${askId}-${questionIndex}-legend`}
+                  name={`${askId}-${questionIndex}`}
+                  value={answer.selectedOptions[0] ?? ""}
+                  disabled={sending || connection !== "connected"}
+                  onValueChange={(value) => {
+                    onActivity();
+                    updateAnswer(questionIndex, (current) => ({
+                      ...current,
+                      selectedOptions: [value],
+                      customInput: "",
+                    }));
+                  }}
+                >
+                  {question.options.map((option, optionIndex) => {
+                    const selected = answer.selectedOptions.includes(option.label);
+                    return (
+                      <Radio.Root
+                        value={option.label}
+                        render={
+                          <button
+                            type="button"
+                            data-slot="button"
+                            className={cn(
+                              "ui-button",
+                              selected ? "ui-button-default" : "ui-button-outline",
+                              "ui-button-size-default",
+                              "ask-option ask-rich-option",
+                            )}
+                          />
+                        }
+                        key={`${option.label}-${optionIndex}`}
+                      >
+                        <span className="ask-option-copy">
+                          <span>
+                            {option.label}
+                            {question.recommended === optionIndex ? <Badge>Recommended</Badge> : null}
+                          </span>
+                          {option.description ? (
+                            <span className="ask-option-description">{option.description}</span>
+                          ) : null}
+                          {option.preview ? (
+                            <span className="ask-option-preview">{option.preview}</span>
+                          ) : null}
+                        </span>
+                      </Radio.Root>
+                    );
+                  })}
+                </RadioGroup>
+              )}
+              <label htmlFor={`${askId}-${questionIndex}-custom`}>Custom answer</label>
+              <Textarea
+                id={`${askId}-${questionIndex}-custom`}
+                className="ask-textarea"
+                value={answer.customInput}
+                onChange={(event) => {
+                  onActivity();
+                  updateAnswer(questionIndex, (current) => ({
+                    ...current,
+                    selectedOptions: question.multi ? current.selectedOptions : [],
+                    customInput: event.target.value,
+                  }));
+                }}
+                disabled={sending || connection !== "connected"}
+                rows={2}
+              />
+              <label htmlFor={`${askId}-${questionIndex}-note`}>Note (optional)</label>
+              <Textarea
+                id={`${askId}-${questionIndex}-note`}
+                className="ask-textarea"
+                value={answer.note}
+                onChange={(event) => {
+                  onActivity();
+                  updateAnswer(questionIndex, (current) => ({ ...current, note: event.target.value }));
+                }}
+                disabled={sending || connection !== "connected"}
+                rows={2}
+              />
+            </fieldset>
+          );
+        })}
+      </div>
+      <footer className="ask-actions ask-rich-actions">
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={sending || connection !== "connected"}
+          onClick={() => void respond({ cancelled: true })}
+        >
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={sending || connection !== "connected"}
+          onClick={() => void respond({ kind: "chat" })}
+        >
+          Chat about this
+        </Button>
+        <Button
+          type="button"
+          disabled={sending || connection !== "connected" || !complete}
+          onClick={() => void submit()}
+        >
+          Submit answers
+        </Button>
+      </footer>
+      {error ? (
+        <p className="form-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </article>
+  );
+}
+
 function DashboardContent({
   sessionsReady,
   sessions,
@@ -1442,6 +1696,7 @@ function DashboardContent({
   onSetModel,
   onSetEffort,
   onRespondToAsk,
+  onAskActivity,
   onSearchHistory,
   onLoadMoreHistory,
   onLoadTranscript,
@@ -2049,6 +2304,9 @@ function DashboardContent({
                           connection={connection}
                           onRespond={(response) =>
                             onRespondToAsk(activeAskRequest.sessionId, activeAskRequest.requestId, response)
+                          }
+                          onActivity={() =>
+                            void onAskActivity(activeAskRequest.sessionId, activeAskRequest.requestId)
                           }
                         />
                       </MessageScrollerItem>

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   BrowserCommandSchema,
+  ExtensionCommandSchema,
+  ExtensionFrameSchema,
   ExtensionHeartbeatSchema,
   ExtensionRegisterSchema,
   filterMainSessions,
@@ -122,6 +124,24 @@ describe("BrowserCommandSchema", () => {
     { response: { value: "PostgreSQL" } },
     { response: { cancelled: true } },
     { response: { cancelled: true, timedOut: true } },
+    { response: { kind: "chat" } },
+    {
+      response: {
+        kind: "submit",
+        results: [
+          {
+            id: "database",
+            question: "Which database?",
+            options: ["SQLite", "PostgreSQL"],
+            multi: true,
+            selectedOptions: ["PostgreSQL"],
+            customInput: "CockroachDB",
+            note: "Needs horizontal scaling",
+            timedOut: false,
+          },
+        ],
+      },
+    },
   ] as const)("accepts ask responses", ({ response }) => {
     expect(
       BrowserCommandSchema.parse({
@@ -132,6 +152,27 @@ describe("BrowserCommandSchema", () => {
         response,
       }),
     ).toMatchObject({ type: "ask_response", response });
+  });
+
+  it("accepts only the canonical browser ask activity shape", () => {
+    expect(
+      BrowserCommandSchema.parse({
+        type: "ask_activity",
+        sessionId: "session-1",
+        askRequestId: "ask-1",
+      }),
+    ).toEqual({
+      type: "ask_activity",
+      sessionId: "session-1",
+      askRequestId: "ask-1",
+    });
+    expect(() =>
+      BrowserCommandSchema.parse({
+        type: "ask_activity",
+        sessionId: "session-1",
+        requestId: "ask-1",
+      }),
+    ).toThrow();
   });
 
   it("rejects ambiguous ask responses", () => {
@@ -662,6 +703,92 @@ describe("ServerFrameSchema", () => {
         options: ["SQLite", "PostgreSQL"],
       },
     });
+  });
+
+  it("accepts only the canonical extension ask activity shape", () => {
+    expect(
+      ExtensionFrameSchema.parse({
+        type: "ask_activity",
+        sessionId: "session-1",
+        requestId: "ask-1",
+      }),
+    ).toEqual({
+      type: "ask_activity",
+      sessionId: "session-1",
+      requestId: "ask-1",
+    });
+    expect(() =>
+      ExtensionFrameSchema.parse({
+        type: "ask_activity",
+        sessionId: "session-1",
+        askRequestId: "ask-1",
+      }),
+    ).toThrow();
+  });
+
+  it("preserves every native rich ask field across extension and browser frames", () => {
+    const request = {
+      sessionId: "session-1",
+      requestId: "rich-ask-1",
+      kind: "rich",
+      questions: [
+        {
+          id: "database",
+          question: "Which database?",
+          header: "Storage",
+          options: [
+            { label: "SQLite", description: "Embedded", preview: "file:local.db" },
+            { label: "PostgreSQL", description: "Server", preview: "postgres://…" },
+          ],
+          multi: true,
+          recommended: 1,
+        },
+      ],
+      expiresAt: "2026-07-30T10:00:30.000Z",
+    };
+    expect(ExtensionFrameSchema.parse({ type: "ask_request", request })).toEqual({
+      type: "ask_request",
+      request,
+    });
+    expect(ServerFrameSchema.parse({ type: "ask_request", request })).toEqual({
+      type: "ask_request",
+      request,
+    });
+    expect(
+      ExtensionCommandSchema.parse({
+        command: "ask_response",
+        requestId: "rich-ask-1",
+        response: {
+          kind: "submit",
+          results: [
+            {
+              id: "database",
+              question: "Which database?",
+              options: ["SQLite", "PostgreSQL"],
+              multi: true,
+              selectedOptions: ["PostgreSQL"],
+              customInput: "CockroachDB",
+              note: "Needs horizontal scaling",
+            },
+          ],
+        },
+      }),
+    ).toMatchObject({ command: "ask_response", requestId: "rich-ask-1" });
+  });
+
+  it("rejects a recommended rich option outside the option list", () => {
+    expect(() =>
+      ServerFrameSchema.parse({
+        type: "ask_request",
+        request: {
+          sessionId: "session-1",
+          requestId: "rich-ask-1",
+          kind: "rich",
+          questions: [{ id: "q1", question: "Choose", options: [], recommended: 0 }],
+          expiresAt: null,
+        },
+      }),
+    ).toThrow();
   });
 
   it("accepts ask cancellation frames", () => {
