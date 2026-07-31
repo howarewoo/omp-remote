@@ -43,6 +43,10 @@ interface ControlledDashboardProps {
   onSelectedSessionChange?: (sessionId: string) => void;
 }
 
+interface AppContentProps {
+  children: [ReactElement<ControlledDashboardProps>, ReactElement<{ ready: boolean }>];
+}
+
 describe("App session URL state", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -54,9 +58,8 @@ describe("App session URL state", () => {
       history: { replaceState: vi.fn() },
     });
 
-    expect((App() as ReactElement<ControlledDashboardProps>).props.selectedSessionId).toBe(
-      "team/a?b=c & café%done",
-    );
+    const [dashboard] = (App() as ReactElement<AppContentProps>).props.children;
+    expect(dashboard.props.selectedSessionId).toBe("team/a?b=c & café%done");
   });
 
   it("replaces only the session query parameter and preserves unrelated parameters", () => {
@@ -66,7 +69,8 @@ describe("App session URL state", () => {
       location.href = replacement.href;
     });
     vi.stubGlobal("window", { location, history: { replaceState } });
-    const props = (App() as ReactElement<ControlledDashboardProps>).props;
+    const [dashboard] = (App() as ReactElement<AppContentProps>).props.children;
+    const props = dashboard.props;
 
     expect(props.onSelectedSessionChange).toBeTypeOf("function");
     props.onSelectedSessionChange?.("session 2/β");
@@ -76,5 +80,16 @@ describe("App session URL state", () => {
     expect(location.searchParams.get("view")).toBe("compact");
     expect(location.searchParams.get("panel")).toBe("activity");
     expect([...location.searchParams.keys()]).toEqual(["view", "session", "panel"]);
+  });
+
+  it("dismisses the startup splash when the session catalog is ready", () => {
+    vi.stubGlobal("window", {
+      location: new URL("https://app.test/"),
+      history: { replaceState: vi.fn() },
+    });
+
+    const [, splash] = (App() as ReactElement<AppContentProps>).props.children;
+
+    expect(splash.props.ready).toBe(true);
   });
 });
