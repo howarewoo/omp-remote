@@ -791,6 +791,32 @@ describe("session model and effort selectors", () => {
       /restart/i,
     );
 
+    const disconnectedLiveSession: Session = {
+      ...BASE_SESSION,
+      connected: false,
+      status: "disconnected",
+    };
+    const disconnectedLiveProps = configurationProps(disconnectedLiveSession);
+    output = renderControlledDashboard(disconnectedLiveProps);
+    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(disconnectedLiveProps, {
+      preserveState: true,
+      effectsEnabled: false,
+    });
+    expect(textContent(findConfigurationDrawer(output, "Model")?.props.children as ReactNode)).toMatch(
+      /restart/i,
+    );
+
+    output = renderControlledDashboard(disconnectedLiveProps);
+    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(disconnectedLiveProps, {
+      preserveState: true,
+      effectsEnabled: false,
+    });
+    expect(textContent(findConfigurationDrawer(output, "Effort")?.props.children as ReactNode)).toMatch(
+      /restart/i,
+    );
+
     const historySession: Session = {
       ...BASE_SESSION,
       connected: false,

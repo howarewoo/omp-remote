@@ -1733,7 +1733,7 @@ function DashboardContent({
               </>
             ) : (
               <p className="model-settings-empty model-settings-unavailable">
-                {selectedSession?.connected && selectedSession.source !== "history"
+                {selectedSession?.source !== "history"
                   ? "Restart this session with the latest extension to change its model."
                   : "Resume this session to load its available models."}
               </p>
@@ -1818,7 +1818,7 @@ function DashboardContent({
                 currentModelOption &&
                 availableEfforts.length === 0
                   ? "This model does not expose adjustable effort."
-                  : selectedSession?.connected && selectedSession.source !== "history"
+                  : selectedSession?.source !== "history"
                     ? "Restart this session with the latest extension to change its effort."
                     : "Resume this session to load its available effort choices."}
               </p>
