@@ -23,6 +23,14 @@ import {
 } from "./ui/drawer.js";
 import { Input } from "./ui/input.js";
 import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "./ui/message-scroller.js";
+import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
@@ -71,15 +79,6 @@ export function WorkingIndicator({ status }: { status: Session["status"] }) {
     </Badge>
   );
 }
-
-export function isNearTranscriptBottom(
-  scrollHeight: number,
-  scrollTop: number,
-  clientHeight: number,
-): boolean {
-  return scrollHeight - scrollTop - clientHeight < 80;
-}
-
 export function getComposerAction(
   session: Pick<Session, "capabilities" | "status">,
   message: string,
@@ -837,7 +836,7 @@ export function parseTodoResult(text: string): TodoResult | null {
   for (; lineIndex < lines.length; lineIndex += 1) {
     const line = lines[lineIndex];
     if (line === undefined) return null;
-    const phaseMatch = /^  ([^:\n]+):$/.exec(line);
+    const phaseMatch = /^ {2}([^:\n]+):$/.exec(line);
     const phaseName = phaseMatch?.[1];
     if (phaseName !== undefined) {
       if (phaseName.trim() !== phaseName) return null;
@@ -847,7 +846,7 @@ export function parseTodoResult(text: string): TodoResult | null {
     }
 
     const taskMatch =
-      /^    - \[([ xX])\] (.+?)(?: \((pending|in progress|completed|blocked|dropped)(?:: ([^)]+))?\))?$/.exec(
+      /^ {4}- \[([ xX])\] (.+?)(?: \((pending|in progress|completed|blocked|dropped)(?:: ([^)]+))?\))?$/.exec(
         line,
       );
     const checkbox = taskMatch?.[1];
@@ -1328,10 +1327,7 @@ function DashboardContent({
   const [historyQuery, setHistoryQuery] = useState("");
   const [activeHistoryQuery, setActiveHistoryQuery] = useState("");
   const [transcriptLoadingId, setTranscriptLoadingId] = useState<string | null>(null);
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const loadedTranscriptIdRef = useRef<string | null>(null);
-  const transcriptRef = useRef<HTMLDivElement | null>(null);
-  const followTranscriptRef = useRef(true);
   const configurationRequestRef = useRef<{ sessionId: string } | null>(null);
   const configurationSessionIdRef = useRef<string | null>(null);
   const { isMobile, setOpenMobile } = useSidebar();
@@ -1382,11 +1378,6 @@ function DashboardContent({
   }, [onSelectedSessionChange, selectedSession, selectedSessionId, sessionsReady]);
 
   useEffect(() => {
-    followTranscriptRef.current = true;
-    setShowScrollToBottom(false);
-  }, [selectedSession?.id]);
-
-  useEffect(() => {
     setViewedSubagent(null);
   }, [selectedSession?.id]);
 
@@ -1398,20 +1389,6 @@ function DashboardContent({
     setConfigurationPending(null);
     setConfigurationError(null);
   }, [selectedSession?.id]);
-
-  useEffect(() => {
-    const transcript = transcriptRef.current;
-    if (!transcript || !followTranscriptRef.current) return;
-    transcript.scrollTop = transcript.scrollHeight;
-    setShowScrollToBottom(false);
-  }, [
-    activeAskRequest?.requestId,
-    activeAskRequest?.sessionId,
-    selectedSession?.id,
-    selectedSession?.messages.length,
-    selectedSession?.messages.at(-1)?.text,
-    selectedSession?.status,
-  ]);
 
   useEffect(() => {
     if (selectedSession?.source !== "history" || loadedTranscriptIdRef.current === selectedSession.id) return;
@@ -1870,85 +1847,89 @@ function DashboardContent({
             className="session-workspace"
             aria-label={`Controls for ${selectedSession.name ?? selectedSession.cwd}`}
           >
-            <div className="transcript-region">
-              <div
-                ref={transcriptRef}
-                className="transcript"
-                onScroll={(event) => {
-                  const target = event.currentTarget;
-                  const isNearBottom = isNearTranscriptBottom(
-                    target.scrollHeight,
-                    target.scrollTop,
-                    target.clientHeight,
-                  );
-                  followTranscriptRef.current = isNearBottom;
-                  setShowScrollToBottom(!isNearBottom);
-                }}
-              >
-                <div
-                  className="transcript-messages"
-                  role="log"
-                  aria-live="polite"
-                  aria-label="Session transcript"
-                >
-                  {transcriptLoadingId === selectedSession.id ? (
-                    <div className="empty-transcript" role="status">
-                      <span className="status-orbit" aria-hidden="true" />
-                      <strong>Reading session transcript</strong>
-                      <p>Large transcripts stay on the host and load only when selected.</p>
-                    </div>
-                  ) : selectedSession.messages.length === 0 && !activeAskRequest ? (
-                    <div className="empty-transcript">
-                      <span className="terminal-prompt" aria-hidden="true">
-                        π
-                      </span>
-                      <strong>
-                        {selectedSession.source === "history"
-                          ? "No text messages in this session"
-                          : "Ready for an instruction"}
-                      </strong>
-                      <p>
-                        {selectedSession.source === "history"
-                          ? "Resume the session to continue working."
-                          : "Prompt OMP below. Live output will appear here as it arrives."}
-                      </p>
-                    </div>
-                  ) : (
-                    selectedSession.messages.map((entry) => <TranscriptEntry entry={entry} key={entry.id} />)
-                  )}
-                </div>
-                {activeAskRequest ? (
-                  <AskToolCall
-                    key={`${activeAskRequest.sessionId}:${activeAskRequest.requestId}`}
-                    request={activeAskRequest}
-                    connection={connection}
-                    onRespond={(response) =>
-                      onRespondToAsk(activeAskRequest.sessionId, activeAskRequest.requestId, response)
-                    }
-                  />
-                ) : null}
-                <WorkingIndicator status={selectedSession.status} />
-              </div>
-              {showScrollToBottom ? (
-                <Button
+            <MessageScrollerProvider
+              key={selectedSession.id}
+              autoScroll
+              defaultScrollPosition="end"
+              scrollEdgeThreshold={80}
+            >
+              <MessageScroller className="transcript-region">
+                <MessageScrollerViewport className="transcript" aria-label="Session transcript">
+                  <MessageScrollerContent
+                    className="transcript-messages"
+                    role="log"
+                    aria-live="polite"
+                    aria-busy={selectedSession.messages.at(-1)?.streaming === true}
+                  >
+                    {transcriptLoadingId === selectedSession.id ? (
+                      <MessageScrollerItem messageId={`transcript-loading:${selectedSession.id}`}>
+                        <div className="empty-transcript" role="status">
+                          <span className="status-orbit" aria-hidden="true" />
+                          <strong>Reading session transcript</strong>
+                          <p>Large transcripts stay on the host and load only when selected.</p>
+                        </div>
+                      </MessageScrollerItem>
+                    ) : selectedSession.messages.length === 0 && !activeAskRequest ? (
+                      <MessageScrollerItem messageId={`transcript-empty:${selectedSession.id}`}>
+                        <div className="empty-transcript">
+                          <span className="terminal-prompt" aria-hidden="true">
+                            π
+                          </span>
+                          <strong>
+                            {selectedSession.source === "history"
+                              ? "No text messages in this session"
+                              : "Ready for an instruction"}
+                          </strong>
+                          <p>
+                            {selectedSession.source === "history"
+                              ? "Resume the session to continue working."
+                              : "Prompt OMP below. Live output will appear here as it arrives."}
+                          </p>
+                        </div>
+                      </MessageScrollerItem>
+                    ) : (
+                      selectedSession.messages.map((entry) =>
+                        !entry.text && entry.role !== "tool" ? null : (
+                          <MessageScrollerItem
+                            key={entry.id}
+                            messageId={entry.id}
+                            scrollAnchor={entry.role === "user"}
+                          >
+                            <TranscriptEntry entry={entry} />
+                          </MessageScrollerItem>
+                        ),
+                      )
+                    )}
+                    {activeAskRequest ? (
+                      <MessageScrollerItem
+                        key={`${activeAskRequest.sessionId}:${activeAskRequest.requestId}`}
+                        messageId={`ask:${activeAskRequest.sessionId}:${activeAskRequest.requestId}`}
+                      >
+                        <AskToolCall
+                          request={activeAskRequest}
+                          connection={connection}
+                          onRespond={(response) =>
+                            onRespondToAsk(activeAskRequest.sessionId, activeAskRequest.requestId, response)
+                          }
+                        />
+                      </MessageScrollerItem>
+                    ) : null}
+                    {selectedSession.status === "running" ? (
+                      <MessageScrollerItem messageId={`working:${selectedSession.id}`}>
+                        <WorkingIndicator status={selectedSession.status} />
+                      </MessageScrollerItem>
+                    ) : null}
+                  </MessageScrollerContent>
+                </MessageScrollerViewport>
+                <MessageScrollerButton
                   className="scroll-to-bottom-button"
-                  type="button"
-                  size="icon"
-                  variant="outline"
                   aria-label="Scroll to latest output"
                   title="Scroll to latest output"
-                  onClick={() => {
-                    const transcript = transcriptRef.current;
-                    if (!transcript) return;
-                    followTranscriptRef.current = true;
-                    transcript.scrollTop = transcript.scrollHeight;
-                    setShowScrollToBottom(false);
-                  }}
                 >
                   <Icon name="down" />
-                </Button>
-              ) : null}
-            </div>
+                </MessageScrollerButton>
+              </MessageScroller>
+            </MessageScrollerProvider>
             {selectedSession.activeSubagents.length > 0 ? (
               <section className="subagent-activity" aria-label="Active subagents" aria-live="polite">
                 <strong className="subagent-activity-heading">
@@ -2179,10 +2160,18 @@ function DashboardContent({
           if (!open) setViewedSubagent(null);
         }}
       >
-        <>
-          {viewedSubagentSession?.messages.length ? (
-            viewedSubagentSession.messages.map((entry) => <TranscriptEntry entry={entry} key={entry.id} />)
-          ) : (
+        {viewedSubagentSession?.messages.length ? (
+          viewedSubagentSession.messages.map((entry) =>
+            !entry.text && entry.role !== "tool" ? null : (
+              <MessageScrollerItem key={entry.id} messageId={entry.id} scrollAnchor={entry.role === "user"}>
+                <TranscriptEntry entry={entry} />
+              </MessageScrollerItem>
+            ),
+          )
+        ) : (
+          <MessageScrollerItem
+            messageId={`subagent-empty:${viewedSubagentSession?.id ?? viewedSubagent?.id ?? "pending"}`}
+          >
             <div className="empty-transcript">
               <span className="terminal-prompt" aria-hidden="true">
                 π
@@ -2196,9 +2185,13 @@ function DashboardContent({
                   : "The session will appear as soon as the host publishes it."}
               </p>
             </div>
-          )}
-          {viewedSubagentSession ? <WorkingIndicator status={viewedSubagentSession.status} /> : null}
-        </>
+          </MessageScrollerItem>
+        )}
+        {viewedSubagentSession?.status === "running" ? (
+          <MessageScrollerItem messageId={`working:${viewedSubagentSession.id}`}>
+            <WorkingIndicator status={viewedSubagentSession.status} />
+          </MessageScrollerItem>
+        ) : null}
       </SubagentSessionViewer>
 
       <Drawer

@@ -1,7 +1,6 @@
 {
   "$schema": "https://ui.shadcn.com/schema.json",
-  "style": "new-york",
-  "base": "base-ui",
+  "style": "base-vega",
   "rsc": false,
   "tsx": true,
   "tailwind": {
@@ -13,7 +12,7 @@
   "iconLibrary": "lucide",
   "aliases": {
     "components": "@omp-remote/sessions/components",
-    "utils": "@omp-remote/sessions/components/ui",
+    "utils": "@omp-remote/sessions/components/ui/utils",
     "ui": "@omp-remote/sessions/components/ui",
     "lib": "@omp-remote/sessions",
     "hooks": "@omp-remote/sessions"
