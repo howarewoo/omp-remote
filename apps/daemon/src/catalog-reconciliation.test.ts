@@ -1,7 +1,11 @@
 import type { Session } from "@omp-remote/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { CatalogDiff } from "./session-catalog.js";
-import { createCatalogReconciler, createReconciledSessionRegistrar } from "./catalog-reconciliation.js";
+import {
+  createCatalogReconciler,
+  createReconciledSessionRegistrar,
+  getCatalogSessionMetadataPatch,
+} from "./catalog-reconciliation.js";
 
 const ROOT_SESSION: Session = {
   id: "session-root",
@@ -65,13 +69,49 @@ function updateParentActivity(registry: Map<string, Session>, session: Session):
   if (current) registry.set(session.id, { ...current, activeSubagents: session.activeSubagents });
 }
 
+describe("getCatalogSessionMetadataPatch", () => {
+  it.each([null, "Stale RPC title"])(
+    "synchronizes a changed catalog title for an RPC session from %s",
+    (name) => {
+      const liveSession: Session = { ...ROOT_SESSION, source: "rpc", name };
+      const catalogSession: Session = { ...liveSession, name: "Current catalog title" };
+
+      expect(getCatalogSessionMetadataPatch(liveSession, catalogSession)).toEqual({
+        name: "Current catalog title",
+      });
+    },
+  );
+
+  it("preserves an extension-provided title while synchronizing other catalog metadata", () => {
+    const liveSession: Session = {
+      ...ROOT_SESSION,
+      name: "Extension title",
+      createdAt: "2026-07-30T12:05:00.000Z",
+    };
+    const catalogSession: Session = {
+      ...ROOT_SESSION,
+      name: "Catalog title",
+      activeSubagents: [ACTIVE_WORKER],
+    };
+
+    expect(getCatalogSessionMetadataPatch(liveSession, catalogSession)).toEqual({
+      createdAt: ROOT_SESSION.createdAt,
+      activeSubagents: [ACTIVE_WORKER],
+    });
+  });
+
+  it("avoids a patch when reconciled metadata is unchanged", () => {
+    expect(getCatalogSessionMetadataPatch(ROOT_SESSION, { ...ROOT_SESSION })).toBeNull();
+  });
+});
+
 describe("createCatalogReconciler", () => {
   it("reconciles parent activity when registration requests a refresh without waiting for the timer", async () => {
     const registry = new Map<string, Session>([[ROOT_SESSION.id, ROOT_SESSION]]);
     const refresh = vi.fn(async () => catalogDiff([ACTIVE_WORKER]));
     const reconcile = createCatalogReconciler({
       refresh,
-      syncActiveSubagents: (session) => updateParentActivity(registry, session),
+      syncCatalogSession: (session) => updateParentActivity(registry, session),
       onError: vi.fn(),
     });
     const register = createReconciledSessionRegistrar({
@@ -110,7 +150,7 @@ describe("createCatalogReconciler", () => {
     const appliedActivity: string[][] = [];
     const reconcile = createCatalogReconciler({
       refresh,
-      syncActiveSubagents: (session) => {
+      syncCatalogSession: (session) => {
         updateParentActivity(registry, session);
         appliedActivity.push(session.activeSubagents.map(({ id }) => id));
       },
@@ -173,18 +213,18 @@ describe("createCatalogReconciler", () => {
       .fn<() => Promise<CatalogDiff>>()
       .mockRejectedValueOnce(refreshError)
       .mockResolvedValueOnce(catalogDiff([ACTIVE_WORKER]));
-    const syncActiveSubagents = vi.fn();
+    const syncCatalogSession = vi.fn();
     const onError = vi.fn(() => {
       throw reportingError;
     });
-    const reconcile = createCatalogReconciler({ refresh, syncActiveSubagents, onError });
+    const reconcile = createCatalogReconciler({ refresh, syncCatalogSession, onError });
 
     await expect(reconcile()).resolves.toBeUndefined();
     await expect(reconcile()).resolves.toBeUndefined();
 
     expect(refresh).toHaveBeenCalledTimes(2);
     expect(onError).toHaveBeenCalledWith(refreshError);
-    expect(syncActiveSubagents).toHaveBeenCalledWith(
+    expect(syncCatalogSession).toHaveBeenCalledWith(
       expect.objectContaining({ id: ROOT_SESSION.id, activeSubagents: [ACTIVE_WORKER] }),
     );
   });

@@ -26,7 +26,11 @@ import {
   broadcastBrowserFrame,
   sendBrowserFrame,
 } from "./browser-broadcast.js";
-import { createCatalogReconciler, createReconciledSessionRegistrar } from "./catalog-reconciliation.js";
+import {
+  createCatalogReconciler,
+  createReconciledSessionRegistrar,
+  getCatalogSessionMetadataPatch,
+} from "./catalog-reconciliation.js";
 import { resolveGitBranch } from "./git-branch.js";
 import { normalizeRawMessage, normalizeSkillCommands } from "./message-normalizer.js";
 import { normalizeRpcAskEvent } from "./rpc-ask.js";
@@ -118,7 +122,7 @@ const pendingAskBySession = new Map<string, { request: AskRequest; timeout: Node
 const app = Fastify({ logger: false, bodyLimit: 1024 * 1024 });
 const requestCatalogReconciliation = createCatalogReconciler({
   refresh: () => sessionCatalog.refresh(),
-  syncActiveSubagents,
+  syncCatalogSession,
   onError: (error) => logger.error("Could not refresh OMP session history", error),
 });
 const registerExtensionSession = createReconciledSessionRegistrar({
@@ -621,32 +625,12 @@ function refreshSessionBranch(sessionId: string, cwd: string): void {
   });
 }
 
-function syncActiveSubagents(catalogSession: Session): void {
+function syncCatalogSession(catalogSession: Session): void {
   const liveSession = registry.get(catalogSession.id);
-  if (
-    !liveSession ||
-    (liveSession.createdAt === catalogSession.createdAt &&
-      activeSubagentsEqual(liveSession.activeSubagents, catalogSession.activeSubagents))
-  )
-    return;
-  registry.update(catalogSession.id, {
-    createdAt: catalogSession.createdAt,
-    activeSubagents: catalogSession.activeSubagents,
-  });
-}
+  if (!liveSession) return;
 
-function activeSubagentsEqual(left: Session["activeSubagents"], right: Session["activeSubagents"]): boolean {
-  return (
-    left.length === right.length &&
-    left.every((subagent, index) => {
-      const other = right[index];
-      return (
-        subagent.id === other?.id &&
-        subagent.name === other.name &&
-        subagent.lastActivity === other.lastActivity
-      );
-    })
-  );
+  const patch = getCatalogSessionMetadataPatch(liveSession, catalogSession);
+  if (patch) registry.update(catalogSession.id, patch);
 }
 
 function normalizePercent(percent: number | undefined): number | null {
