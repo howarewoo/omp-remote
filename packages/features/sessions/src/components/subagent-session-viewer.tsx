@@ -54,7 +54,7 @@ export function SubagentSessionViewer({
   useEffect(() => {
     const transcript = transcriptRef.current;
     if (transcript && followTranscriptRef.current) transcript.scrollTop = transcript.scrollHeight;
-  }, [lastMessage?.text, session?.messages.length]);
+  }, [lastMessage?.text, session?.messages.length, session?.status]);
 
   if (!displayedSubagent) return null;
 
