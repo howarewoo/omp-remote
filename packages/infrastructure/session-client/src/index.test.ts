@@ -2,6 +2,7 @@ import type { AskRequest, Session } from "@omp-remote/protocol";
 import { describe, expect, it } from "vitest";
 import {
   createCatalogLoadCoordinator,
+  commandResultValue,
   patchSession,
   removeAskRequest,
   sessionSourcesReady,
@@ -36,6 +37,27 @@ const SESSION: Session = {
   activeSubagents: [],
   skillCommands: [],
 };
+
+describe("commandResultValue", () => {
+  it("returns the created session ID only for a launch command", () => {
+    expect(commandResultValue("launch", { type: "launch", sessionId: "created-session" })).toBe(
+      "created-session",
+    );
+    expect(commandResultValue("session_command", { type: "void" })).toBeUndefined();
+  });
+
+  it("rejects a result belonging to a different command kind", () => {
+    expect(() => commandResultValue("launch", { type: "void" })).toThrow(
+      "The host did not identify the launched session",
+    );
+    expect(() =>
+      commandResultValue("save_working_directory", {
+        type: "launch",
+        sessionId: "wrong-session",
+      }),
+    ).toThrow("The host returned a launch result for a different command");
+  });
+});
 
 describe("session readiness", () => {
   it("waits for both the live snapshot and baseline catalog", () => {

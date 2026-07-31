@@ -496,7 +496,7 @@ export interface DashboardProps {
   selectedSessionId: string | null;
   onSelectedSessionChange(sessionId: string): void;
   onEnableNotifications(): Promise<void>;
-  onLaunch(cwd: string, resume: string | null): Promise<void>;
+  onLaunch(cwd: string, resume: string | null): Promise<string>;
   onSaveWorkingDirectory(cwd: string): Promise<void>;
   onRemoveWorkingDirectory(cwd: string): Promise<void>;
   onCommand(sessionId: string, command: ComposerMode, text: string): Promise<void>;
@@ -1423,7 +1423,8 @@ function DashboardContent({
     setLaunchState("sending");
     setLaunchError(null);
     try {
-      await onLaunch(cwd, resume || null);
+      const sessionId = await onLaunch(cwd, resume || null);
+      onSelectedSessionChange(sessionId);
       setLaunchOpen(false);
       setLaunchCwd("");
       formElement.reset();
@@ -1485,7 +1486,8 @@ function DashboardContent({
     setCommandState("sending");
     setCommandError(null);
     try {
-      await onLaunch(selectedSession.cwd, selectedSession.sessionPath);
+      const sessionId = await onLaunch(selectedSession.cwd, selectedSession.sessionPath);
+      onSelectedSessionChange(sessionId);
     } catch (resumeFailure) {
       setCommandError(
         resumeFailure instanceof Error ? resumeFailure.message : "The session could not be resumed",

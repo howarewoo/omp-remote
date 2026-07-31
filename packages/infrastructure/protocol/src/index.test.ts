@@ -561,6 +561,46 @@ describe("ServerFrameSchema", () => {
     });
   });
 
+  it("requires the created session ID in successful launch results", () => {
+    expect(
+      ServerFrameSchema.parse({
+        type: "command_result",
+        requestId: "launch-1",
+        outcome: {
+          status: "ok",
+          value: { type: "launch", sessionId: "created-session" },
+        },
+      }),
+    ).toEqual({
+      type: "command_result",
+      requestId: "launch-1",
+      outcome: {
+        status: "ok",
+        value: { type: "launch", sessionId: "created-session" },
+      },
+    });
+
+    expect(() =>
+      ServerFrameSchema.parse({
+        type: "command_result",
+        requestId: "launch-1",
+        outcome: { status: "ok", value: { type: "launch" } },
+      }),
+    ).toThrow();
+  });
+
+  it("represents successful commands without return values explicitly", () => {
+    expect(
+      ServerFrameSchema.parse({
+        type: "command_result",
+        requestId: "command-1",
+        outcome: { status: "ok", value: { type: "void" } },
+      }),
+    ).toMatchObject({
+      outcome: { status: "ok", value: { type: "void" } },
+    });
+  });
+
   it("accepts incremental transcript updates", () => {
     expect(
       ServerFrameSchema.parse({
