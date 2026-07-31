@@ -945,18 +945,32 @@ export const TranscriptText = memo(function TranscriptText({ text }: { text: str
   );
 });
 
+function getReadToolFilename(text: string): string | null {
+  const path = text.match(/^\[([^\]\r\n]+)#[\dA-Fa-f]{4}\](?:\r?\n|$)/)?.[1];
+  if (!path) return null;
+
+  return path.slice(path.lastIndexOf("/") + 1) || null;
+}
+
 function TranscriptEntryHeader({
   entry,
+  authorLabel,
   collapsible = false,
 }: {
   entry: Session["messages"][number];
+  authorLabel?: string;
   collapsible?: boolean;
 }) {
   return (
     <header>
       <span className="message-author">
         <i aria-hidden="true">{entry.role === "assistant" ? "π" : entry.role === "user" ? "›" : "·"}</i>
-        {entry.role === "assistant" ? "OMP" : entry.role === "user" ? "You" : (entry.toolName ?? entry.role)}
+        {authorLabel ??
+          (entry.role === "assistant"
+            ? "OMP"
+            : entry.role === "user"
+              ? "You"
+              : (entry.toolName ?? entry.role))}
         {collapsible ? <span className="message-disclosure-chevron" aria-hidden="true" /> : null}
       </span>
       <time dateTime={entry.timestamp}>{formatTime(entry.timestamp)}</time>
@@ -1091,11 +1105,19 @@ export function ToolTranscriptText({ entry }: { entry: Session["messages"][numbe
   const todo = entry.toolName === "todo" ? parseTodoResult(entry.text) : null;
   if (todo) return <MemoizedTodoToolTranscript entry={entry} todo={todo} />;
 
+  const readFilename = entry.toolName === "read" ? getReadToolFilename(entry.text) : null;
+
   return (
     <details className="tool-message-disclosure" open={entry.toolName === "edit"}>
       <summary>
-        <TranscriptEntryHeader entry={entry} collapsible />
-        <pre className="tool-message-preview">{formatToolTextPreview(entry.text)}</pre>
+        <TranscriptEntryHeader
+          entry={entry}
+          authorLabel={readFilename ? `read ${readFilename}` : (entry.toolName ?? entry.role)}
+          collapsible
+        />
+        {readFilename ? null : (
+          <pre className="tool-message-preview">{formatToolTextPreview(entry.text)}</pre>
+        )}
       </summary>
       <TranscriptEntryContent entry={entry} />
     </details>
