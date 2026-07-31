@@ -357,6 +357,52 @@ describe("ToolTranscriptText", () => {
     expect(block.props.children[0].props.children[1].props.children).toBe(formatToolTextPreview(text));
   });
 
+  it("shows a canonical read basename in the header without hiding the full result", () => {
+    const text = [
+      "[packages/features/sessions/src/components/dashboard.tsx#ABCD]",
+      "1090:export function ToolTranscriptText() {",
+      "1091:  return <details />;",
+      "1092:}",
+    ].join("\n");
+    const disclosure = ToolTranscriptText({
+      entry: {
+        id: "read-1",
+        role: "tool",
+        toolName: "read",
+        text,
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    });
+    const nodes = renderTranscriptNodes(disclosure);
+
+    expect(disclosure.type).toBe("details");
+    expect(disclosure.props.open).toBe(false);
+    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("read dashboard.tsx");
+    expect(nodes.some((node) => node.className === "tool-message-preview")).toBe(false);
+    expect(nodes.some((node) => node.text.includes("1091:  return <details />;"))).toBe(true);
+  });
+
+  it("keeps the generic preview when read output has no canonical header", () => {
+    const text = "Error: file not found";
+    const disclosure = ToolTranscriptText({
+      entry: {
+        id: "read-error",
+        role: "tool",
+        toolName: "read",
+        text,
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    });
+    const nodes = renderTranscriptNodes(disclosure);
+
+    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("read");
+    expect(nodes.find((node) => node.className === "tool-message-preview")?.text).toBe(text);
+  });
+
   it("renders edit output as an open disclosure by default", () => {
     const block = ToolTranscriptText({
       entry: {
