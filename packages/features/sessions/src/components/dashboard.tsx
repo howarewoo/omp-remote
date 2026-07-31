@@ -22,7 +22,6 @@ import {
   DrawerTitle,
 } from "./ui/drawer.js";
 import { Input } from "./ui/input.js";
-import { Separator } from "./ui/separator.js";
 import {
   Sidebar,
   SidebarContent,
@@ -1831,8 +1830,6 @@ function DashboardContent({
             className="session-workspace"
             aria-label={`Controls for ${selectedSession.name ?? selectedSession.cwd}`}
           >
-            <Separator />
-
             <div className="transcript-region">
               <div
                 ref={transcriptRef}
