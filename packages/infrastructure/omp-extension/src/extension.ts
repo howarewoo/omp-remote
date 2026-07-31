@@ -81,6 +81,8 @@ export function normalizeExtensionMessage(
     typeof raw.details.diff === "string"
       ? raw.details.diff
       : undefined;
+  const text = canonicalDiff ?? extractText(raw.content);
+  if (!text && raw.role !== "toolResult") return null;
   const rawTimestamp = "timestamp" in raw ? raw.timestamp : undefined;
   if (rawTimestamp !== undefined && typeof rawTimestamp !== "string" && typeof rawTimestamp !== "number") {
     return null;
@@ -94,7 +96,7 @@ export function normalizeExtensionMessage(
           ? fallbackId()
           : fallbackId,
     role: normalizeRole(raw.role),
-    text: canonicalDiff ?? extractText(raw.content),
+    text,
     timestamp:
       typeof rawTimestamp === "number"
         ? new Date(rawTimestamp).toISOString()

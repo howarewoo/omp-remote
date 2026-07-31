@@ -929,7 +929,7 @@ export function parseTodoResult(text: string): TodoResult | null {
 }
 
 export const TranscriptText = memo(function TranscriptText({ text }: { text: string }) {
-  const blocks = useMemo(() => parseTranscriptBlocks(text || "…"), [text]);
+  const blocks = useMemo(() => parseTranscriptBlocks(text), [text]);
 
   return (
     <div className="transcript-message">
@@ -1106,6 +1106,8 @@ export function ToolTranscriptText({ entry }: { entry: Session["messages"][numbe
 const MemoizedToolTranscriptText = memo(ToolTranscriptText);
 
 export function TranscriptEntry({ entry }: { entry: Session["messages"][number] }) {
+  if (!entry.text && entry.role !== "tool") return null;
+
   const isCollapsibleSystem = entry.role === "system" && entry.presentation !== "diff";
   const isCollapsibleTool = entry.role === "tool";
 
