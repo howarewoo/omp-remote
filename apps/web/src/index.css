@@ -2157,13 +2157,6 @@ textarea:disabled {
   background: var(--background);
 }
 
-.composer-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
 .composer-field {
   position: relative;
   display: block;
@@ -2239,13 +2232,6 @@ textarea:disabled {
   width: 2.75rem;
   min-width: 2.75rem;
   min-height: 2.75rem;
-}
-
-.composer-footer {
-  min-height: 1.75rem;
-  color: var(--muted-foreground);
-  font-family: var(--font-mono);
-  font-size: 0.5625rem;
 }
 
 .history-controls {
@@ -2819,15 +2805,6 @@ textarea:disabled {
 
   .session-metadata > div {
     padding-inline: 0.4rem;
-  }
-
-  .composer-footer > span:first-child {
-    display: none;
-  }
-
-  .composer-footer {
-    min-height: 0;
-    justify-content: flex-end;
   }
 
   .launch-cwd-control {
