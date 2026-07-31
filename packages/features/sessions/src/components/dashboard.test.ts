@@ -70,10 +70,9 @@ import {
   getComposerAction,
   getSkillSuggestions,
   groupSessionsForSidebar,
-  isNearTranscriptBottom,
   parseInlineTranscript,
-  parseTranscriptBlocks,
   parseTodoResult,
+  parseTranscriptBlocks,
   SystemTranscriptText,
   TodoToolTranscript,
   ToolTranscriptText,
@@ -83,6 +82,12 @@ import {
   WorkingIndicator,
 } from "./dashboard.js";
 import { SubagentSessionViewer } from "./subagent-session-viewer.js";
+import {
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerViewport,
+} from "./ui/message-scroller.js";
 
 const BASE_SESSION: Session = {
   id: "session-1",
@@ -124,13 +129,6 @@ describe("getComposerAction", () => {
         "",
       ),
     ).toBeNull();
-  });
-});
-
-describe("isNearTranscriptBottom", () => {
-  it("treats only the final 80 pixels as the live-follow region", () => {
-    expect(isNearTranscriptBottom(1_000, 421, 500)).toBe(true);
-    expect(isNearTranscriptBottom(1_000, 420, 500)).toBe(false);
   });
 });
 
@@ -985,19 +983,33 @@ describe("dashboard working status", () => {
       runningOutput,
       (element) => element.props.className === "transcript",
     )[0];
-    const runningIndicators = renderTranscriptNodes(runningTranscript).filter(
-      (node) => node.className === "ui-badge working-indicator",
-    );
 
-    expect(runningIndicators).toEqual([expect.objectContaining({ text: "Working" })]);
+    const runningWorkingRows = findElements(
+      runningTranscript,
+      (element) => element.type === MessageScrollerItem && element.props.messageId === "working:session-1",
+    );
+    const runningIndicator = findElements(
+      runningWorkingRows[0],
+      (element) => element.type === WorkingIndicator,
+    )[0];
+    expect(
+      renderTranscriptNodes(runningIndicator).filter(
+        (node) => node.className === "ui-badge working-indicator",
+      ),
+    ).toEqual([expect.objectContaining({ text: "Working" })]);
+    expect(runningWorkingRows).toHaveLength(1);
     expect((WorkingIndicator({ status: "running" }) as ReactElement<{ role?: string }>).props.role).toBe(
       "status",
     );
 
     const idleOutput = renderControlledDashboard(composerDashboardProps());
     const idleTranscript = findElements(idleOutput, (element) => element.props.className === "transcript")[0];
+    expect(findElements(idleTranscript, (element) => element.type === WorkingIndicator)).toHaveLength(0);
     expect(
-      renderTranscriptNodes(idleTranscript).filter((node) => node.className === "ui-badge working-indicator"),
+      findElements(
+        idleTranscript,
+        (element) => element.type === MessageScrollerItem && element.props.messageId === "working:session-1",
+      ),
     ).toHaveLength(0);
   });
 
@@ -1027,6 +1039,11 @@ describe("dashboard working status", () => {
 
     const viewer = findElements(output, (element) => element.type === SubagentSessionViewer)[0];
     expect(viewer?.props.open).toBe(true);
+    const viewedWorkingRows = findElements(
+      viewer?.props.children as ReactNode,
+      (element) => element.type === MessageScrollerItem && element.props.messageId === "working:subagent-1",
+    );
+    expect(viewedWorkingRows).toHaveLength(1);
     const viewedIndicators = findElements(
       viewer?.props.children as ReactNode,
       (element) => element.type === WorkingIndicator,
@@ -1038,6 +1055,11 @@ describe("dashboard working status", () => {
         (node) => node.className === "ui-badge working-indicator",
       ),
     ).toEqual([expect.objectContaining({ text: "Working" })]);
+  });
+});
+describe("message scroller controls", () => {
+  it("uses immediate jump controls so reduced-motion preferences are respected", () => {
+    expect(MessageScrollerButton({}).props.behavior).toBe("auto");
   });
 });
 
@@ -1341,11 +1363,11 @@ describe("AskToolCall", () => {
 });
 
 describe("dashboard ask stream", () => {
-  it("places the selected session ask after the messages-only live region without opening a dialog", async () => {
+  it("keeps the selected session ask as a stable row inside transcript content", async () => {
     const message = {
       id: "message-1",
-      role: "assistant" as const,
-      text: "Transcript output",
+      role: "user" as const,
+      text: "Transcript input",
       presentation: "text" as const,
       timestamp: "2026-07-31T12:00:00.000Z",
       streaming: false,
@@ -1365,16 +1387,19 @@ describe("dashboard ask stream", () => {
       onRespondToAsk,
       onSelectedSessionChange: vi.fn(),
     });
-    const transcript = findElements(output, (element) => element.props.className === "transcript")[0];
-    const children = transcript?.props.children as ReactElement<Record<string, unknown>>[];
-    const messages = children[0];
-    const ask = children[1];
+    const viewport = findElements(output, (element) => element.type === MessageScrollerViewport)[0];
+    const content = findElements(viewport, (element) => element.type === MessageScrollerContent)[0];
+    const rows = findElements(content, (element) => element.type === MessageScrollerItem);
+    const messageRow = rows.find((row) => row.props.messageId === "message-1");
+    const askRow = rows.find((row) => row.props.messageId === "ask:session-1:ask-select");
+    const ask = findElements(askRow, (element) => element.type === AskToolCall)[0];
 
-    expect(transcript?.props.role).toBeUndefined();
-    expect(messages?.props.role).toBe("log");
-    expect(messages?.props["aria-live"]).toBe("polite");
-    expect(ask?.type).toBe(AskToolCall);
-    expect(ask?.key).toBe("session-1:ask-select");
+    expect(viewport?.props.className).toBe("transcript");
+    expect(viewport?.props["aria-label"]).toBe("Session transcript");
+    expect(content?.props.role).toBe("log");
+    expect(content?.props["aria-live"]).toBe("polite");
+    expect(messageRow?.props.scrollAnchor).toBe(true);
+    expect(askRow).toBeDefined();
     await (ask?.props.onRespond as ((response: { value: string }) => Promise<void>) | undefined)?.({
       value: "Preview",
     });

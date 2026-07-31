@@ -11,6 +11,13 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from "./ui/drawer.js";
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "./ui/message-scroller.js";
 import { cn } from "./ui/utils.js";
 
 interface SubagentSessionViewerProps {
@@ -31,30 +38,12 @@ export function SubagentSessionViewer({
   onOpenChange,
   children,
 }: SubagentSessionViewerProps) {
-  const transcriptRef = useRef<HTMLDivElement>(null);
-  const followTranscriptRef = useRef(true);
   const lastSubagentRef = useRef<ActiveSubagent | null>(subagent);
   const displayedSubagent = subagent ?? lastSubagentRef.current;
-  const lastMessage = session?.messages.at(-1);
 
   useEffect(() => {
     if (subagent) lastSubagentRef.current = subagent;
   }, [subagent]);
-
-  useEffect(() => {
-    if (!open) return;
-    followTranscriptRef.current = true;
-    const frame = requestAnimationFrame(() => {
-      const transcript = transcriptRef.current;
-      if (transcript) transcript.scrollTop = transcript.scrollHeight;
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [open, session?.id]);
-
-  useEffect(() => {
-    const transcript = transcriptRef.current;
-    if (transcript && followTranscriptRef.current) transcript.scrollTop = transcript.scrollHeight;
-  }, [lastMessage?.text, session?.messages.length, session?.status]);
 
   if (!displayedSubagent) return null;
 
@@ -94,19 +83,33 @@ export function SubagentSessionViewer({
             </DrawerClose>
           </div>
         </DrawerHeader>
-        <div
-          ref={transcriptRef}
-          className="subagent-session-transcript transcript"
-          role="log"
-          aria-live="polite"
-          aria-label={`${displayedSubagent.name} transcript`}
-          onScroll={(event) => {
-            const target = event.currentTarget;
-            followTranscriptRef.current = target.scrollHeight - target.scrollTop - target.clientHeight < 80;
-          }}
+        <MessageScrollerProvider
+          key={`${session?.id ?? displayedSubagent.id}:${open ? "open" : "closed"}`}
+          autoScroll
+          defaultScrollPosition="end"
+          scrollEdgeThreshold={80}
         >
-          {children}
-        </div>
+          <MessageScroller className="transcript-region">
+            <MessageScrollerViewport
+              className="subagent-session-transcript transcript"
+              aria-label={`${displayedSubagent.name} transcript`}
+            >
+              <MessageScrollerContent
+                className="transcript-messages subagent-session-messages"
+                role="log"
+                aria-live="polite"
+                aria-busy={session?.messages.at(-1)?.streaming === true}
+              >
+                {children}
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+            <MessageScrollerButton
+              className="scroll-to-bottom-button"
+              aria-label="Scroll to latest subagent output"
+              title="Scroll to latest subagent output"
+            />
+          </MessageScroller>
+        </MessageScrollerProvider>
       </DrawerContent>
     </Drawer>
   );

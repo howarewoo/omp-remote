@@ -22,6 +22,7 @@
     "@omp-remote/protocol": "workspace:*",
     "@omp-remote/ui": "workspace:*",
     "@base-ui/react": "catalog:",
+    "@shadcn/react": "catalog:",
     "react": "catalog:"
   },
   "devDependencies": {
