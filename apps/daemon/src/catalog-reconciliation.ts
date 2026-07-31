@@ -3,7 +3,7 @@ import type { CatalogDiff } from "./session-catalog.js";
 
 interface CatalogReconcilerOptions {
   refresh(): Promise<CatalogDiff>;
-  syncActiveSubagents(session: Session): void;
+  syncCatalogSession(session: Session): void;
   onError(error: unknown): void;
 }
 
@@ -12,9 +12,46 @@ interface ReconciledSessionRegistrarOptions {
   requestCatalogReconciliation(): Promise<void>;
 }
 
+export type CatalogSessionMetadataPatch = Partial<Pick<Session, "name" | "createdAt" | "activeSubagents">>;
+
+export function getCatalogSessionMetadataPatch(
+  liveSession: Session,
+  catalogSession: Session,
+): CatalogSessionMetadataPatch | null {
+  const patch: CatalogSessionMetadataPatch = {};
+  let changed = false;
+  if (liveSession.source === "rpc" && liveSession.name !== catalogSession.name) {
+    patch.name = catalogSession.name;
+    changed = true;
+  }
+  if (liveSession.createdAt !== catalogSession.createdAt) {
+    patch.createdAt = catalogSession.createdAt;
+    changed = true;
+  }
+  if (!activeSubagentsEqual(liveSession.activeSubagents, catalogSession.activeSubagents)) {
+    patch.activeSubagents = catalogSession.activeSubagents;
+    changed = true;
+  }
+  return changed ? patch : null;
+}
+
+function activeSubagentsEqual(left: Session["activeSubagents"], right: Session["activeSubagents"]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((subagent, index) => {
+      const other = right[index];
+      return (
+        subagent.id === other?.id &&
+        subagent.name === other.name &&
+        subagent.lastActivity === other.lastActivity
+      );
+    })
+  );
+}
+
 export function createCatalogReconciler({
   refresh,
-  syncActiveSubagents,
+  syncCatalogSession,
   onError,
 }: CatalogReconcilerOptions): () => Promise<void> {
   let activeReconciliation: Promise<void> | null = null;
@@ -23,7 +60,7 @@ export function createCatalogReconciler({
   const reconcileOnce = async () => {
     try {
       const diff = await refresh();
-      for (const session of diff.upserted) syncActiveSubagents(session);
+      for (const session of diff.upserted) syncCatalogSession(session);
     } catch (error) {
       try {
         onError(error);
