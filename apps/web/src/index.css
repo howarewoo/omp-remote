@@ -863,7 +863,7 @@ textarea:disabled {
   flex: 1;
   flex-direction: column;
   margin: 0 auto;
-  padding: clamp(1rem, 3vw, 2rem) clamp(1rem, 4vw, 3rem) 0;
+  padding: 0 clamp(1rem, 4vw, 3rem);
 }
 
 .session-metadata {
@@ -2739,7 +2739,7 @@ textarea:disabled {
   }
 
   .session-workspace {
-    padding: 0.75rem 1rem 0;
+    padding: 0 1rem;
   }
 
   .session-metadata {
