@@ -1441,6 +1441,11 @@ textarea:disabled {
   scrollbar-color: var(--border-strong) transparent;
 }
 
+.transcript-messages {
+  display: grid;
+  gap: 0.5rem;
+}
+
 .transcript-entry {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
