@@ -869,7 +869,7 @@ textarea:disabled {
 .session-metadata {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) auto auto;
   align-items: stretch;
   margin: 0;
   padding: 0.65rem 0 0.75rem;
@@ -878,14 +878,13 @@ textarea:disabled {
 
 .session-metadata > div {
   display: grid;
-  min-width: 6rem;
+  min-width: 0;
   align-content: center;
   padding: 0 1rem;
   border-left: 1px solid var(--border);
 }
 
-.session-metadata > .session-model-metadata {
-  min-width: 0;
+.session-metadata > .session-configuration-metadata:first-child {
   padding-left: 0;
   border-left: 0;
 }
@@ -909,12 +908,12 @@ textarea:disabled {
   white-space: nowrap;
 }
 
-.session-model-metadata dd {
+.session-configuration-metadata dd {
   max-width: none;
   margin-top: 0.2rem;
 }
 
-.session-model-trigger.ui-button {
+.session-configuration-trigger.ui-button {
   width: 100%;
   min-width: 0;
   min-height: 2.5rem;
@@ -923,26 +922,14 @@ textarea:disabled {
   color: var(--foreground);
 }
 
-.session-model-trigger:disabled {
-  cursor: default;
-  opacity: 1;
-}
-
-.session-model-name {
+.session-configuration-value {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.session-effort {
-  flex: 0 0 auto;
-  color: var(--muted-foreground);
-  font-size: 0.625rem;
-  font-weight: 500;
-}
-
-.session-model-trigger .icon {
+.session-configuration-trigger .icon {
   margin-left: auto;
   color: var(--muted-foreground);
 }
@@ -1339,6 +1326,12 @@ textarea:disabled {
   color: var(--muted-foreground);
   font-size: 0.75rem;
   line-height: 1.5;
+}
+
+.model-settings-unavailable {
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 1.5);
+  background: oklch(100% 0 0 / 0.03);
 }
 
 .model-settings-error {
@@ -2249,7 +2242,7 @@ textarea:disabled {
     padding: 0 0.65rem;
   }
 
-  .session-model-trigger.ui-button {
+  .session-configuration-trigger.ui-button {
     min-height: 2.75rem;
   }
 
@@ -2312,15 +2305,11 @@ textarea:disabled {
   }
 
   .session-metadata {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
-  .session-metadata > div:last-child {
-    display: none;
-  }
-
-  .session-effort {
-    display: none;
+  .session-metadata > div {
+    padding-inline: 0.4rem;
   }
 
   .composer-footer > span:first-child {
