@@ -24,6 +24,9 @@ type ExtensionTranscriptMessage = {
   streaming: boolean;
   presentation: TranscriptPresentation;
   toolName?: string;
+  readTarget?: string;
+  readResolvedPath?: string;
+  toolTitle?: string;
 };
 
 type FallbackId = string | (() => string);
@@ -71,55 +74,287 @@ export function getSkillCommands(commands: readonly AvailableCommand[]): Extensi
     }));
 }
 
+type TrackedToolCall = {
+  toolName: string;
+  arguments: Record<string, unknown>;
+};
+
+type RawExtensionMessage = {
+  id?: unknown;
+  role: string;
+  content: string | Array<{ type: string; text?: string }>;
+  timestamp?: unknown;
+  toolName?: unknown;
+  toolCallId?: unknown;
+  details?: unknown;
+  isError?: unknown;
+};
+
+type ExtensionToolDetails = {
+  diff?: unknown;
+  path?: unknown;
+  resolvedPath?: unknown;
+  meta?: { source?: { value?: unknown } };
+  perFileResults?: unknown[];
+  matchCount?: unknown;
+  fileCount?: unknown;
+  scopePath?: unknown;
+  to?: unknown;
+  receipts?: unknown;
+  waited?: unknown;
+};
+
+export class ExtensionToolCallTracker {
+  readonly #calls = new Map<string, TrackedToolCall>();
+
+  capture(content: unknown): void {
+    if (!Array.isArray(content)) return;
+    for (const part of content) {
+      if (
+        typeof part !== "object" ||
+        part === null ||
+        part.type !== "toolCall" ||
+        typeof part.arguments !== "object" ||
+        part.arguments === null ||
+        Array.isArray(part.arguments)
+      ) {
+        continue;
+      }
+      const toolCallId = typeof part.toolCallId === "string" ? part.toolCallId : part.id;
+      const toolName = typeof part.toolName === "string" ? part.toolName : part.name;
+      if (typeof toolCallId === "string" && toolCallId && typeof toolName === "string" && toolName) {
+        this.#calls.set(toolCallId, {
+          toolName,
+          arguments: part.arguments as Record<string, unknown>,
+        });
+      }
+    }
+  }
+
+  resolve(toolCallId: unknown, consume = false): TrackedToolCall | undefined {
+    if (typeof toolCallId !== "string") return undefined;
+    const toolCall = this.#calls.get(toolCallId);
+    if (consume) this.#calls.delete(toolCallId);
+    return toolCall;
+  }
+}
+
 export function normalizeExtensionMessage(
   raw: unknown,
   streaming: boolean,
   fallbackId: FallbackId,
+  toolCallTracker?: ExtensionToolCallTracker,
 ): ExtensionTranscriptMessage | null {
-  if (typeof raw !== "object" || raw === null || !("role" in raw) || !("content" in raw)) return null;
-  if (typeof raw.role !== "string" || !isContent(raw.content)) return null;
-  if ("id" in raw && raw.id !== undefined && typeof raw.id !== "string") return null;
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    !("role" in raw) ||
+    typeof raw.role !== "string" ||
+    !("content" in raw) ||
+    !isContent(raw.content)
+  ) {
+    return null;
+  }
+  const message = raw as RawExtensionMessage;
+  if (message.id !== undefined && typeof message.id !== "string") return null;
 
+  if (message.role === "assistant") toolCallTracker?.capture(message.content);
   const toolName =
-    "toolName" in raw && typeof raw.toolName === "string" && raw.toolName.trim() ? raw.toolName : undefined;
-  const canonicalDiff =
-    raw.role === "toolResult" &&
-    toolName === "edit" &&
-    "isError" in raw &&
-    raw.isError === false &&
-    "details" in raw &&
-    typeof raw.details === "object" &&
-    raw.details !== null &&
-    "diff" in raw.details &&
-    typeof raw.details.diff === "string"
-      ? raw.details.diff
+    typeof message.toolName === "string" && message.toolName.trim() ? message.toolName : undefined;
+  const resolvedToolCall =
+    message.role === "toolResult" ? toolCallTracker?.resolve(message.toolCallId, !streaming) : undefined;
+  const toolCall = resolvedToolCall?.toolName === toolName ? resolvedToolCall : undefined;
+  const details =
+    typeof message.details === "object" && message.details !== null && !Array.isArray(message.details)
+      ? (message.details as ExtensionToolDetails)
       : undefined;
-  const text = canonicalDiff ?? extractText(raw.content);
-  if (!text && raw.role !== "toolResult") return null;
-  const rawTimestamp = "timestamp" in raw ? raw.timestamp : undefined;
-  if (rawTimestamp !== undefined && typeof rawTimestamp !== "string" && typeof rawTimestamp !== "number") {
+  const appliedDiff =
+    message.role === "toolResult" && toolName === "edit" && typeof details?.diff === "string"
+      ? details.diff
+      : undefined;
+  const canonicalDiff = message.isError === false ? appliedDiff : undefined;
+  const text = canonicalDiff ?? extractText(message.content);
+  if (!text && message.role !== "toolResult") return null;
+  if (
+    message.timestamp !== undefined &&
+    typeof message.timestamp !== "string" &&
+    typeof message.timestamp !== "number"
+  ) {
     return null;
   }
 
+  const trackedReadTarget = normalizeBoundedSingleLine(toolCall?.arguments.path);
+  const readSourcePath = normalizeBoundedSingleLine(details?.meta?.source?.value);
+  const readTarget =
+    toolName === "read"
+      ? (trackedReadTarget ?? readSourcePath ?? normalizeBoundedSingleLine(details?.path))
+      : undefined;
+  const readResolvedPath =
+    toolName === "read"
+      ? (normalizeBoundedSingleLine(details?.resolvedPath) ??
+        (trackedReadTarget?.startsWith("skill://") ? readSourcePath : undefined))
+      : undefined;
+  const toolTitle =
+    message.role === "toolResult"
+      ? formatExtensionToolTitle(toolName, toolCall?.arguments, details, appliedDiff)
+      : undefined;
+
   return {
     id:
-      "id" in raw && typeof raw.id === "string"
-        ? raw.id
+      typeof message.id === "string"
+        ? message.id
         : typeof fallbackId === "function"
           ? fallbackId()
           : fallbackId,
-    role: normalizeRole(raw.role),
+    role: normalizeRole(message.role),
     text,
     timestamp:
-      typeof rawTimestamp === "number"
-        ? new Date(rawTimestamp).toISOString()
-        : typeof rawTimestamp === "string"
-          ? rawTimestamp
+      typeof message.timestamp === "number"
+        ? new Date(message.timestamp).toISOString()
+        : typeof message.timestamp === "string"
+          ? message.timestamp
           : new Date().toISOString(),
     streaming,
     presentation: canonicalDiff !== undefined ? "diff" : "text",
     ...(toolName ? { toolName } : {}),
+    ...(readTarget ? { readTarget } : {}),
+    ...(readResolvedPath ? { readResolvedPath } : {}),
+    ...(toolTitle ? { toolTitle } : {}),
   };
+}
+
+function formatExtensionToolTitle(
+  toolName: string | undefined,
+  args: Record<string, unknown> | undefined,
+  details: ExtensionToolDetails | undefined,
+  canonicalDiff: string | undefined,
+): string | undefined {
+  if (toolName === "bash") {
+    const command = normalizeHeaderValue(args?.command);
+    return command ? `Bash: ${command}` : undefined;
+  }
+  if (toolName === "edit") {
+    const inputPaths = extractEditPaths(args?.input);
+    const perFilePaths = Array.isArray(details?.perFileResults)
+      ? details.perFileResults
+          .map((result) =>
+            typeof result === "object" && result !== null && "path" in result
+              ? normalizeBoundedSingleLine(result.path)
+              : undefined,
+          )
+          .filter((path): path is string => Boolean(path))
+      : [];
+    const detailPath = normalizeBoundedSingleLine(details?.path);
+    const paths = inputPaths.length > 0 ? inputPaths : [...perFilePaths, ...(detailPath ? [detailPath] : [])];
+    const pathLabel =
+      paths.length === 0 ? null : `${paths[0]}${paths.length > 1 ? ` +${paths.length - 1} more` : ""}`;
+    const changes = canonicalDiff ? countDiffChanges(canonicalDiff) : null;
+    const changeLabel = changes
+      ? [
+          changes.added > 0 ? `⟦+${changes.added}⟧` : null,
+          changes.removed > 0 ? `⟦−${changes.removed}⟧` : null,
+        ]
+          .filter(Boolean)
+          .join(" ")
+      : "";
+    return pathLabel ? `Edit: 🟦 ${pathLabel}${changeLabel ? ` ${changeLabel}` : ""}` : undefined;
+  }
+  if (toolName === "grep") {
+    const pattern = normalizeHeaderValue(args?.pattern);
+    if (!pattern) return undefined;
+    const matchCount =
+      typeof details?.matchCount === "number" &&
+      Number.isInteger(details.matchCount) &&
+      details.matchCount >= 0
+        ? details.matchCount
+        : undefined;
+    const fileCount =
+      typeof details?.fileCount === "number" && Number.isInteger(details.fileCount) && details.fileCount >= 0
+        ? details.fileCount
+        : undefined;
+    const rawScope = normalizeBoundedSingleLine(args?.path) ?? normalizeBoundedSingleLine(details?.scopePath);
+    const scope = rawScope
+      ?.split(";")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join(", ");
+    const countLabel =
+      matchCount === undefined || fileCount === undefined
+        ? ""
+        : ` ${matchCount} ${matchCount === 1 ? "match" : "matches"} · ${fileCount} ${
+            fileCount === 1 ? "file" : "files"
+          }`;
+    return `Grep: ${pattern}${countLabel}${scope ? ` · in ${scope}` : ""}`;
+  }
+  if (toolName === "hub") {
+    const waited = details?.waited;
+    const incomingFrom =
+      typeof waited === "object" && waited !== null && "from" in waited
+        ? normalizeHeaderValue(waited.from)
+        : undefined;
+    if (incomingFrom) return `✉ IRC ⟵ ${incomingFrom}`;
+
+    if (args?.op !== "send") return undefined;
+    const target = normalizeHeaderValue(args.to) ?? normalizeHeaderValue(details?.to);
+    if (!target) return undefined;
+    const receipt = Array.isArray(details?.receipts)
+      ? details.receipts.find(
+          (candidate) =>
+            typeof candidate === "object" &&
+            candidate !== null &&
+            "to" in candidate &&
+            candidate.to === target,
+        )
+      : undefined;
+    const outcome =
+      typeof receipt === "object" && receipt !== null && "outcome" in receipt
+        ? normalizeIrcOutcome(receipt.outcome)
+        : undefined;
+    return `IRC ➤ ${target}${outcome ? ` ${outcome}` : ""}`;
+  }
+  return undefined;
+}
+
+function extractEditPaths(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  const paths: string[] = [];
+  const patterns = [/^\[([^#\r\n]+)#[\dA-Fa-f]{4}\]$/gm, /^\*\*\* (?:Add|Delete|Update) File:\s*(.+)$/gm];
+  for (const pattern of patterns) {
+    for (const match of value.matchAll(pattern)) {
+      const path = normalizeBoundedSingleLine(match[1]);
+      if (path && !paths.includes(path)) paths.push(path);
+    }
+  }
+  return paths;
+}
+
+function countDiffChanges(diff: string): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const line of diff.split(/\r\n|\n|\r/)) {
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) added += 1;
+    else if (line.startsWith("-")) removed += 1;
+  }
+  return { added, removed };
+}
+
+function normalizeBoundedSingleLine(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim();
+  return normalized && normalized.length <= 10_000 && !/[\0\r\n]/.test(normalized) ? normalized : undefined;
+}
+
+function normalizeHeaderValue(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized && normalized.length <= 10_000 ? normalized : undefined;
+}
+
+function normalizeIrcOutcome(value: unknown): string | undefined {
+  return value === "injected" || value === "woken" || value === "revived" || value === "failed"
+    ? value
+    : undefined;
 }
 
 function isContent(value: unknown): value is string | Array<{ type: string; text?: string }> {
@@ -283,6 +518,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
   let active = false;
   let activeMessageId: string | undefined;
   let messageSequence = 0;
+  const liveToolCallTracker = new ExtensionToolCallTracker();
 
   const normalizeContextPercent = (ctx: ExtensionContext): number | null => {
     const percent = ctx.getContextUsage()?.percent;
@@ -290,8 +526,18 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
     return Math.max(0, Math.min(100, percent <= 1 ? percent * 100 : percent));
   };
 
-  const normalizeMessage = (raw: unknown, streaming: boolean, fallbackId?: string) =>
-    normalizeExtensionMessage(raw, streaming, fallbackId ?? (() => `extension-message-${++messageSequence}`));
+  const normalizeMessage = (
+    raw: unknown,
+    streaming: boolean,
+    fallbackId?: string,
+    toolCallTracker = liveToolCallTracker,
+  ) =>
+    normalizeExtensionMessage(
+      raw,
+      streaming,
+      fallbackId ?? (() => `extension-message-${++messageSequence}`),
+      toolCallTracker,
+    );
 
   const send = (frame: object): void => {
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(frame));
@@ -464,11 +710,12 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
   };
 
   const sessionSnapshot = (ctx: ExtensionContext) => {
+    const snapshotToolCallTracker = new ExtensionToolCallTracker();
     const messages = ctx.sessionManager
       .getBranch()
       .map((entry) => SessionEntrySchema.safeParse(entry))
       .filter((entry) => entry.success)
-      .map((entry) => normalizeMessage(entry.data.message, false, entry.data.id))
+      .map((entry) => normalizeMessage(entry.data.message, false, entry.data.id, snapshotToolCallTracker))
       .filter((message) => message !== null)
       .slice(-200);
     const sessionId = ctx.sessionManager.getSessionId();

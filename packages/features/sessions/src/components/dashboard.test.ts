@@ -68,13 +68,10 @@ import {
   formatSubagentActivityLabel,
   formatSystemTextPreview,
   formatToolTextPreview,
-  formatReadTarget,
   getActiveAskRequest,
   getComposerAction,
   getSkillSuggestions,
   groupSessionsForSidebar,
-  GroupedReadTranscript,
-  groupTranscriptEntries,
   parseInlineTranscript,
   parseTodoResult,
   parseTranscriptBlocks,
@@ -348,6 +345,7 @@ describe("ToolTranscriptText", () => {
       id: "tool-1",
       role: "tool" as const,
       toolName: "bash",
+      toolTitle: "Bash: pnpm test",
       text,
       timestamp: "2026-07-29T12:00:00.000Z",
       streaming: false,
@@ -366,10 +364,35 @@ describe("ToolTranscriptText", () => {
       "tool-message-disclosure transcript-disclosure-frame tool-output-disclosure",
     );
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
-    expect(block.props.children[0].props.children[1].props.children).toBe(formatToolTextPreview(text));
+    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("Bash: pnpm test");
+    expect(nodes.findIndex((node) => node.className === "tool-output-divider")).toBeLessThan(
+      nodes.findIndex((node) => node.className === "tool-message-preview"),
+    );
+    expect(block.props.children[0].props.children[2].props.children).toBe(formatToolTextPreview(text));
   });
 
-  it("shows a canonical read basename in the header without hiding the full result", () => {
+  it("shows the Grep query, result counts, and scope in the disclosure header", () => {
+    const title =
+      'Grep: type: "toolCall"|toolCallId|arguments: \\{ path|name: "bash"|name: "edit" 24 matches · 3 files · in apps, packages';
+    const disclosure = ToolTranscriptText({
+      entry: {
+        id: "grep-1",
+        role: "tool",
+        toolName: "grep",
+        toolTitle: title,
+        text: "matches",
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    });
+
+    expect(
+      renderTranscriptNodes(disclosure).find((node) => node.className === "message-author")?.text,
+    ).toContain(title);
+  });
+
+  it("shows a canonical Read filename without rendering the result", () => {
     const text = [
       "[packages/features/sessions/src/components/dashboard.tsx#ABCD]",
       "1090:export function ToolTranscriptText() {",
@@ -389,15 +412,14 @@ describe("ToolTranscriptText", () => {
     });
     const nodes = renderTranscriptNodes(disclosure);
 
-    expect(disclosure.type).toBe("details");
-    expect(disclosure.props.open).toBe(false);
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("read dashboard.tsx");
+    expect(disclosure.type).toBe("div");
+    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("Read: dashboard.tsx");
     expect(nodes.some((node) => node.className === "tool-message-preview")).toBe(false);
-    expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
-    expect(nodes.some((node) => node.text.includes("1091:  return <details />;"))).toBe(true);
+    expect(nodes.some((node) => node.className === "tool-output-divider")).toBe(true);
+    expect(nodes.some((node) => node.text.includes("1091:  return <details />;"))).toBe(false);
   });
 
-  it("keeps the generic preview when read output has no canonical header", () => {
+  it("hides an untargeted Read error in the static frame", () => {
     const text = "Error: file not found";
     const disclosure = ToolTranscriptText({
       entry: {
@@ -412,11 +434,13 @@ describe("ToolTranscriptText", () => {
     });
     const nodes = renderTranscriptNodes(disclosure);
 
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("read");
-    expect(nodes.find((node) => node.className === "tool-message-preview")?.text).toBe(text);
+    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("Read");
+    expect(nodes.some((node) => node.className === "tool-message-preview")).toBe(false);
+    expect(nodes.some((node) => node.text.includes(text))).toBe(false);
+    expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
   });
 
-  it("keeps metadata-backed reads on the existing single-read disclosure", () => {
+  it("shows metadata-backed Read filenames without rendering the result", () => {
     const disclosure = ToolTranscriptText({
       entry: {
         id: "read-metadata",
@@ -431,32 +455,51 @@ describe("ToolTranscriptText", () => {
     });
     const nodes = renderTranscriptNodes(disclosure);
 
-    expect(disclosure.type).toBe("details");
-    expect(disclosure.props.open).toBe(false);
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("read index.ts");
-    expect(nodes.some((node) => node.className === "tool-message-preview")).toBe(false);
+    expect(disclosure.type).toBe("div");
+    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("Read: index.ts");
+    expect(nodes.some((node) => node.text.includes("canonical read result"))).toBe(false);
   });
 
-  it("renders a framed skill read with its full URI, exact truncation count, and resolved output", () => {
-    const uri = "skill://using-woostack/references/session-learning.md";
-    const resolvedPath = "/Users/example/.agents/skills/using-woostack/references/session-learning.md";
-    const text = [
-      "# Session learning",
-      "",
-      "Use this guidance at every final response.",
-      "## Rules",
-      "- Keep claims grounded.",
-      "- Record evidence.",
-      "- Capture a reusable lesson.",
-      "- Keep output compact.",
-    ].join("\n");
+  it("renders a skill Read preview and resolved path", () => {
     const disclosure = ToolTranscriptText({
       entry: {
-        id: "skill-read-long",
+        id: "skill-read",
         role: "tool",
         toolName: "read",
-        readTarget: uri,
-        readResolvedPath: resolvedPath,
+        readTarget: "skill://using-woostack/references/session-learning.md",
+        readResolvedPath: "/Users/example/.agents/skills/using-woostack/references/session-learning.md",
+        text: "# Session learning\nKeep output compact.",
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    });
+    const nodes = renderTranscriptNodes(disclosure);
+
+    expect(nodes.find((node) => node.className === "message-author")?.text).toContain(
+      "Read skill://using-woostack/references/session-learning.md",
+    );
+    expect(nodes.find((node) => node.className === "skill-read-preview")?.text).toContain(
+      "Keep output compact.",
+    );
+    expect(nodes.find((node) => node.className === "skill-read-resolved-path")?.text).toContain(
+      "Resolved path: /Users/example/.agents/skills/using-woostack/references/session-learning.md",
+    );
+    expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
+    expect(nodes.findIndex((node) => node.className === "tool-output-divider")).toBeLessThan(
+      nodes.findIndex((node) => node.className === "skill-read-preview"),
+    );
+  });
+
+  it("renders a root skill Read with a truncated preview and SKILL.md path", () => {
+    const text = Array.from({ length: 14 }, (_, index) => `line ${index + 1}`).join("\n");
+    const disclosure = ToolTranscriptText({
+      entry: {
+        id: "root-skill-read",
+        role: "tool",
+        toolName: "read",
+        readTarget: "skill://using-woostack",
+        readResolvedPath: "/Users/example/.agents/skills/using-woostack/SKILL.md",
         text,
         timestamp: "2026-07-29T12:00:00.000Z",
         streaming: false,
@@ -464,198 +507,17 @@ describe("ToolTranscriptText", () => {
       },
     });
     const nodes = renderTranscriptNodes(disclosure);
-    const expandedNodes = renderTranscriptNodes(disclosure.props.children[1]);
 
-    expect(disclosure.type).toBe("details");
-    expect(disclosure.props.className).toContain("skill-read-disclosure");
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain(`Read ${uri}`);
-    expect(nodes.find((node) => node.className === "skill-read-expand")?.text).toBe("2 more linesExpand");
-    expect(nodes.find((node) => node.className === "skill-read-output")?.text).toBe(
-      `OutputResolved path: ${resolvedPath}`,
+    expect(nodes.find((node) => node.className === "message-author")?.text).toContain(
+      "Read skill://using-woostack",
     );
-    expect(nodes.find((node) => node.className === "skill-read-preview")?.text).not.toContain(
-      "Capture a reusable lesson.",
-    );
-    expect(expandedNodes.some((node) => node.text.includes("Capture a reusable lesson."))).toBe(true);
-    expect(expandedNodes.some((node) => node.text.includes("Keep output compact."))).toBe(true);
-  });
-
-  it("renders all short skill content without a truncation affordance", () => {
-    const disclosure = ToolTranscriptText({
-      entry: {
-        id: "skill-read-short",
-        role: "tool",
-        toolName: "read",
-        readTarget: "skill://frontend-design",
-        text: "# Frontend design\nUse existing tokens.",
-        timestamp: "2026-07-29T12:00:00.000Z",
-        streaming: false,
-        presentation: "text",
-      },
-    });
-    const nodes = renderTranscriptNodes(disclosure);
-
-    expect(nodes.find((node) => node.className === "skill-read-preview")?.text).toContain(
-      "Use existing tokens.",
-    );
-    expect(nodes.some((node) => node.className === "skill-read-expand")).toBe(false);
-  });
-
-  it("omits the skill read Output footer when resolved metadata is unavailable", () => {
-    const disclosure = ToolTranscriptText({
-      entry: {
-        id: "skill-read-no-path",
-        role: "tool",
-        toolName: "read",
-        readTarget: "skill://verification",
-        text: "# Verification",
-        timestamp: "2026-07-29T12:00:00.000Z",
-        streaming: false,
-        presentation: "text",
-      },
-    });
-
-    expect(renderTranscriptNodes(disclosure).some((node) => node.className === "skill-read-output")).toBe(
-      false,
+    expect(nodes.find((node) => node.className === "skill-read-preview")?.text).toContain("… 2 more lines");
+    expect(nodes.find((node) => node.className === "skill-read-resolved-path")?.text).toContain(
+      "Resolved path: /Users/example/.agents/skills/using-woostack/SKILL.md",
     );
   });
 
-  it("groups only adjacent read entries and preserves their order", () => {
-    const messages: Session["messages"] = [
-      {
-        id: "read-1",
-        role: "tool",
-        toolName: "read",
-        readTarget: "/work/omp-remote/a.ts",
-        text: "alpha",
-        timestamp: "2026-07-29T12:00:00.000Z",
-        streaming: false,
-        presentation: "text",
-      },
-      {
-        id: "read-2",
-        role: "tool",
-        toolName: "read",
-        readTarget: "/work/omp-remote/b.ts",
-        text: "beta",
-        timestamp: "2026-07-29T12:00:01.000Z",
-        streaming: false,
-        presentation: "text",
-      },
-      {
-        id: "assistant-1",
-        role: "assistant",
-        text: "Between reads",
-        timestamp: "2026-07-29T12:00:02.000Z",
-        streaming: false,
-        presentation: "text",
-      },
-      {
-        id: "read-3",
-        role: "tool",
-        toolName: "read",
-        readTarget: "/work/omp-remote/c.ts",
-        text: "gamma",
-        timestamp: "2026-07-29T12:00:03.000Z",
-        streaming: false,
-        presentation: "text",
-      },
-    ];
-
-    expect(groupTranscriptEntries(messages)).toEqual([
-      { kind: "read-group", entries: messages.slice(0, 2) },
-      { kind: "entry", entry: messages[2] },
-      { kind: "entry", entry: messages[3] },
-    ]);
-  });
-
-  it("formats grouped targets relative to cwd without allowing parent traversal", () => {
-    expect(formatReadTarget("/work/omp-remote/src/index.ts:1-180", "/work/omp-remote")).toBe(
-      "src/index.ts:1-180",
-    );
-    expect(formatReadTarget("/work/omp-remote/../secret.txt:raw", "/work/omp-remote")).toBe(
-      "/work/omp-remote/../secret.txt:raw",
-    );
-    expect(formatReadTarget("/other/index.ts:5-16,20-30", "/work/omp-remote")).toBe(
-      "/other/index.ts:5-16,20-30",
-    );
-  });
-
-  it("renders a grouped read tree and keeps every result inspectable", () => {
-    const entries: Session["messages"] = [
-      {
-        id: "read-a",
-        role: "tool",
-        toolName: "read",
-        readTarget: "/work/omp-remote/src/a.ts:1-20",
-        text: "alpha contents",
-        timestamp: "2026-07-29T12:00:00.000Z",
-        streaming: false,
-        presentation: "text",
-      },
-      {
-        id: "read-b",
-        role: "tool",
-        toolName: "read",
-        readTarget: "/work/omp-remote/src/b.ts:raw",
-        text: "beta contents",
-        timestamp: "2026-07-29T12:00:01.000Z",
-        streaming: false,
-        presentation: "text",
-      },
-    ];
-    const disclosure = GroupedReadTranscript({ entries, cwd: "/work/omp-remote" });
-    if (!disclosure) throw new Error("Expected grouped read disclosure");
-    const nodes = renderTranscriptNodes(disclosure);
-
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("Read (2)");
-    expect(nodes.some((node) => node.className === "tool-message-disclosure grouped-read-disclosure")).toBe(
-      true,
-    );
-    expect(nodes.find((node) => node.className === "read-target-tree")?.text).toBe(
-      "├─ src/a.ts:1-20└─ src/b.ts:raw",
-    );
-    expect(nodes.some((node) => node.text.includes("alpha contents"))).toBe(true);
-    expect(nodes.some((node) => node.text.includes("beta contents"))).toBe(true);
-    expect(
-      nodes.filter((node) => node.className === "tool-message-disclosure grouped-read-result-disclosure"),
-    ).toHaveLength(2);
-    expect(nodes.some((node) => node.className?.includes("transcript-disclosure-frame"))).toBe(false);
-    expect(nodes.some((node) => node.className === "tool-output-divider")).toBe(false);
-  });
-
-  it("does not specialize adjacent skill reads inside the grouped-read disclosure", () => {
-    const entries: Session["messages"] = [
-      {
-        id: "skill-read-a",
-        role: "tool",
-        toolName: "read",
-        readTarget: "skill://using-woostack",
-        text: "# Using woostack",
-        timestamp: "2026-07-29T12:00:00.000Z",
-        streaming: false,
-        presentation: "text",
-      },
-      {
-        id: "skill-read-b",
-        role: "tool",
-        toolName: "read",
-        readTarget: "skill://verification",
-        text: "# Verification",
-        timestamp: "2026-07-29T12:00:01.000Z",
-        streaming: false,
-        presentation: "text",
-      },
-    ];
-    const disclosure = GroupedReadTranscript({ entries, cwd: "/work/omp-remote" });
-    if (!disclosure) throw new Error("Expected grouped read disclosure");
-    const nodes = renderTranscriptNodes(disclosure);
-
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("Read (2)");
-    expect(nodes.some((node) => node.className?.includes("skill-read-disclosure"))).toBe(false);
-  });
-
-  it("renders a consecutive read group as one stable scroller item", () => {
+  it("renders adjacent Reads as separate sequential scroller items", () => {
     const messages: Session["messages"] = [
       {
         id: "read-first",
@@ -678,13 +540,11 @@ describe("ToolTranscriptText", () => {
         presentation: "text",
       },
     ];
-    const rows = renderTranscriptMessageItems({ messages, cwd: "/work/omp-remote" });
+    const rows = renderTranscriptMessageItems({ messages });
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.type).toBe(MessageScrollerItem);
-    expect(rows[0]?.key).toBe("read-group:read-first");
-    expect(rows[0]?.props.messageId).toBe("read-group:read-first");
-    expect(rows[0]?.props.scrollAnchor).toBeUndefined();
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row?.key)).toEqual(["read-first", "read-second"]);
+    expect(rows.map((row) => row?.props.messageId)).toEqual(["read-first", "read-second"]);
   });
 
   it("renders edit output as an open disclosure by default", () => {
@@ -693,6 +553,7 @@ describe("ToolTranscriptText", () => {
         id: "edit-1",
         role: "tool",
         toolName: "edit",
+        toolTitle: "Edit: 🟦 src/dashboard.tsx ⟦+1⟧ ⟦−1⟧",
         text: "-1|before\n+1|after",
         timestamp: "2026-07-29T12:00:00.000Z",
         streaming: false,
@@ -706,6 +567,9 @@ describe("ToolTranscriptText", () => {
       "tool-message-disclosure transcript-disclosure-frame tool-output-disclosure",
     );
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
+    expect(nodes.find((node) => node.className === "message-author")?.text).toContain(
+      "Edit: 🟦 src/dashboard.tsx ⟦+1⟧ ⟦−1⟧",
+    );
   });
 
   it("renders write output in the shared open frame with a labeled divider and full result", () => {
@@ -765,9 +629,12 @@ describe("ToolTranscriptText", () => {
     expect(disclosure.props.className).toBe(
       "tool-message-disclosure transcript-disclosure-frame todo-tool-disclosure",
     );
-    expect(nodes.some((node) => node.className === "tool-output-divider")).toBe(false);
+    expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
+    expect(nodes.findIndex((node) => node.className === "tool-output-divider")).toBeLessThan(
+      nodes.findIndex((node) => node.className === "todo-tool-summary"),
+    );
     expect(nodes.filter((node) => node.type === "ul")).toHaveLength(3);
-    const progress = disclosure.props.children[0].props.children[1].props.children[1];
+    const progress = disclosure.props.children[0].props.children[2].props.children[1];
     expect({
       type: progress.type,
       value: progress.props.value,
@@ -828,7 +695,7 @@ describe("ToolTranscriptText", () => {
     const droppedNodes = renderTranscriptNodes(droppedDisclosure);
     expect(droppedNodes.find((node) => node.className === "todo-active-task")?.text).toBe("No tasks remain");
     expect(
-      droppedDisclosure.props.children[0].props.children[1].props.children[2].props.children[0].props[
+      droppedDisclosure.props.children[0].props.children[2].props.children[2].props.children[0].props[
         "data-state"
       ],
     ).toBe("dropped");
@@ -853,7 +720,7 @@ describe("ToolTranscriptText", () => {
       "All tasks complete",
     );
     expect(
-      completedDisclosure.props.children[0].props.children[1].props.children[2].props.children[0].props[
+      completedDisclosure.props.children[0].props.children[2].props.children[2].props.children[0].props[
         "data-state"
       ],
     ).toBe("completed");
@@ -883,7 +750,7 @@ describe("ToolTranscriptText", () => {
     expect(block.props.className).toBe(
       "tool-message-disclosure transcript-disclosure-frame tool-output-disclosure",
     );
-    expect(block.props.children[0].props.children[1].props.children).toContain("Errors:");
+    expect(block.props.children[0].props.children[2].props.children).toContain("Errors:");
     expect(renderTranscriptNodes(block).some((node) => node.className === "tool-output-divider")).toBe(true);
   });
 
@@ -905,7 +772,7 @@ describe("ToolTranscriptText", () => {
     expect(block.props.className).toBe(
       "tool-message-disclosure transcript-disclosure-frame tool-output-disclosure",
     );
-    expect(block.props.children[0].props.children[1].props.children).toBe(formatToolTextPreview(text));
+    expect(block.props.children[0].props.children[2].props.children).toBe(formatToolTextPreview(text));
     expect(renderTranscriptNodes(block).some((node) => node.className === "tool-output-divider")).toBe(true);
   });
 
@@ -1305,8 +1172,8 @@ function composerDashboardProps(session: Session = BASE_SESSION): ControlledDash
   };
 }
 
-describe("dashboard grouped read transcript", () => {
-  it("renders adjacent reads as one transcript row without consuming the following message", () => {
+describe("dashboard Read transcript", () => {
+  it("renders adjacent Reads as separate rows without their output", () => {
     const readMessages: Session["messages"] = [
       {
         id: "dashboard-read-a",
@@ -1342,19 +1209,18 @@ describe("dashboard grouped read transcript", () => {
     );
     const transcript = findElements(output, (element) => element.props.className === "transcript")[0];
     const rows = findElements(transcript, (element) => element.type === MessageScrollerItem);
-    const groupedRead = findElements(rows[0], (element) => element.type === GroupedReadTranscript)[0];
-    const groupedNodes = renderTranscriptNodes(groupedRead);
+    const nodes = rows.slice(0, 2).flatMap((row) => renderTranscriptNodes(row.props.children as ReactNode));
 
     expect(rows.map((row) => row.props.messageId)).toEqual([
-      "read-group:dashboard-read-a",
+      "dashboard-read-a",
+      "dashboard-read-b",
       "dashboard-assistant",
     ]);
-    expect(groupedNodes.find((node) => node.className === "message-author")?.text).toContain("Read (2)");
-    expect(groupedNodes.find((node) => node.className === "read-target-tree")?.text).toBe(
-      "├─ src/a.ts:1-10└─ src/b.ts:raw",
+    expect(nodes.filter((node) => node.className === "message-author").map((node) => node.text)).toEqual(
+      expect.arrayContaining([expect.stringContaining("Read: a.ts"), expect.stringContaining("Read: b.ts")]),
     );
-    expect(groupedNodes.some((node) => node.text.includes("alpha dashboard contents"))).toBe(true);
-    expect(groupedNodes.some((node) => node.text.includes("beta dashboard contents"))).toBe(true);
+    expect(nodes.some((node) => node.text.includes("alpha dashboard contents"))).toBe(false);
+    expect(nodes.some((node) => node.text.includes("beta dashboard contents"))).toBe(false);
   });
 });
 

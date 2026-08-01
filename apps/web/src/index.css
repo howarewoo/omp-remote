@@ -1801,8 +1801,8 @@ textarea:disabled {
   background: var(--omp-tool-message);
 }
 
-.transcript-tool:has(> details),
-.transcript-system:has(> details) {
+.transcript-tool:has(> .transcript-disclosure-frame),
+.transcript-system:has(> .transcript-disclosure-frame) {
   padding: 0;
   background: transparent;
 }
@@ -1819,12 +1819,15 @@ textarea:disabled {
   line-height: 1.7;
 }
 
-:is(.system-message-disclosure, .tool-message-disclosure) > summary {
+:is(.system-message-disclosure, .tool-message-disclosure) > :is(summary, .tool-message-header) {
   display: grid;
   gap: 0.45rem;
   min-height: 2.75rem;
   color: var(--omp-gray);
   list-style: none;
+}
+
+:is(.system-message-disclosure, .tool-message-disclosure) > summary {
   cursor: pointer;
 }
 
@@ -1874,21 +1877,92 @@ textarea:disabled {
 }
 
 .system-message-disclosure[open] .message-disclosure-chevron,
-.tool-message-disclosure[open] .message-disclosure-chevron {
+.tool-message-disclosure[open] .message-disclosure-chevron,
+.skill-read-content[open] .message-disclosure-chevron {
   transform: translateY(0.08rem) rotate(225deg);
-}
-
-.grouped-read-disclosure[open] > summary,
-.grouped-read-result-disclosure[open] > summary {
-  margin-bottom: 0.45rem;
-  padding-bottom: 0.45rem;
-  border-bottom: 1px solid var(--omp-dark-gray);
 }
 
 :is(.system-message-disclosure, .tool-message-disclosure)[open]
   > :where(summary)
   > :where(.system-message-preview, .tool-message-preview) {
   display: none;
+}
+
+.skill-read-content > summary {
+  display: grid;
+  gap: 0.45rem;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.75rem;
+  color: var(--omp-gray);
+  cursor: pointer;
+  list-style: none;
+}
+
+.skill-read-content .message-author {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.skill-read-content > summary::-webkit-details-marker {
+  display: none;
+}
+
+.skill-read-content > summary:hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--omp-dark-gray) 35%, transparent);
+}
+
+.skill-read-content > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.skill-read-content[open] > summary {
+  border-bottom: 1px solid var(--omp-dark-gray);
+}
+
+.skill-read-content[open] .skill-read-preview {
+  display: none;
+}
+
+.skill-read-preview {
+  min-width: 0;
+}
+
+.skill-read-preview > .transcript-message,
+.skill-read-content > .transcript-message {
+  max-width: 100%;
+  color: var(--omp-gray);
+}
+
+.skill-read-preview > .transcript-message {
+  padding: 0;
+}
+
+.skill-read-content > .transcript-message {
+  padding: 0 0.75rem 0.75rem;
+}
+
+.skill-read-more {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--omp-dim-gray);
+}
+
+.skill-read-resolved-path {
+  min-width: 0;
+  padding: 0.5rem 0.75rem 0.75rem;
+}
+
+.skill-read-resolved-path > span {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--omp-dark-gray);
+  border-radius: 0.25rem;
+  color: var(--omp-gray);
+  overflow-wrap: anywhere;
 }
 
 :is(.system-message-disclosure, .tool-message-disclosure) > .transcript-message {
@@ -1905,11 +1979,10 @@ textarea:disabled {
   background: var(--omp-tool-message);
 }
 
-.transcript-disclosure-frame > summary {
+.transcript-disclosure-frame > :is(summary, .tool-message-header) {
   min-height: 2.75rem;
   padding: 0.5rem 0.75rem;
   list-style: none;
-  cursor: pointer;
 }
 
 .transcript-disclosure-frame > summary:hover {
@@ -1928,103 +2001,7 @@ textarea:disabled {
 
 .transcript-disclosure-frame > .transcript-message,
 .todo-tool-disclosure > .todo-phase-list {
-  padding: 0.75rem;
-}
-
-.skill-read-disclosure > summary {
-  gap: 0;
-  padding: 0;
-}
-
-.skill-read-disclosure > summary > header {
-  min-width: 0;
-  min-height: 2.75rem;
-  flex-wrap: wrap;
-  padding: 0.5rem 0.75rem;
-}
-
-.skill-read-disclosure .message-author {
-  min-width: 0;
-  flex: 1;
-  overflow-wrap: anywhere;
-}
-
-.skill-read-disclosure .message-author i,
-.skill-read-disclosure header time,
-.skill-read-disclosure .streaming-badge {
-  flex: none;
-}
-
-.skill-read-disclosure > summary:hover {
-  background: transparent;
-}
-
-.skill-read-disclosure > summary:hover > header {
-  background: color-mix(in srgb, var(--omp-dark-gray) 35%, transparent);
-}
-
-.skill-read-collapsed {
-  display: block;
-  border-top: 1px solid var(--omp-dark-gray);
-}
-
-.skill-read-preview {
-  display: block;
-  padding: 0.75rem;
-}
-
-.skill-read-preview > .transcript-message {
-  max-width: 100%;
-  color: var(--omp-gray);
-  line-height: 1.5;
-}
-
-.skill-read-preview .transcript-heading {
-  margin-top: 0.5rem;
-}
-
-.skill-read-expand {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  border-top: 1px solid var(--omp-dark-gray);
-  color: var(--omp-dim-gray);
-  font-size: 0.625rem;
-  line-height: 1.5;
-}
-
-.skill-read-expand > span:last-child {
-  color: var(--omp-cyan);
-  font-weight: 600;
-}
-
-.skill-read-output {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 0.75rem;
-  padding: 0.5rem 0.75rem;
-  border-top: 1px solid var(--omp-dark-gray);
-  color: var(--omp-dim-gray);
-  font-size: 0.625rem;
-  line-height: 1.5;
-}
-
-.skill-read-output-label {
-  color: var(--omp-gray);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-
-.skill-read-resolved-path {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.skill-read-disclosure[open] .skill-read-collapsed {
-  display: none;
+  padding: 0 0.75rem 0.75rem;
 }
 
 .tool-output-divider {
@@ -2039,60 +2016,18 @@ textarea:disabled {
   line-height: 1.4;
 }
 
+:is(.tool-message-disclosure, .skill-read-content)
+  > :is(summary, .tool-message-header)
+  > .tool-output-divider {
+  margin-inline: -0.75rem;
+}
+
 .tool-output-divider::before,
 .tool-output-divider::after {
   height: 1px;
   flex: 1;
   background: var(--omp-dark-gray);
   content: "";
-}
-
-.read-target-tree {
-  display: grid;
-  gap: 0.2rem;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.read-target-tree li {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-}
-
-.read-target-tree li > span:last-child {
-  overflow-wrap: anywhere;
-}
-
-.grouped-read-disclosure > summary {
-  padding: 0.5rem 0.75rem;
-}
-
-.grouped-read-results {
-  display: grid;
-  padding-inline: 0.25rem;
-}
-
-.grouped-read-result {
-  min-width: 0;
-  padding-block: 0.25rem;
-}
-
-.grouped-read-result + .grouped-read-result {
-  border-top: 1px solid var(--omp-dark-gray);
-}
-
-.grouped-read-result > .grouped-read-result-disclosure {
-  min-width: 0;
-}
-
-.grouped-read-result-disclosure > summary {
-  padding: 0.35rem 0.5rem;
-}
-
-.grouped-read-result-disclosure > .transcript-message {
-  padding: 0 0.5rem 0.5rem;
 }
 
 .todo-tool-summary {
@@ -3136,11 +3071,6 @@ textarea:disabled {
   .saved-directory-select,
   .saved-directory-item > .ui-button {
     min-height: 2.75rem;
-  }
-
-  .skill-read-output {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.25rem;
   }
 
   .kill-dialog-actions {

@@ -33,7 +33,7 @@ import {
   getCatalogSessionMetadataPatch,
 } from "./catalog-reconciliation.js";
 import { resolveGitBranch } from "./git-branch.js";
-import { normalizeRawMessage, normalizeSkillCommands, ReadTargetTracker } from "./message-normalizer.js";
+import { normalizeRawMessage, normalizeSkillCommands, ToolCallTracker } from "./message-normalizer.js";
 import {
   type AskInactivityTimeout,
   clearAskInactivityTimeout,
@@ -564,7 +564,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
   let sessionId: string | undefined;
   let messageSequence = 0;
   let activeMessageId: string | undefined;
-  const readTargetTracker = new ReadTargetTracker();
+  const toolCallTracker = new ToolCallTracker();
   rpc.subscribe((frame) => {
     if (!sessionId) return;
     const askEvent = normalizeRpcAskEvent(sessionId, frame);
@@ -600,7 +600,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
         parsed.data.message,
         parsed.data.type !== "message_end",
         activeMessageId ?? `rpc-message-${sessionId}-${++messageSequence}`,
-        { readTargetTracker },
+        { toolCallTracker },
       );
       if (message) registry.appendMessage(sessionId, message);
       if (parsed.data.type === "message_end") activeMessageId = undefined;
@@ -654,14 +654,14 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
     const visibleMessageStart = Math.max(0, messages.length - MAX_MESSAGES);
     for (const [index, rawMessage] of messages.entries()) {
       if (index < visibleMessageStart) {
-        readTargetTracker.observe(rawMessage);
+        toolCallTracker.observe(rawMessage);
         continue;
       }
       const message = normalizeRawMessage(
         rawMessage,
         false,
         `rpc-history-${sessionId}-${Math.max(0, index - visibleMessageStart)}`,
-        { readTargetTracker },
+        { toolCallTracker },
       );
       if (message) registry.appendMessage(sessionId, message);
     }
