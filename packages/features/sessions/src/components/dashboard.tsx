@@ -974,14 +974,18 @@ export const TranscriptText = memo(function TranscriptText({ text }: { text: str
   );
 });
 
-function getReadToolFilename(text: string, readTarget?: string): string | null {
-  const target = readTarget ?? text.match(/^\[([^\]\r\n]+)#[\dA-Fa-f]{4}\](?:\r?\n|$)/)?.[1];
+type TranscriptEntryMessage = Session["messages"][number];
+
+function getReadToolTarget(entry: TranscriptEntryMessage): string | undefined {
+  return entry.readTarget ?? entry.text.match(/^\[([^\]\r\n]+)#[\dA-Fa-f]{4}\](?:\r?\n|$)/)?.[1];
+}
+
+function getReadToolFilename(target?: string): string | null {
   if (!target) return null;
 
   const { path } = splitReadTarget(target);
   return path.slice(path.lastIndexOf("/") + 1) || null;
 }
-type TranscriptEntryMessage = Session["messages"][number];
 
 function splitReadTarget(target: string): { path: string; selector: string } {
   const lastSlash = target.lastIndexOf("/");
@@ -1163,39 +1167,42 @@ export function TodoToolTranscript({
 
 const MemoizedTodoToolTranscript = memo(TodoToolTranscript);
 
-const SKILL_READ_PREVIEW_LINES = 12;
+const READ_RESULT_PREVIEW_LINES = 12;
+const URI_LIKE_READ_TARGET_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
 
-function SkillReadTranscript({
+function ReadResultTranscript({
   entry,
   className,
+  readTarget,
 }: {
   entry: Session["messages"][number];
   className: string;
+  readTarget: string | undefined;
 }) {
   const lines = entry.text.split(/\r\n|\n|\r/);
   if (lines[lines.length - 1] === "") lines.pop();
-  const preview = lines.slice(0, SKILL_READ_PREVIEW_LINES).join("\n");
-  const hiddenLineCount = Math.max(0, lines.length - SKILL_READ_PREVIEW_LINES);
-  const authorLabel = entry.readTarget ? `Read ${entry.readTarget}` : "Read";
+  const preview = lines.slice(0, READ_RESULT_PREVIEW_LINES).join("\n");
+  const hiddenLineCount = Math.max(0, lines.length - READ_RESULT_PREVIEW_LINES);
+  const authorLabel = readTarget ? `Read ${readTarget}` : "Read";
 
   return (
-    <div className={`${className} skill-read-disclosure`}>
-      <details className="skill-read-content">
+    <div className={`${className} read-result-disclosure`}>
+      <details className="read-result-content" open={false}>
         <summary>
           <TranscriptEntryHeader entry={entry} authorLabel={authorLabel} collapsible />
           <ToolOutputDivider />
-          <div className="skill-read-preview">
+          <div className="read-result-preview">
             {renderDisclosureTranscriptText(preview)}
             {hiddenLineCount > 0 ? (
-              <span className="skill-read-more">… {hiddenLineCount} more lines</span>
+              <span className="read-result-more">… {hiddenLineCount} more lines</span>
             ) : null}
           </div>
         </summary>
         {renderDisclosureTranscriptText(entry.text)}
       </details>
       {entry.readResolvedPath ? (
-        <div className="skill-read-output">
-          <div className="skill-read-resolved-path">
+        <div className="read-result-output">
+          <div className="read-result-resolved-path">
             <span>Resolved path: {entry.readResolvedPath}</span>
           </div>
         </div>
@@ -1209,15 +1216,19 @@ export function ToolTranscriptText({ entry }: { entry: Session["messages"][numbe
   if (todo) return <MemoizedTodoToolTranscript entry={entry} todo={todo} />;
 
   const isRead = entry.toolName === "read";
-  const isSkillRead = isRead && entry.readTarget?.startsWith("skill://");
+  const readTarget = getReadToolTarget(entry);
+  const readFilename = isRead ? getReadToolFilename(readTarget) : null;
+  const isInspectableRead =
+    isRead && (readTarget ? URI_LIKE_READ_TARGET_PATTERN.test(readTarget) : readFilename === null);
   const isWrite = entry.toolName === "write";
-  const readFilename = isRead && !isSkillRead ? getReadToolFilename(entry.text, entry.readTarget) : null;
   const authorLabel =
     entry.toolTitle ??
     (readFilename ? `Read: ${readFilename}` : isRead ? "Read" : (entry.toolName ?? entry.role));
   const className = "tool-message-disclosure transcript-disclosure-frame tool-output-disclosure";
 
-  if (isSkillRead) return <SkillReadTranscript className={className} entry={entry} />;
+  if (isInspectableRead) {
+    return <ReadResultTranscript className={className} entry={entry} readTarget={readTarget} />;
+  }
 
   if (isRead) {
     return (

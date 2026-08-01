@@ -2037,7 +2037,7 @@ textarea:disabled {
 
 .system-message-disclosure[open] .message-disclosure-chevron,
 .tool-message-disclosure[open] .message-disclosure-chevron,
-.skill-read-content[open] .message-disclosure-chevron {
+.read-result-content[open] .message-disclosure-chevron {
   transform: translateY(0.08rem) rotate(225deg);
 }
 
@@ -2047,7 +2047,7 @@ textarea:disabled {
   display: none;
 }
 
-.skill-read-content > summary {
+.read-result-content > summary {
   display: grid;
   gap: 0.45rem;
   min-height: 2.75rem;
@@ -2057,54 +2057,50 @@ textarea:disabled {
   list-style: none;
 }
 
-.skill-read-content .message-author {
+.read-result-content .message-author {
   min-width: 0;
   flex: 1;
   overflow-wrap: anywhere;
 }
 
-.skill-read-content > summary::-webkit-details-marker {
+.read-result-content > summary::-webkit-details-marker {
   display: none;
 }
 
-.skill-read-content > summary:hover {
+.read-result-content > summary:hover {
   color: var(--foreground);
   background: color-mix(in srgb, var(--omp-dark-gray) 35%, transparent);
 }
 
-.skill-read-content > summary:focus-visible {
+.read-result-content > summary:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: -2px;
 }
 
-.skill-read-content[open] > summary {
-  border-bottom: 1px solid var(--omp-dark-gray);
-}
-
-.skill-read-content[open] .skill-read-preview {
+.read-result-content[open] .read-result-preview {
   display: none;
 }
 
-.skill-read-preview {
+.read-result-preview {
   min-width: 0;
 }
 
-.skill-read-content > .transcript-disclosure-text {
+.read-result-content > .transcript-disclosure-text {
   padding: 0 0.75rem 0.75rem;
 }
 
-.skill-read-more {
+.read-result-more {
   display: block;
   margin-top: 0.35rem;
   color: var(--omp-dim-gray);
 }
 
-.skill-read-resolved-path {
+.read-result-resolved-path {
   min-width: 0;
   padding: 0.5rem 0.75rem 0.75rem;
 }
 
-.skill-read-resolved-path > span {
+.read-result-resolved-path > span {
   display: inline-block;
   max-width: 100%;
   padding: 0.15rem 0.35rem;
@@ -2165,7 +2161,7 @@ textarea:disabled {
   line-height: 1.4;
 }
 
-:is(.tool-message-disclosure, .skill-read-content)
+:is(.tool-message-disclosure, .read-result-content)
   > :is(summary, .tool-message-header)
   > .tool-output-divider {
   margin-inline: -0.75rem;
