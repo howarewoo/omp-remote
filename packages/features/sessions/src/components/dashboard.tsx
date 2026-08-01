@@ -971,36 +971,6 @@ function getReadToolFilename(text: string, readTarget?: string): string | null {
 }
 type TranscriptEntryMessage = Session["messages"][number];
 
-export type TranscriptEntryGroup =
-  | { kind: "entry"; entry: TranscriptEntryMessage }
-  | { kind: "read-group"; entries: TranscriptEntryMessage[] };
-
-export function groupTranscriptEntries(entries: readonly TranscriptEntryMessage[]): TranscriptEntryGroup[] {
-  const groups: TranscriptEntryGroup[] = [];
-  let pendingReads: TranscriptEntryMessage[] = [];
-
-  const flushReads = () => {
-    if (pendingReads.length === 1) {
-      groups.push({ kind: "entry", entry: pendingReads[0] as TranscriptEntryMessage });
-    } else if (pendingReads.length > 1) {
-      groups.push({ kind: "read-group", entries: pendingReads });
-    }
-    pendingReads = [];
-  };
-
-  for (const entry of entries) {
-    if (entry.role === "tool" && entry.toolName === "read") {
-      pendingReads.push(entry);
-      continue;
-    }
-    flushReads();
-    groups.push({ kind: "entry", entry });
-  }
-  flushReads();
-
-  return groups;
-}
-
 function splitReadTarget(target: string): { path: string; selector: string } {
   const lastSlash = target.lastIndexOf("/");
   const selectorIndex = target.indexOf(":", lastSlash + 1);
@@ -1009,101 +979,14 @@ function splitReadTarget(target: string): { path: string; selector: string } {
     : { path: target.slice(0, selectorIndex), selector: target.slice(selectorIndex) };
 }
 
-function normalizeAbsolutePath(path: string): string | null {
-  if (!path.startsWith("/")) return null;
-  const segments: string[] = [];
-  for (const segment of path.split("/")) {
-    if (!segment || segment === ".") continue;
-    if (segment === "..") {
-      segments.pop();
-    } else {
-      segments.push(segment);
-    }
-  }
-  return `/${segments.join("/")}`;
-}
-
-export function formatReadTarget(target: string, cwd: string): string {
-  const { path, selector } = splitReadTarget(target);
-  const normalizedPath = normalizeAbsolutePath(path);
-  const normalizedCwd = normalizeAbsolutePath(cwd);
-  if (!normalizedPath || !normalizedCwd) return target;
-  if (normalizedPath === normalizedCwd) return `.${selector}`;
-
-  const cwdPrefix = normalizedCwd === "/" ? "/" : `${normalizedCwd}/`;
-  if (!normalizedPath.startsWith(cwdPrefix)) return target;
-  return `${normalizedPath.slice(cwdPrefix.length)}${selector}`;
-}
-
-function getReadTarget(entry: TranscriptEntryMessage): string {
-  return (
-    entry.readTarget ??
-    entry.text.match(/^\[([^\]\r\n]+)#[\dA-Fa-f]{4}\](?:\r?\n|$)/)?.[1] ??
-    "Unknown target"
-  );
-}
-
-export function GroupedReadTranscript({
-  entries,
-  cwd,
-}: {
-  entries: readonly TranscriptEntryMessage[];
-  cwd: string;
-}) {
-  const firstEntry = entries[0];
-  if (!firstEntry) return null;
-
-  return (
-    <article className="transcript-entry transcript-tool transcript-read-group">
-      <details className="tool-message-disclosure grouped-read-disclosure">
-        <summary>
-          <TranscriptEntryHeader entry={firstEntry} authorLabel={`Read (${entries.length})`} collapsible />
-          <ul className="read-target-tree" aria-label="Read targets">
-            {entries.map((entry, index) => (
-              <li key={entry.id}>
-                <span aria-hidden="true">{index === entries.length - 1 ? "└─ " : "├─ "}</span>
-                <span>{formatReadTarget(getReadTarget(entry), cwd)}</span>
-              </li>
-            ))}
-          </ul>
-        </summary>
-        <div className="grouped-read-results">
-          {entries.map((entry) => (
-            <div className="grouped-read-result" key={entry.id}>
-              <ToolTranscriptText entry={entry} groupedReadResult />
-            </div>
-          ))}
-        </div>
-      </details>
-    </article>
-  );
-}
-
-export function renderTranscriptMessageItems({
-  messages,
-  cwd,
-}: {
-  messages: readonly TranscriptEntryMessage[];
-  cwd: string;
-}) {
-  return groupTranscriptEntries(messages).map((group) => {
-    if (group.kind === "read-group") {
-      const firstEntry = group.entries[0] as TranscriptEntryMessage;
-      const groupId = `read-group:${firstEntry.id}`;
-      return (
-        <MessageScrollerItem key={groupId} messageId={groupId}>
-          <GroupedReadTranscript entries={group.entries} cwd={cwd} />
-        </MessageScrollerItem>
-      );
-    }
-
-    const { entry } = group;
-    return !entry.text && entry.role !== "tool" ? null : (
+export function renderTranscriptMessageItems({ messages }: { messages: readonly TranscriptEntryMessage[] }) {
+  return messages.map((entry) =>
+    !entry.text && entry.role !== "tool" ? null : (
       <MessageScrollerItem key={entry.id} messageId={entry.id} scrollAnchor={entry.role === "user"}>
         <TranscriptEntry entry={entry} />
       </MessageScrollerItem>
-    );
-  });
+    ),
+  );
 }
 
 function TranscriptEntryHeader({
@@ -1157,43 +1040,11 @@ function TranscriptEntryContent({ entry }: { entry: Session["messages"][number] 
   );
 }
 
-const SKILL_READ_PREVIEW_LINES = 6;
-
-function renderSkillReadTranscript(entry: TranscriptEntryMessage) {
-  const lines = entry.text ? entry.text.split(/\r\n|\n|\r/) : [];
-  if (lines[lines.length - 1] === "") lines.pop();
-  const preview = lines.slice(0, SKILL_READ_PREVIEW_LINES).join("\n");
-  const remainingLineCount = Math.max(0, lines.length - SKILL_READ_PREVIEW_LINES);
-
+function ToolOutputDivider() {
   return (
-    <details
-      className="tool-message-disclosure transcript-disclosure-frame skill-read-disclosure"
-      open={false}
-    >
-      <summary>
-        <TranscriptEntryHeader entry={entry} authorLabel={`Read ${entry.readTarget}`} collapsible />
-        <div className="skill-read-collapsed">
-          <div className="skill-read-preview">
-            <TranscriptText text={preview || "No tool output"} />
-          </div>
-          {remainingLineCount > 0 ? (
-            <div className="skill-read-expand">
-              <span>
-                {remainingLineCount} more {remainingLineCount === 1 ? "line" : "lines"}
-              </span>
-              <span>Expand</span>
-            </div>
-          ) : null}
-          {entry.readResolvedPath ? (
-            <div className="skill-read-output">
-              <span className="skill-read-output-label">Output</span>
-              <span className="skill-read-resolved-path">Resolved path: {entry.readResolvedPath}</span>
-            </div>
-          ) : null}
-        </div>
-      </summary>
-      <TranscriptEntryContent entry={entry} />
-    </details>
+    <div className="tool-output-divider">
+      <span>Output</span>
+    </div>
   );
 }
 
@@ -1224,6 +1075,7 @@ export function TodoToolTranscript({
     <details className="tool-message-disclosure transcript-disclosure-frame todo-tool-disclosure">
       <summary>
         <TranscriptEntryHeader entry={entry} collapsible />
+        <ToolOutputDivider />
         <div className="todo-tool-summary">
           <div className="todo-progress-copy">
             <strong>
@@ -1295,48 +1147,80 @@ export function TodoToolTranscript({
 
 const MemoizedTodoToolTranscript = memo(TodoToolTranscript);
 
-export function ToolTranscriptText({
+const SKILL_READ_PREVIEW_LINES = 12;
+
+function SkillReadTranscript({
   entry,
-  groupedReadResult = false,
+  className,
 }: {
   entry: Session["messages"][number];
-  groupedReadResult?: boolean;
+  className: string;
 }) {
-  if (!groupedReadResult && entry.toolName === "read" && entry.readTarget?.startsWith("skill://")) {
-    return renderSkillReadTranscript(entry);
-  }
+  const lines = entry.text.split(/\r\n|\n|\r/);
+  if (lines[lines.length - 1] === "") lines.pop();
+  const preview = lines.slice(0, SKILL_READ_PREVIEW_LINES).join("\n");
+  const hiddenLineCount = Math.max(0, lines.length - SKILL_READ_PREVIEW_LINES);
+  const authorLabel = entry.readTarget ? `Read ${entry.readTarget}` : "Read";
 
+  return (
+    <div className={`${className} skill-read-disclosure`}>
+      <details className="skill-read-content">
+        <summary>
+          <TranscriptEntryHeader entry={entry} authorLabel={authorLabel} collapsible />
+          <ToolOutputDivider />
+          <div className="skill-read-preview">
+            <TranscriptText text={preview} />
+            {hiddenLineCount > 0 ? (
+              <span className="skill-read-more">… {hiddenLineCount} more lines</span>
+            ) : null}
+          </div>
+        </summary>
+        <TranscriptEntryContent entry={entry} />
+      </details>
+      {entry.readResolvedPath ? (
+        <div className="skill-read-output">
+          <div className="skill-read-resolved-path">
+            <span>Resolved path: {entry.readResolvedPath}</span>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function ToolTranscriptText({ entry }: { entry: Session["messages"][number] }) {
   const todo = entry.toolName === "todo" ? parseTodoResult(entry.text) : null;
   if (todo) return <MemoizedTodoToolTranscript entry={entry} todo={todo} />;
 
-  const readFilename = entry.toolName === "read" ? getReadToolFilename(entry.text, entry.readTarget) : null;
+  const isRead = entry.toolName === "read";
+  const isSkillRead = isRead && entry.readTarget?.startsWith("skill://");
   const isWrite = entry.toolName === "write";
+  const readFilename = isRead && !isSkillRead ? getReadToolFilename(entry.text, entry.readTarget) : null;
+  const authorLabel =
+    entry.toolTitle ??
+    (readFilename ? `Read: ${readFilename}` : isRead ? "Read" : (entry.toolName ?? entry.role));
+  const className = "tool-message-disclosure transcript-disclosure-frame tool-output-disclosure";
+
+  if (isSkillRead) return <SkillReadTranscript className={className} entry={entry} />;
+
+  if (isRead) {
+    return (
+      <div className={className}>
+        <div className="tool-message-header">
+          <TranscriptEntryHeader entry={entry} authorLabel={authorLabel} />
+        </div>
+        <ToolOutputDivider />
+      </div>
+    );
+  }
 
   return (
-    <details
-      className={cn(
-        "tool-message-disclosure",
-        groupedReadResult
-          ? "grouped-read-result-disclosure"
-          : "transcript-disclosure-frame tool-output-disclosure",
-      )}
-      open={entry.toolName === "edit" || isWrite}
-    >
+    <details className={className} open={entry.toolName === "edit" || isWrite}>
       <summary>
-        <TranscriptEntryHeader
-          entry={entry}
-          authorLabel={readFilename ? `read ${readFilename}` : (entry.toolName ?? entry.role)}
-          collapsible
-        />
-        {readFilename || isWrite ? null : (
-          <pre className="tool-message-preview">{formatToolTextPreview(entry.text)}</pre>
-        )}
+        <TranscriptEntryHeader entry={entry} authorLabel={authorLabel} collapsible />
+        <ToolOutputDivider />
+        {isWrite ? null : <pre className="tool-message-preview">{formatToolTextPreview(entry.text)}</pre>}
       </summary>
-      {groupedReadResult ? null : (
-        <div className="tool-output-divider">
-          <span>Output</span>
-        </div>
-      )}
       <TranscriptEntryContent entry={entry} />
     </details>
   );
@@ -2346,7 +2230,6 @@ function DashboardContent({
                     ) : (
                       renderTranscriptMessageItems({
                         messages: selectedSession.messages,
-                        cwd: selectedSession.cwd,
                       })
                     )}
                     {activeAskRequest ? (
@@ -2615,7 +2498,6 @@ function DashboardContent({
         {viewedSubagentSession?.messages.length ? (
           renderTranscriptMessageItems({
             messages: viewedSubagentSession.messages,
-            cwd: viewedSubagentSession.cwd,
           })
         ) : (
           <MessageScrollerItem

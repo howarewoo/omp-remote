@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeRawMessage, normalizeSkillCommands, ReadTargetTracker } from "./message-normalizer.js";
+import { normalizeRawMessage, normalizeSkillCommands, ToolCallTracker } from "./message-normalizer.js";
 
 const SNAPSHOT_CONTENT = [{ type: "text", text: "*** Begin Patch\n*** End Patch" }];
 const CANONICAL_DIFF = "-1|before\n+1|after";
@@ -232,7 +232,7 @@ describe("normalizeRawMessage", () => {
   it.each([":1-180", ":raw", ":5-16,960-973"])(
     "correlates a read call so its requested %s selector survives result normalization",
     (selector) => {
-      const readTargetTracker = new ReadTargetTracker();
+      const toolCallTracker = new ToolCallTracker();
       expect(
         normalizeRawMessage(
           {
@@ -249,7 +249,7 @@ describe("normalizeRawMessage", () => {
           },
           false,
           "assistant-fallback",
-          { readTargetTracker },
+          { toolCallTracker },
         ),
       ).toBeNull();
 
@@ -265,11 +265,43 @@ describe("normalizeRawMessage", () => {
           },
           false,
           "result-fallback",
-          { readTargetTracker },
+          { toolCallTracker },
         ),
       ).toMatchObject({ readTarget: `/work/omp-remote/src/index.ts${selector}` });
     },
   );
+
+  it("preserves the resolved SKILL.md path from Read source metadata", () => {
+    const toolCallTracker = new ToolCallTracker();
+    toolCallTracker.capture([
+      {
+        type: "toolCall",
+        toolCallId: "skill-read-call",
+        name: "read",
+        arguments: { path: "skill://using-woostack" },
+      },
+    ]);
+
+    expect(
+      normalizeRawMessage(
+        {
+          role: "toolResult",
+          toolCallId: "skill-read-call",
+          toolName: "read",
+          content: "# Using woostack",
+          details: {
+            meta: { source: { value: "/Users/example/.agents/skills/using-woostack/SKILL.md" } },
+          },
+        },
+        false,
+        "skill-read-result",
+        { toolCallTracker },
+      ),
+    ).toMatchObject({
+      readTarget: "skill://using-woostack",
+      readResolvedPath: "/Users/example/.agents/skills/using-woostack/SKILL.md",
+    });
+  });
 
   it("retains selectors through streaming results and consumes them on the final result", () => {
     const call = {
@@ -290,27 +322,163 @@ describe("normalizeRawMessage", () => {
       content: "file contents",
       details: { meta: { source: { value: "/work/omp-remote/src/index.ts" } } },
     };
-    const readTargetTracker = new ReadTargetTracker();
-    readTargetTracker.observe(call);
+    const toolCallTracker = new ToolCallTracker();
+    toolCallTracker.observe(call);
 
-    expect(normalizeRawMessage(result, true, "streaming-result", { readTargetTracker })).toMatchObject({
+    expect(normalizeRawMessage(result, true, "streaming-result", { toolCallTracker })).toMatchObject({
       readTarget: "/work/omp-remote/src/index.ts:1-180",
     });
-    expect(normalizeRawMessage(result, false, "final-result", { readTargetTracker })).toMatchObject({
+    expect(normalizeRawMessage(result, false, "final-result", { toolCallTracker })).toMatchObject({
       readTarget: "/work/omp-remote/src/index.ts:1-180",
     });
-    expect(normalizeRawMessage(result, false, "reused-result", { readTargetTracker })).toMatchObject({
+    expect(normalizeRawMessage(result, false, "reused-result", { toolCallTracker })).toMatchObject({
       readTarget: "/work/omp-remote/src/index.ts",
     });
 
-    const preWindowTracker = new ReadTargetTracker();
+    const preWindowTracker = new ToolCallTracker();
     preWindowTracker.observe(call);
     preWindowTracker.observe(result);
     expect(
       normalizeRawMessage(result, false, "pre-window-reused-result", {
-        readTargetTracker: preWindowTracker,
+        toolCallTracker: preWindowTracker,
       }),
     ).toMatchObject({ readTarget: "/work/omp-remote/src/index.ts" });
+  });
+
+  it.each([
+    {
+      toolName: "bash",
+      arguments: { command: "pnpm --filter sessions test\n&& pnpm lint" },
+      details: {},
+      content: "command output",
+      expected: "Bash: pnpm --filter sessions test && pnpm lint",
+    },
+    {
+      toolName: "edit",
+      arguments: {
+        input:
+          "[.woostack/worktrees/revalidate-tri-245-defc/packages/infrastructure/ai/scripts/spikeChatgptMobileCapture.ts#ABCD]\nPUT >1:\n+const ready = true;",
+      },
+      details: {
+        path: "/work/packages/infrastructure/ai/scripts/spikeChatgptMobileCapture.ts",
+        diff: "+1|const ready = true;",
+      },
+      content: "*** Begin Patch\n*** End Patch",
+      expected:
+        "Edit: 🟦 .woostack/worktrees/revalidate-tri-245-defc/packages/infrastructure/ai/scripts/spikeChatgptMobileCapture.ts ⟦+1⟧",
+    },
+    {
+      toolName: "grep",
+      arguments: {
+        pattern: 'type: "toolCall"|toolCallId|arguments: \\{ path|name: "bash"|name: "edit"',
+        path: "apps;packages",
+      },
+      details: { matchCount: 24, fileCount: 3, scopePath: "ignored" },
+      content: "matches",
+      expected:
+        'Grep: type: "toolCall"|toolCallId|arguments: \\{ path|name: "bash"|name: "edit" 24 matches · 3 files · in apps, packages',
+    },
+    {
+      toolName: "hub",
+      arguments: { op: "send", to: "SessionDiffCoder", message: "Please finish now." },
+      details: {
+        op: "send",
+        to: "SessionDiffCoder",
+        receipts: [{ to: "SessionDiffCoder", outcome: "injected" }],
+      },
+      content: "Delivered to SessionDiffCoder",
+      expected: "IRC ➤ SessionDiffCoder injected",
+    },
+  ])("formats $toolName disclosure metadata from its call and result", (fixture) => {
+    const toolCallTracker = new ToolCallTracker();
+    const toolCallId = `${fixture.toolName}-call`;
+    normalizeRawMessage(
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            toolCallId,
+            name: fixture.toolName,
+            arguments: fixture.arguments,
+          },
+        ],
+      },
+      false,
+      `${fixture.toolName}-assistant`,
+      { toolCallTracker },
+    );
+
+    expect(
+      normalizeRawMessage(
+        {
+          role: "toolResult",
+          toolCallId,
+          toolName: fixture.toolName,
+          content: fixture.content,
+          details: fixture.details,
+          isError: false,
+        },
+        false,
+        `${fixture.toolName}-result`,
+        { toolCallTracker },
+      ),
+    ).toMatchObject({ toolTitle: fixture.expected });
+  });
+
+  it("formats a received IRC message in the Hub disclosure header", () => {
+    expect(
+      normalizeRawMessage(
+        {
+          role: "toolResult",
+          toolName: "hub",
+          content: "[message-id] SessionDiffCoder: Review complete.",
+          details: {
+            op: "wait",
+            from: "Main",
+            waited: {
+              from: "SessionDiffCoder",
+              to: "Main",
+              body: "Review complete.",
+            },
+          },
+          isError: false,
+        },
+        false,
+        "hub-wait-result",
+      ),
+    ).toMatchObject({ toolTitle: "✉ IRC ⟵ SessionDiffCoder" });
+  });
+  it("keeps applied Edit counts when a later file fails", () => {
+    const toolCallTracker = new ToolCallTracker();
+    toolCallTracker.capture([
+      {
+        type: "toolCall",
+        toolCallId: "partial-edit-call",
+        name: "edit",
+        arguments: { input: "[src/a.ts#ABCD]\nPUT >1:\n+const ready = true;" },
+      },
+    ]);
+
+    expect(
+      normalizeRawMessage(
+        {
+          role: "toolResult",
+          toolCallId: "partial-edit-call",
+          toolName: "edit",
+          content: "src/b.ts had a stale snapshot tag",
+          details: { diff: "+1|const ready = true;" },
+          isError: true,
+        },
+        false,
+        "partial-edit-result",
+        { toolCallTracker },
+      ),
+    ).toMatchObject({
+      text: "src/b.ts had a stale snapshot tag",
+      presentation: "text",
+      toolTitle: "Edit: 🟦 src/a.ts ⟦+1⟧",
+    });
   });
 
   it.each([

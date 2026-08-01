@@ -211,6 +211,7 @@ describe("TranscriptMessageSchema", () => {
         streaming: false,
         presentation: "diff",
         toolName: "edit",
+        toolTitle: "Edit: 🟦 src/dashboard.tsx ⟦+1⟧ ⟦−1⟧",
       }),
     ).toEqual({
       id: "edit-result-1",
@@ -220,6 +221,7 @@ describe("TranscriptMessageSchema", () => {
       streaming: false,
       presentation: "diff",
       toolName: "edit",
+      toolTitle: "Edit: 🟦 src/dashboard.tsx ⟦+1⟧ ⟦−1⟧",
     });
   });
 
