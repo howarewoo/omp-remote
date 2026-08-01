@@ -89,13 +89,13 @@ export function SubagentSessionViewer({
           defaultScrollPosition="end"
           scrollEdgeThreshold={80}
         >
-          <MessageScroller className="transcript-region">
+          <MessageScroller className="transcript-region subagent-session-transcript-region">
             <MessageScrollerViewport
-              className="subagent-session-transcript transcript"
+              className="transcript"
               aria-label={`${displayedSubagent.name} transcript`}
             >
               <MessageScrollerContent
-                className="transcript-messages subagent-session-messages"
+                className="transcript-messages"
                 role="log"
                 aria-live="polite"
                 aria-busy={session?.messages.at(-1)?.streaming === true}
