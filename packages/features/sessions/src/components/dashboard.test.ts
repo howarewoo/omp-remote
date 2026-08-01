@@ -70,6 +70,7 @@ import {
   formatSystemTextPreview,
   formatToolTextPreview,
   getActiveAskRequest,
+  findLatestTodoResult,
   getComposerAction,
   getSkillSuggestions,
   groupSessionsForSidebar,
@@ -337,6 +338,88 @@ describe("parseTodoResult", () => {
         ].join("\n"),
       ),
     ).toBeNull();
+  });
+});
+
+describe("findLatestTodoResult", () => {
+  it("keeps the latest completed canonical result through malformed and streaming tails", () => {
+    const latestText = TODO_RESULT_TEXT.replaceAll(
+      "Build custom todo tool interface",
+      "Verify current Todo tracker",
+    );
+    const messages: Session["messages"] = [
+      {
+        id: "todo-older",
+        role: "tool",
+        toolName: "todo",
+        text: TODO_RESULT_TEXT,
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+      {
+        id: "todo-latest",
+        role: "tool",
+        toolName: "todo",
+        text: latestText,
+        timestamp: "2026-07-29T12:00:01.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+      {
+        id: "todo-malformed",
+        role: "tool",
+        toolName: "todo",
+        text: "Overall: almost done.\nArbitrary output",
+        timestamp: "2026-07-29T12:00:02.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+      {
+        id: "todo-streaming",
+        role: "tool",
+        toolName: "todo",
+        text: TODO_RESULT_TEXT,
+        timestamp: "2026-07-29T12:00:03.000Z",
+        streaming: true,
+        presentation: "text",
+      },
+    ];
+
+    expect(findLatestTodoResult(messages)?.phases[1]?.tasks[0]?.label).toBe("Verify current Todo tracker");
+  });
+
+  it("ignores parseable Todo output from a non-tool role", () => {
+    const latestToolText = TODO_RESULT_TEXT.replaceAll(
+      "Build custom todo tool interface",
+      "Use the latest tool-role Todo",
+    );
+    const spoofedAssistantText = TODO_RESULT_TEXT.replaceAll(
+      "Build custom todo tool interface",
+      "Ignore this assistant-role Todo",
+    );
+    const messages: Session["messages"] = [
+      {
+        id: "todo-tool",
+        role: "tool",
+        toolName: "todo",
+        text: latestToolText,
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+      {
+        id: "todo-assistant",
+        role: "assistant",
+        toolName: "todo",
+        text: spoofedAssistantText,
+        timestamp: "2026-07-29T12:00:01.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    ];
+
+    expect(findLatestTodoResult(messages)?.phases[1]?.tasks[0]?.label).toBe("Use the latest tool-role Todo");
   });
 });
 
@@ -727,7 +810,12 @@ describe("ToolTranscriptText", () => {
       nodes.findIndex((node) => node.className === "todo-tool-summary"),
     );
     expect(nodes.filter((node) => node.type === "ul")).toHaveLength(3);
-    const progress = disclosure.props.children[0].props.children[2].props.children[1];
+    const summaryElement = disclosure.props.children[0].props.children[2];
+    const summary = (summaryElement.type as (props: typeof summaryElement.props) => ReactElement)(
+      summaryElement.props,
+    );
+    const progress = findElements(summary, (element) => element.type === "progress")[0];
+    if (!progress) throw new Error("Expected Todo progress element");
     expect({
       type: progress.type,
       value: progress.props.value,
@@ -787,8 +875,12 @@ describe("ToolTranscriptText", () => {
     });
     const droppedNodes = renderTranscriptNodes(droppedDisclosure);
     expect(droppedNodes.find((node) => node.className === "todo-active-task")?.text).toBe("No tasks remain");
+    const droppedSummaryElement = droppedDisclosure.props.children[0].props.children[2];
+    const droppedSummary = (
+      droppedSummaryElement.type as (props: typeof droppedSummaryElement.props) => ReactElement
+    )(droppedSummaryElement.props);
     expect(
-      droppedDisclosure.props.children[0].props.children[2].props.children[2].props.children[0].props[
+      findElements(droppedSummary, (element) => element.props.className === "todo-state-marker")[0]?.props[
         "data-state"
       ],
     ).toBe("dropped");
@@ -812,8 +904,12 @@ describe("ToolTranscriptText", () => {
     expect(completedNodes.find((node) => node.className === "todo-active-task")?.text).toBe(
       "All tasks complete",
     );
+    const completedSummaryElement = completedDisclosure.props.children[0].props.children[2];
+    const completedSummary = (
+      completedSummaryElement.type as (props: typeof completedSummaryElement.props) => ReactElement
+    )(completedSummaryElement.props);
     expect(
-      completedDisclosure.props.children[0].props.children[2].props.children[2].props.children[0].props[
+      findElements(completedSummary, (element) => element.props.className === "todo-state-marker")[0]?.props[
         "data-state"
       ],
     ).toBe("completed");
@@ -1409,6 +1505,214 @@ describe("dashboard Read transcript", () => {
     );
     expect(nodes.some((node) => node.text.includes("alpha dashboard contents"))).toBe(false);
     expect(nodes.some((node) => node.text.includes("beta dashboard contents"))).toBe(false);
+  });
+});
+
+describe("dashboard current Todo tracker", () => {
+  const latestTodoText = TODO_RESULT_TEXT.replaceAll(
+    "Build custom todo tool interface",
+    "Verify current Todo tracker",
+  );
+  const messages: Session["messages"] = [
+    {
+      id: "todo-first",
+      role: "tool",
+      toolName: "todo",
+      text: TODO_RESULT_TEXT,
+      timestamp: "2026-07-29T12:00:00.000Z",
+      streaming: false,
+      presentation: "text",
+    },
+    {
+      id: "assistant-between",
+      role: "assistant",
+      text: "Continuing with verification.",
+      timestamp: "2026-07-29T12:00:01.000Z",
+      streaming: false,
+      presentation: "text",
+    },
+    {
+      id: "todo-latest",
+      role: "tool",
+      toolName: "todo",
+      text: latestTodoText,
+      timestamp: "2026-07-29T12:00:02.000Z",
+      streaming: false,
+      presentation: "text",
+    },
+    {
+      id: "todo-malformed-tail",
+      role: "tool",
+      toolName: "todo",
+      text: "Overall: almost done.\nArbitrary output",
+      timestamp: "2026-07-29T12:00:03.000Z",
+      streaming: false,
+      presentation: "text",
+    },
+    {
+      id: "todo-streaming-tail",
+      role: "tool",
+      toolName: "todo",
+      text: TODO_RESULT_TEXT,
+      timestamp: "2026-07-29T12:00:04.000Z",
+      streaming: true,
+      presentation: "text",
+    },
+  ];
+
+  function findTodoDrawer(output: ReactNode) {
+    return findElements(
+      output,
+      (element) =>
+        element.props.showSwipeHandle === true &&
+        textContent(element.props.children as ReactNode).includes("Current Todo"),
+    )[0];
+  }
+
+  function openTodoDrawer(output: ReactNode) {
+    const tracker = findElements(output, (element) => element.props.className === "todo-tracker-trigger")[0];
+    (tracker?.props.onClick as (() => void) | undefined)?.();
+  }
+
+  it("shows the latest canonical result while preserving transcript chronology", () => {
+    const output = renderControlledDashboard(composerDashboardProps({ ...BASE_SESSION, messages }));
+    const tracker = findElements(output, (element) => element.props.className === "todo-tracker-trigger")[0];
+    const progress = findElements(tracker, (element) => element.type === "progress")[0];
+    const transcript = findElements(output, (element) => element.props.className === "transcript")[0];
+    const rows = findElements(transcript, (element) => element.type === MessageScrollerItem);
+
+    expect(tracker?.props["aria-label"]).toBe(
+      "Open current Todo: 2 of 4 tasks complete. In progress: Verify current Todo tracker.",
+    );
+    expect(textContent(tracker?.props.children as ReactNode)).toContain("2/4");
+    expect(textContent(tracker?.props.children as ReactNode)).toContain("Verify current Todo tracker");
+    expect(progress?.props).toMatchObject({
+      "aria-label": "Current Todo progress: 2 of 4 tasks complete",
+      max: 4,
+      value: 2,
+    });
+    expect(rows.map((row) => row.props.messageId)).toEqual([
+      "todo-first",
+      "assistant-between",
+      "todo-latest",
+      "todo-malformed-tail",
+      "todo-streaming-tail",
+    ]);
+  });
+
+  it("opens the full latest Todo in a swipe-handled drawer", () => {
+    const props = composerDashboardProps({ ...BASE_SESSION, messages });
+    let output = renderControlledDashboard(props);
+    openTodoDrawer(output);
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+
+    const drawer = findTodoDrawer(output);
+    const drawerText = findElements(drawer, (element) => element.props.todo !== undefined)
+      .flatMap((element) => renderTranscriptNodes(element))
+      .map((node) => node.text)
+      .join(" ");
+
+    expect(drawer?.props.open).toBe(true);
+    expect(drawerText).toContain("Verify current Todo tracker");
+    expect(drawerText).toContain("Locate todo rendering and UI conventions");
+    expect(
+      findElements(drawer, (element) => {
+        const render = element.props.render;
+        return (
+          isValidElement(render) &&
+          (render as ReactElement<Record<string, unknown>>).props["aria-label"] === "Close current Todo"
+        );
+      }),
+    ).toHaveLength(1);
+  });
+
+  it("closes an open Todo drawer when the selected session changes", () => {
+    const firstSession = { ...BASE_SESSION, messages };
+    const secondSession: Session = {
+      ...BASE_SESSION,
+      id: "session-2",
+      name: "Second session",
+      messages,
+    };
+    let props = {
+      ...composerDashboardProps(firstSession),
+      sessions: [firstSession, secondSession],
+    };
+    let output = renderControlledDashboard(props);
+
+    openTodoDrawer(output);
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    expect(findTodoDrawer(output)?.props.open).toBe(true);
+
+    props = { ...props, selectedSessionId: secondSession.id };
+    output = renderControlledDashboard(props, { preserveState: true });
+
+    expect(findTodoDrawer(output)?.props.open).toBe(false);
+  });
+
+  it("keeps an open Todo drawer updated for a newer valid result in the same session", () => {
+    const session = { ...BASE_SESSION, messages };
+    let props = composerDashboardProps(session);
+    let output = renderControlledDashboard(props);
+
+    openTodoDrawer(output);
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    expect(findTodoDrawer(output)?.props.open).toBe(true);
+
+    const newerText = latestTodoText.replaceAll("Verify current Todo tracker", "Show the newer Todo result");
+    props = composerDashboardProps({
+      ...session,
+      messages: [
+        ...messages,
+        {
+          id: "todo-newer",
+          role: "tool",
+          toolName: "todo",
+          text: newerText,
+          timestamp: "2026-07-29T12:00:05.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      ],
+    });
+    output = renderControlledDashboard(props, { preserveState: true });
+    const drawer = findTodoDrawer(output);
+    const drawerText = findElements(drawer, (element) => element.props.todo !== undefined)
+      .flatMap((element) => renderTranscriptNodes(element))
+      .map((node) => node.text)
+      .join(" ");
+
+    expect(drawer?.props.open).toBe(true);
+    expect(drawerText).toContain("Show the newer Todo result");
+  });
+
+  it("clears latent open state when the current Todo disappears", () => {
+    const session = { ...BASE_SESSION, messages };
+    let props = composerDashboardProps(session);
+    let output = renderControlledDashboard(props);
+
+    openTodoDrawer(output);
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    expect(findTodoDrawer(output)?.props.open).toBe(true);
+
+    props = composerDashboardProps({ ...session, messages: [] });
+    output = renderControlledDashboard(props, { preserveState: true });
+    expect(findTodoDrawer(output)?.props.open).toBe(false);
+
+    props = composerDashboardProps(session);
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    expect(findTodoDrawer(output)?.props.open).toBe(false);
+  });
+
+  it("omits the tracker when the selected session has no canonical Todo", () => {
+    const output = renderControlledDashboard(composerDashboardProps());
+
+    expect(
+      findElements(output, (element) => element.props.className === "todo-tracker-trigger"),
+    ).toHaveLength(0);
+    expect(
+      findElements(output, (element) => element.type === "dt").map((element) => textContent(element)),
+    ).toEqual(["Model", "Effort", "Context", "Changes", "Updated"]);
   });
 });
 

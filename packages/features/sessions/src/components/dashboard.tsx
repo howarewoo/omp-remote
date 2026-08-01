@@ -987,6 +987,16 @@ function getReadToolFilename(target?: string): string | null {
   return path.slice(path.lastIndexOf("/") + 1) || null;
 }
 
+export function findLatestTodoResult(messages: readonly TranscriptEntryMessage[]): TodoResult | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const entry = messages[index];
+    if (!entry || entry.role !== "tool" || entry.toolName !== "todo" || entry.streaming) continue;
+    const todo = parseTodoResult(entry.text);
+    if (todo) return todo;
+  }
+  return null;
+}
+
 function splitReadTarget(target: string): { path: string; selector: string } {
   const lastSlash = target.lastIndexOf("/");
   const selectorIndex = target.indexOf(":", lastSlash + 1);
@@ -1068,13 +1078,16 @@ function ToolOutputDivider() {
   );
 }
 
-export function TodoToolTranscript({
-  entry,
-  todo,
-}: {
-  entry: Session["messages"][number];
-  todo: TodoResult;
-}) {
+type TodoPresentation = {
+  activeTask?: TodoTask;
+  activeLabel: string;
+  activeState: TodoTaskState;
+  blocked: number;
+  open: number;
+  progressVerb: "complete" | "resolved";
+};
+
+function getTodoPresentation(todo: TodoResult): TodoPresentation {
   const activePhase = todo.activePhase ? todo.phases[todo.activePhase.index - 1] : undefined;
   let activeTask = activePhase?.tasks.find((task) => task.state === "in-progress");
   if (!activeTask) {
@@ -1084,83 +1097,118 @@ export function TodoToolTranscript({
     }
   }
   activeTask ??= activePhase?.tasks.find((task) => task.state === "blocked" || task.state === "pending");
+
   const blocked = todo.overall.blocked ?? 0;
   const open = todo.overall.open ?? todo.overall.total - todo.overall.done - blocked;
   const hasDroppedTasks = todo.phases.some((phase) => phase.tasks.some((task) => task.state === "dropped"));
-  const terminalLabel = hasDroppedTasks ? "No tasks remain" : "All tasks complete";
   const terminalState: TodoTaskState = hasDroppedTasks ? "dropped" : "completed";
-  const progressVerb = hasDroppedTasks ? "resolved" : "complete";
 
+  return {
+    ...(activeTask ? { activeTask } : {}),
+    activeLabel:
+      activeTask?.label ??
+      (todo.overall.done === todo.overall.total
+        ? hasDroppedTasks
+          ? "No tasks remain"
+          : "All tasks complete"
+        : `${open} tasks open`),
+    activeState: activeTask?.state ?? (todo.overall.done === todo.overall.total ? terminalState : "pending"),
+    blocked,
+    open,
+    progressVerb: hasDroppedTasks ? "resolved" : "complete",
+  };
+}
+
+function getTodoTrackerLabel(todo: TodoResult): string {
+  const { activeLabel, activeTask, progressVerb } = getTodoPresentation(todo);
+  const context = activeTask ? `${TODO_STATE_LABEL[activeTask.state]}: ${activeLabel}` : activeLabel;
+  return `Open current Todo: ${todo.overall.done} of ${todo.overall.total} tasks ${progressVerb}. ${context}.`;
+}
+
+function TodoProgressSummary({ todo }: { todo: TodoResult }) {
+  const { activeLabel, activeState, activeTask, blocked, open, progressVerb } = getTodoPresentation(todo);
+
+  return (
+    <div className="todo-tool-summary">
+      <div className="todo-progress-copy">
+        <strong>
+          {todo.overall.done}/{todo.overall.total} {progressVerb}
+        </strong>
+        <span className="todo-progress-counts">
+          <span>{open} open</span>
+          {blocked > 0 ? <span className="todo-blocked-count">{blocked} blocked</span> : null}
+        </span>
+      </div>
+      <progress
+        aria-label={`Overall todo progress: ${todo.overall.done} of ${
+          todo.overall.total
+        } tasks ${progressVerb}`}
+        max={todo.overall.total}
+        value={todo.overall.done}
+      />
+      <div className="todo-active-task">
+        <span aria-hidden="true" className="todo-state-marker" data-state={activeState} />
+        <span>
+          <span className="sr-only">{activeTask ? `${TODO_STATE_LABEL[activeTask.state]}: ` : ""}</span>
+          {activeLabel}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function TodoPhaseList({ todo }: { todo: TodoResult }) {
+  return (
+    <div className="todo-phase-list">
+      {todo.phases.map((phase, phaseIndex) => (
+        <section className="todo-phase" key={`${phaseIndex}:${phase.name}`}>
+          <header>
+            <h3>{phase.name}</h3>
+            <Badge className={`todo-state-badge todo-state-${phase.state}`}>
+              {TODO_STATE_LABEL[phase.state]}
+            </Badge>
+          </header>
+          <ul>
+            {phase.tasks.map((task, taskIndex) => (
+              <li key={`${taskIndex}:${task.label}`}>
+                <span aria-hidden="true" className="todo-state-marker" data-state={task.state} />
+                <span className="todo-task-label">
+                  <span className="sr-only">{TODO_STATE_LABEL[task.state]}: </span>
+                  {task.label}
+                  {task.reason ? (
+                    <span className="todo-task-reason">
+                      <span className="sr-only">Blocked reason: </span>
+                      {task.reason}
+                    </span>
+                  ) : null}
+                </span>
+                <Badge aria-hidden="true" className={`todo-state-badge todo-state-${task.state}`}>
+                  {TODO_STATE_LABEL[task.state]}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+export function TodoToolTranscript({
+  entry,
+  todo,
+}: {
+  entry: Session["messages"][number];
+  todo: TodoResult;
+}) {
   return (
     <details className="tool-message-disclosure transcript-disclosure-frame todo-tool-disclosure">
       <summary>
         <TranscriptEntryHeader entry={entry} collapsible />
         <ToolOutputDivider />
-        <div className="todo-tool-summary">
-          <div className="todo-progress-copy">
-            <strong>
-              {todo.overall.done}/{todo.overall.total} {progressVerb}
-            </strong>
-            <span className="todo-progress-counts">
-              <span>{open} open</span>
-              {blocked > 0 ? <span className="todo-blocked-count">{blocked} blocked</span> : null}
-            </span>
-          </div>
-          <progress
-            aria-label={`Overall todo progress: ${todo.overall.done} of ${
-              todo.overall.total
-            } tasks ${progressVerb}`}
-            max={todo.overall.total}
-            value={todo.overall.done}
-          />
-          <div className="todo-active-task">
-            <span
-              aria-hidden="true"
-              className="todo-state-marker"
-              data-state={
-                activeTask?.state ?? (todo.overall.done === todo.overall.total ? terminalState : "pending")
-              }
-            />
-            <span>
-              <span className="sr-only">{activeTask ? `${TODO_STATE_LABEL[activeTask.state]}: ` : ""}</span>
-              {activeTask?.label ??
-                (todo.overall.done === todo.overall.total ? terminalLabel : `${open} tasks open`)}
-            </span>
-          </div>
-        </div>
+        <TodoProgressSummary todo={todo} />
       </summary>
-      <div className="todo-phase-list">
-        {todo.phases.map((phase, phaseIndex) => (
-          <section className="todo-phase" key={`${phaseIndex}:${phase.name}`}>
-            <header>
-              <h3>{phase.name}</h3>
-              <Badge className={`todo-state-badge todo-state-${phase.state}`}>
-                {TODO_STATE_LABEL[phase.state]}
-              </Badge>
-            </header>
-            <ul>
-              {phase.tasks.map((task, taskIndex) => (
-                <li key={`${taskIndex}:${task.label}`}>
-                  <span aria-hidden="true" className="todo-state-marker" data-state={task.state} />
-                  <span className="todo-task-label">
-                    <span className="sr-only">{TODO_STATE_LABEL[task.state]}: </span>
-                    {task.label}
-                    {task.reason ? (
-                      <span className="todo-task-reason">
-                        <span className="sr-only">Blocked reason: </span>
-                        {task.reason}
-                      </span>
-                    ) : null}
-                  </span>
-                  <Badge aria-hidden="true" className={`todo-state-badge todo-state-${task.state}`}>
-                    {TODO_STATE_LABEL[task.state]}
-                  </Badge>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
-      </div>
+      <TodoPhaseList todo={todo} />
     </details>
   );
 }
@@ -1692,6 +1740,7 @@ function DashboardContent({
   const [savedDirectoryError, setSavedDirectoryError] = useState<string | null>(null);
   const [abortOpen, setAbortOpen] = useState(false);
   const [killOpen, setKillOpen] = useState(false);
+  const [todoOpenSessionId, setTodoOpenSessionId] = useState<string | null>(null);
   const [configurationDrawer, setConfigurationDrawer] = useState<"model" | "effort" | null>(null);
   const [modelQuery, setModelQuery] = useState("");
   const [configurationPending, setConfigurationPending] = useState<string | null>(null);
@@ -1750,6 +1799,11 @@ function DashboardContent({
     [onLoadWorkingTreeDiff],
   );
   const activeAskRequest = getActiveAskRequest(askRequests, selectedSession?.id ?? null);
+  const currentTodo = useMemo(
+    () => (selectedSession ? findLatestTodoResult(selectedSession.messages) : null),
+    [selectedSession?.messages],
+  );
+  const currentTodoPresentation = currentTodo ? getTodoPresentation(currentTodo) : null;
   const composerAction = selectedSession ? getComposerAction(selectedSession, message) : null;
   const skillSuggestions = useMemo(
     () => getSkillSuggestions(message, selectedSession?.skillCommands ?? []),
@@ -1789,6 +1843,12 @@ function DashboardContent({
   useEffect(() => {
     setViewedSubagent(null);
   }, [selectedSession?.id]);
+
+  useLayoutEffect(() => {
+    if (todoOpenSessionId !== null && (todoOpenSessionId !== selectedSession?.id || currentTodo === null)) {
+      setTodoOpenSessionId(null);
+    }
+  }, [currentTodo, selectedSession?.id, todoOpenSessionId]);
 
   useLayoutEffect(() => {
     configurationSessionIdRef.current = selectedSession?.id ?? null;
@@ -2462,6 +2522,41 @@ function DashboardContent({
                   </time>
                 </dd>
               </div>
+              {currentTodo && currentTodoPresentation ? (
+                <div className="todo-tracker-metadata">
+                  <dt>Todo</dt>
+                  <dd>
+                    <Button
+                      className="todo-tracker-trigger"
+                      type="button"
+                      variant="ghost"
+                      aria-label={getTodoTrackerLabel(currentTodo)}
+                      onClick={() => setTodoOpenSessionId(selectedSession.id)}
+                    >
+                      <span className="todo-tracker-copy">
+                        <strong>
+                          {currentTodo.overall.done}/{currentTodo.overall.total}
+                        </strong>
+                        <span className="todo-tracker-active">
+                          <span
+                            aria-hidden="true"
+                            className="todo-state-marker"
+                            data-state={currentTodoPresentation.activeState}
+                          />
+                          <span>{currentTodoPresentation.activeLabel}</span>
+                        </span>
+                      </span>
+                      <progress
+                        aria-label={`Current Todo progress: ${currentTodo.overall.done} of ${
+                          currentTodo.overall.total
+                        } tasks ${currentTodoPresentation.progressVerb}`}
+                        max={currentTodo.overall.total}
+                        value={currentTodo.overall.done}
+                      />
+                    </Button>
+                  </dd>
+                </div>
+              ) : null}
             </dl>
 
             {selectedSession.source === "history" ? (
@@ -2648,6 +2743,40 @@ function DashboardContent({
         error={workingTreeDiffError}
         onOpenChange={setDiffOpen}
       />
+      <Drawer
+        open={todoOpenSessionId === selectedSession?.id && currentTodo !== null}
+        onOpenChange={(open) =>
+          setTodoOpenSessionId(open && currentTodo ? (selectedSession?.id ?? null) : null)
+        }
+        showSwipeHandle
+      >
+        <DrawerContent className="model-settings-sheet todo-tracker-sheet">
+          <DrawerHeader className="model-settings-header todo-tracker-sheet-header">
+            <div>
+              <DrawerTitle>Current Todo</DrawerTitle>
+              <DrawerDescription>
+                Review the latest Todo progress and complete task list for this session.
+              </DrawerDescription>
+            </div>
+            <DrawerClose
+              render={
+                <Button type="button" variant="ghost" size="icon" autoFocus aria-label="Close current Todo" />
+              }
+            >
+              <Icon name="close" />
+            </DrawerClose>
+          </DrawerHeader>
+          <div className="model-settings-body todo-tracker-sheet-body">
+            {currentTodo ? (
+              <>
+                <TodoProgressSummary todo={currentTodo} />
+                <TodoPhaseList todo={currentTodo} />
+              </>
+            ) : null}
+          </div>
+        </DrawerContent>
+      </Drawer>
+
       <Drawer
         open={configurationDrawer === "model"}
         onOpenChange={(open) => {
