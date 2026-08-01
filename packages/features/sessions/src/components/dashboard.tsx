@@ -7,9 +7,20 @@ import {
   type Effort,
   filterMainSessions,
   type Session,
+  type SessionWorkingTreeDiffResponse,
 } from "@omp-remote/protocol";
 import { SESSION_STATUS_LABEL, SESSION_STATUS_TONE } from "@omp-remote/ui";
-import { type FormEvent, memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  type FormEvent,
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { formatWorkingTreeMetadata, SessionDiffViewer } from "./session-diff-viewer.js";
 import { SubagentSessionViewer } from "./subagent-session-viewer.js";
 import { Badge } from "./ui/badge.js";
 import { Button } from "./ui/button.js";
@@ -524,6 +535,7 @@ export interface DashboardProps {
   onSearchHistory(query: string): Promise<void>;
   onLoadMoreHistory(): Promise<void>;
   onLoadTranscript(sessionId: string): Promise<void>;
+  onLoadWorkingTreeDiff(sessionId: string, signal?: AbortSignal): Promise<SessionWorkingTreeDiffResponse>;
 }
 
 export function Dashboard(props: DashboardProps) {
@@ -1639,6 +1651,7 @@ function DashboardContent({
   onSearchHistory,
   onLoadMoreHistory,
   onLoadTranscript,
+  onLoadWorkingTreeDiff,
 }: DashboardProps) {
   const [viewedSubagent, setViewedSubagent] = useState<ActiveSubagent | null>(null);
   const [message, setMessage] = useState("");
@@ -1670,6 +1683,12 @@ function DashboardContent({
   const loadedTranscriptIdRef = useRef<string | null>(null);
   const configurationRequestRef = useRef<{ sessionId: string } | null>(null);
   const configurationSessionIdRef = useRef<string | null>(null);
+  const [diffOpen, setDiffOpen] = useState(false);
+  const [workingTreeDiff, setWorkingTreeDiff] = useState<SessionWorkingTreeDiffResponse | null>(null);
+  const [workingTreeDiffLoading, setWorkingTreeDiffLoading] = useState(false);
+  const [workingTreeDiffError, setWorkingTreeDiffError] = useState<string | null>(null);
+  const diffRequestRef = useRef(0);
+  const diffAbortRef = useRef<AbortController | null>(null);
   const { isMobile, setOpenMobile } = useSidebar();
 
   const mainSessions = useMemo(() => filterMainSessions(sessions), [sessions]);
@@ -1680,6 +1699,33 @@ function DashboardContent({
       sessionSections[0]?.sessions[0] ??
       null,
     [mainSessions, selectedSessionId, sessionSections],
+  );
+  const refreshWorkingTreeDiff = useCallback(
+    async (sessionId: string) => {
+      const requestNumber = ++diffRequestRef.current;
+      diffAbortRef.current?.abort();
+      const abortController = new AbortController();
+      diffAbortRef.current = abortController;
+      setWorkingTreeDiffLoading(true);
+      setWorkingTreeDiffError(null);
+      try {
+        const result = await onLoadWorkingTreeDiff(sessionId, abortController.signal);
+        if (requestNumber !== diffRequestRef.current || abortController.signal.aborted) return;
+        setWorkingTreeDiff(result);
+      } catch (failure) {
+        if (requestNumber !== diffRequestRef.current || abortController.signal.aborted) return;
+        setWorkingTreeDiff(null);
+        setWorkingTreeDiffError(
+          failure instanceof Error ? failure.message : "The working tree could not be loaded.",
+        );
+      } finally {
+        if (requestNumber === diffRequestRef.current) {
+          setWorkingTreeDiffLoading(false);
+          if (diffAbortRef.current === abortController) diffAbortRef.current = null;
+        }
+      }
+    },
+    [onLoadWorkingTreeDiff],
   );
   const activeAskRequest = getActiveAskRequest(askRequests, selectedSession?.id ?? null);
   const composerAction = selectedSession ? getComposerAction(selectedSession, message) : null;
@@ -1705,6 +1751,7 @@ function DashboardContent({
     );
   }, [availableModels, modelQuery]);
   const availableEfforts = currentModelOption?.efforts ?? [];
+  const workingTreeMetadata = formatWorkingTreeMetadata(workingTreeDiff, workingTreeDiffError);
 
   useEffect(() => {
     setActiveSkillIndex(0);
@@ -1729,6 +1776,35 @@ function DashboardContent({
     setConfigurationPending(null);
     setConfigurationError(null);
   }, [selectedSession?.id]);
+
+  useEffect(() => {
+    const sessionId = selectedSession?.id;
+    if (!sessionId) {
+      diffRequestRef.current += 1;
+      diffAbortRef.current?.abort();
+      setWorkingTreeDiff(null);
+      setWorkingTreeDiffError(null);
+      setWorkingTreeDiffLoading(false);
+      setDiffOpen(false);
+      return;
+    }
+    diffRequestRef.current += 1;
+    diffAbortRef.current?.abort();
+    diffAbortRef.current = null;
+    setWorkingTreeDiffLoading(false);
+    setWorkingTreeDiff((current) => (current?.sessionId === sessionId ? current : null));
+    const refreshTimer = globalThis.setTimeout(() => {
+      void refreshWorkingTreeDiff(sessionId);
+    }, 750);
+    return () => globalThis.clearTimeout(refreshTimer);
+  }, [refreshWorkingTreeDiff, selectedSession?.id, selectedSession?.lastActivity]);
+
+  useEffect(
+    () => () => {
+      diffAbortRef.current?.abort();
+    },
+    [],
+  );
 
   useEffect(() => {
     if (selectedSession?.source !== "history" || loadedTranscriptIdRef.current === selectedSession.id) return;
@@ -2339,6 +2415,23 @@ function DashboardContent({
                     : `${Math.round(selectedSession.contextPercent)}%`}
                 </dd>
               </div>
+              <div className="session-diff-metadata">
+                <dt>Changes</dt>
+                <dd>
+                  <Button
+                    className="session-diff-trigger"
+                    type="button"
+                    variant="ghost"
+                    aria-label={`Open working tree changes. ${workingTreeMetadata}`}
+                    onClick={() => {
+                      setDiffOpen(true);
+                      void refreshWorkingTreeDiff(selectedSession.id);
+                    }}
+                  >
+                    {workingTreeMetadata}
+                  </Button>
+                </dd>
+              </div>
               <div>
                 <dt>Updated</dt>
                 <dd>
@@ -2525,6 +2618,14 @@ function DashboardContent({
         ) : null}
       </SubagentSessionViewer>
 
+      <SessionDiffViewer
+        open={diffOpen}
+        mobile={isMobile}
+        result={workingTreeDiff}
+        loading={workingTreeDiffLoading}
+        error={workingTreeDiffError}
+        onOpenChange={setDiffOpen}
+      />
       <Drawer
         open={configurationDrawer === "model"}
         onOpenChange={(open) => {

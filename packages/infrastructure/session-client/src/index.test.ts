@@ -1,8 +1,9 @@
 import type { AskRequest, Session } from "@omp-remote/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createCatalogLoadCoordinator,
   commandResultValue,
+  loadSessionWorkingTreeDiff,
   patchSession,
   removeAskRequest,
   sessionSourcesReady,
@@ -292,5 +293,44 @@ describe("remote ask request state", () => {
 
     expect(removeAskRequest([newerRequest], "session-1", "ask-1")).toEqual([newerRequest]);
     expect(removeAskRequest([newerRequest], "session-1", "ask-2")).toEqual([]);
+  });
+});
+
+describe("loadSessionWorkingTreeDiff", () => {
+  it("loads and validates the selected session working-tree diff", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          sessionId: "session/a",
+          state: "available",
+          root: "/workspace",
+          files: [],
+          fileCount: 0,
+          additions: 0,
+          deletions: 0,
+          changedLines: 0,
+          message: null,
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(loadSessionWorkingTreeDiff("session/a", undefined, fetcher)).resolves.toMatchObject({
+      sessionId: "session/a",
+      state: "available",
+    });
+    expect(fetcher).toHaveBeenCalledWith("/api/sessions/session%2Fa/diff", {});
+  });
+
+  it("surfaces the host error message without accepting an invalid response", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ error: "Working tree could not be read" }), { status: 500 }),
+      );
+
+    await expect(loadSessionWorkingTreeDiff("session-1", undefined, fetcher)).rejects.toThrow(
+      "Working tree could not be read",
+    );
   });
 });

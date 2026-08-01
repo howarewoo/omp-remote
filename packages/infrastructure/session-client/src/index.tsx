@@ -10,6 +10,8 @@ import {
   SessionCatalogPageSchema,
   type SessionPatch,
   SessionTranscriptResponseSchema,
+  type SessionWorkingTreeDiffResponse,
+  SessionWorkingTreeDiffResponseSchema,
 } from "@omp-remote/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -46,6 +48,7 @@ export interface SessionClient {
   searchHistory(query: string): Promise<void>;
   loadMoreHistory(): Promise<void>;
   loadTranscript(sessionId: string): Promise<void>;
+  loadWorkingTreeDiff(sessionId: string, signal?: AbortSignal): Promise<SessionWorkingTreeDiffResponse>;
 }
 
 export function useSessionClient(): SessionClient {
@@ -244,6 +247,11 @@ export function useSessionClient(): SessionClient {
     }
   }, []);
 
+  const loadWorkingTreeDiff = useCallback(
+    (sessionId: string, signal?: AbortSignal) => loadSessionWorkingTreeDiff(sessionId, signal),
+    [],
+  );
+
   useEffect(() => {
     const baseline = catalogLoads.loadBaseline();
     void baseline.catch(() => undefined);
@@ -383,7 +391,29 @@ export function useSessionClient(): SessionClient {
     searchHistory,
     loadMoreHistory,
     loadTranscript,
+    loadWorkingTreeDiff,
   };
+}
+
+export async function loadSessionWorkingTreeDiff(
+  sessionId: string,
+  signal?: AbortSignal,
+  fetcher: typeof fetch = fetch,
+): Promise<SessionWorkingTreeDiffResponse> {
+  const response = await fetcher(
+    `/api/sessions/${encodeURIComponent(sessionId)}/diff`,
+    signal ? { signal } : {},
+  );
+  const body: unknown = await response.json();
+  if (!response.ok) {
+    const hostError =
+      typeof body === "object" && body !== null && "error" in body && typeof body.error === "string"
+        ? body.error
+        : null;
+    const message = hostError ?? `Working-tree diff request failed (${response.status})`;
+    throw new Error(message);
+  }
+  return SessionWorkingTreeDiffResponseSchema.parse(body);
 }
 
 export function commandResultValue(

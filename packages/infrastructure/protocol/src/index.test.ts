@@ -11,6 +11,7 @@ import {
   SessionPatchSchema,
   SessionSchema,
   SessionTranscriptResponseSchema,
+  SessionWorkingTreeDiffResponseSchema,
   TranscriptMessageSchema,
 } from "./index.js";
 
@@ -837,5 +838,48 @@ describe("SessionPatchSchema", () => {
         ...forbiddenField,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("SessionWorkingTreeDiffResponseSchema", () => {
+  it("validates complete per-file working-tree diff data", () => {
+    expect(
+      SessionWorkingTreeDiffResponseSchema.parse({
+        sessionId: "session-1",
+        state: "available",
+        root: "/workspace/project",
+        files: [
+          {
+            path: "src/app.ts",
+            status: "modified",
+            additions: 2,
+            deletions: 1,
+            binary: false,
+            patch: "@@ -1 +1,2 @@\n-old\n+new\n+line",
+          },
+        ],
+        fileCount: 1,
+        additions: 2,
+        deletions: 1,
+        changedLines: 3,
+        message: null,
+      }),
+    ).toMatchObject({ fileCount: 1, changedLines: 3 });
+  });
+
+  it("rejects inconsistent totals and oversized responses carrying partial files", () => {
+    expect(() =>
+      SessionWorkingTreeDiffResponseSchema.parse({
+        sessionId: "session-1",
+        state: "oversized",
+        root: "/workspace/project",
+        files: [{ path: "partial.ts" }],
+        fileCount: 1,
+        additions: 0,
+        deletions: 0,
+        changedLines: 0,
+        message: "Output exceeded the limit",
+      }),
+    ).toThrow();
   });
 });

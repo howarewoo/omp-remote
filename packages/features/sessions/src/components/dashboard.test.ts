@@ -1,6 +1,6 @@
 import { Radio } from "@base-ui/react/radio";
 import { RadioGroup } from "@base-ui/react/radio-group";
-import type { AskRequest, Session } from "@omp-remote/protocol";
+import type { AskRequest, Session, SessionWorkingTreeDiffResponse } from "@omp-remote/protocol";
 import type * as ReactModule from "react";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +23,7 @@ vi.mock("react", async (importOriginal) => {
     useLayoutEffect: (effect: Parameters<typeof actual.useLayoutEffect>[0]) => {
       if (reactHarness.effectsEnabled) void effect();
     },
+    useCallback: <T extends (...args: never[]) => unknown>(callback: T) => callback,
     useMemo: <T>(factory: () => T) => factory(),
     useRef: <T>(initial: T) => {
       const index = reactHarness.refIndex++;
@@ -84,6 +85,7 @@ import {
   tokenizeCode,
   WorkingIndicator,
 } from "./dashboard.js";
+import { SessionDiffViewer } from "./session-diff-viewer.js";
 import { SubagentSessionViewer } from "./subagent-session-viewer.js";
 import {
   MessageScrollerButton,
@@ -1100,6 +1102,17 @@ const DASHBOARD_DEFAULTS = {
   onSearchHistory: vi.fn().mockResolvedValue(undefined),
   onLoadMoreHistory: vi.fn().mockResolvedValue(undefined),
   onLoadTranscript: vi.fn().mockResolvedValue(undefined),
+  onLoadWorkingTreeDiff: vi.fn().mockResolvedValue({
+    sessionId: "session-1",
+    state: "available",
+    root: "/work/omp-remote",
+    files: [],
+    fileCount: 0,
+    additions: 0,
+    deletions: 0,
+    changedLines: 0,
+    message: null,
+  }),
 };
 
 function renderControlledDashboard(
@@ -1171,6 +1184,61 @@ function composerDashboardProps(session: Session = BASE_SESSION): ControlledDash
     onSelectedSessionChange: vi.fn(),
   };
 }
+
+describe("dashboard working-tree refresh", () => {
+  it("clears successful counts when a later host refresh fails", async () => {
+    vi.useFakeTimers();
+    try {
+      const successfulDiff: SessionWorkingTreeDiffResponse = {
+        sessionId: BASE_SESSION.id,
+        state: "available",
+        root: BASE_SESSION.cwd,
+        files: [
+          {
+            path: "src/app.ts",
+            status: "modified",
+            additions: 2,
+            deletions: 1,
+            binary: false,
+            patch: "@@ -1 +1 @@\n-old\n+new",
+          },
+        ],
+        fileCount: 1,
+        additions: 2,
+        deletions: 1,
+        changedLines: 3,
+        message: null,
+      };
+      const onLoadWorkingTreeDiff = vi
+        .fn()
+        .mockResolvedValueOnce(successfulDiff)
+        .mockRejectedValueOnce(new Error("Host refresh failed"));
+      const firstProps = { ...composerDashboardProps(), onLoadWorkingTreeDiff };
+
+      renderControlledDashboard(firstProps);
+      await vi.advanceTimersByTimeAsync(750);
+      let output = renderControlledDashboard(firstProps, { preserveState: true, effectsEnabled: false });
+      let viewer = findElements(output, (element) => element.type === SessionDiffViewer)[0] as
+        | ReactElement<{ result: SessionWorkingTreeDiffResponse | null; error: string | null }>
+        | undefined;
+      expect(viewer?.props).toMatchObject({ result: successfulDiff, error: null });
+
+      const laterSession = { ...BASE_SESSION, lastActivity: "2026-07-28T18:00:00.000Z" };
+      const laterProps = { ...firstProps, sessions: [laterSession] };
+      renderControlledDashboard(laterProps, { preserveState: true });
+      await vi.advanceTimersByTimeAsync(750);
+      output = renderControlledDashboard(laterProps, { preserveState: true, effectsEnabled: false });
+      viewer = findElements(output, (element) => element.type === SessionDiffViewer)[0] as
+        | ReactElement<{ result: SessionWorkingTreeDiffResponse | null; error: string | null }>
+        | undefined;
+      expect(viewer?.props).toMatchObject({ result: null, error: "Host refresh failed" });
+      expect(textContent(output)).toContain("Changes unavailable");
+      expect(textContent(output)).not.toContain("1 file · 3 changed lines");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
 
 describe("dashboard Read transcript", () => {
   it("renders adjacent Reads as separate rows without their output", () => {
@@ -2261,7 +2329,7 @@ describe("session model and effort selectors", () => {
     expect(findConfigurationTrigger(output, "effort")?.props.disabled).not.toBe(true);
     expect(
       findElements(output, (element) => element.type === "dt").map((element) => textContent(element)),
-    ).toEqual(["Model", "Effort", "Context", "Updated"]);
+    ).toEqual(["Model", "Effort", "Context", "Changes", "Updated"]);
   });
 
   it("opens a populated model-only drawer", () => {
