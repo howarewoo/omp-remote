@@ -692,6 +692,10 @@ export function formatSystemTextPreview(text: string): string {
 }
 
 const TOOL_TEXT_PREVIEW_LINES = 10;
+function formatToolTextFull(text: string): string {
+  if (!/\S/.test(text)) return "No tool output";
+  return text;
+}
 
 export function formatToolTextPreview(text: string): string {
   let end = text.length;
@@ -699,7 +703,7 @@ export function formatToolTextPreview(text: string): string {
     end -= 1;
     if (text.charCodeAt(end - 1) === 13) end -= 1;
   }
-  if (end === 0) return "No tool output";
+  if (end === 0) return formatToolTextFull("");
 
   let start = end;
   for (let line = 0; line < TOOL_TEXT_PREVIEW_LINES && start > 0; line += 1) {
@@ -713,7 +717,7 @@ export function formatToolTextPreview(text: string): string {
   if (start > 0) start += 1;
 
   const preview = text.slice(start, end);
-  return /\S/.test(preview) ? preview : "No tool output";
+  return formatToolTextFull(preview);
 }
 
 export type TodoTaskState = "pending" | "in-progress" | "completed" | "blocked" | "dropped";
@@ -1302,7 +1306,7 @@ export function ToolTranscriptText({ entry }: { entry: Session["messages"][numbe
       {entry.presentation === "diff" ? (
         <TranscriptEntryContent entry={entry} />
       ) : (
-        renderDisclosureTranscriptText(entry.text)
+        renderDisclosureTranscriptText(isWrite ? formatToolTextFull(entry.text) : entry.text)
       )}
     </details>
   );

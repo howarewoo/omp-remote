@@ -771,9 +771,25 @@ describe("ToolTranscriptText", () => {
     expect(disclosure.props.children[0].type).toBe("summary");
     expect(nodes.find((node) => node.className === "message-author")?.text).toContain("write");
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
-    expect(nodes.find((node) => node.className === "transcript-disclosure-text")?.text).toContain(
-      "packages/features/sessions/src/components/dashboard.tsx",
-    );
+    expect(disclosure.props.children[1].props.children).toBe(text);
+  });
+
+  it.each(["", " \n\t "])("labels empty write output in the expanded disclosure: %j", (text) => {
+    const disclosure = ToolTranscriptText({
+      entry: {
+        id: "empty-write",
+        role: "tool",
+        toolName: "write",
+        text,
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    });
+    const expanded = disclosure.props.children[1];
+
+    expect(expanded.props.className).toBe("transcript-disclosure-text");
+    expect(expanded.props.children).toBe("No tool output");
   });
 
   it("routes canonical todo output to a closed progress summary and state list", () => {
