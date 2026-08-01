@@ -1702,8 +1702,9 @@ textarea:disabled {
   line-height: 1.55;
 }
 
-.transcript.subagent-session-transcript {
-  padding: 1rem 1.25rem 2rem;
+.subagent-session-transcript-region {
+  width: auto;
+  margin-inline: 1.25rem;
 }
 
 .transcript-region {
@@ -1788,9 +1789,6 @@ textarea:disabled {
   animation-delay: 240ms;
 }
 
-.subagent-session-messages {
-  gap: 0;
-}
 .transcript-entry {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -3224,8 +3222,9 @@ textarea:disabled {
     display: inline-flex;
   }
 
-  .subagent-session-transcript {
-    padding: 0.8rem 1rem max(1.5rem, env(safe-area-inset-bottom));
+  .subagent-session-transcript-region {
+    margin-inline: 1rem;
+    margin-bottom: env(safe-area-inset-bottom);
   }
 
   .session-diff-body {
