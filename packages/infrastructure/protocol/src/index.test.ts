@@ -9,6 +9,7 @@ import {
   ServerFrameSchema,
   SessionCatalogPageSchema,
   SessionPatchSchema,
+  SessionFileChangesResponseSchema,
   SessionSchema,
   SessionTranscriptResponseSchema,
   SessionWorkingTreeDiffResponseSchema,
@@ -881,5 +882,201 @@ describe("SessionWorkingTreeDiffResponseSchema", () => {
         message: "Output exceeded the limit",
       }),
     ).toThrow();
+  });
+});
+
+describe("SessionFileChangesResponseSchema", () => {
+  const response = {
+    sessionId: "root-session",
+    state: "available" as const,
+    sources: [
+      {
+        sessionId: "root-session",
+        root: "/worktree/a",
+        files: [
+          {
+            path: "/worktree/a/src/app.ts",
+            operations: [
+              {
+                type: "edit" as const,
+                timestamp: "2026-08-01T10:00:00.000Z",
+                op: "update" as const,
+                sessionId: "root-session",
+                patch: "@@ -1 +1 @@\n-old\n+new",
+                additions: 1,
+                deletions: 1,
+              },
+              {
+                type: "write" as const,
+                timestamp: "2026-08-01T10:01:00.000Z",
+                sessionId: "root-session",
+                resolvedPath: "/worktree/a/src/app.ts",
+                byteCount: 12,
+              },
+            ],
+          },
+        ],
+      },
+      {
+        sessionId: "child-session",
+        root: "/worktree/b",
+        files: [
+          {
+            path: "/worktree/b/src/app.ts",
+            operations: [
+              {
+                type: "edit" as const,
+                timestamp: "2026-08-01T10:02:00.000Z",
+                sessionId: "child-session",
+                additions: 0,
+                deletions: 0,
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    fileCount: 2,
+    operationCount: 3,
+    additions: 1,
+    deletions: 1,
+    changedLines: 2,
+    message: null,
+  };
+
+  it("retains separate session/worktree identities and metadata-only writes", () => {
+    const parsed = SessionFileChangesResponseSchema.parse(response);
+    expect(parsed.sources.map((source) => [source.sessionId, source.root])).toEqual([
+      ["root-session", "/worktree/a"],
+      ["child-session", "/worktree/b"],
+    ]);
+    expect(parsed.sources[0]?.files[0]?.operations[1]).toEqual({
+      type: "write",
+      timestamp: "2026-08-01T10:01:00.000Z",
+      sessionId: "root-session",
+      resolvedPath: "/worktree/a/src/app.ts",
+      byteCount: 12,
+    });
+  });
+
+  it("compares operation timestamps chronologically rather than lexically", () => {
+    const firstFile = response.sources[0]!.files[0]!;
+    const invalid = {
+      ...response,
+      sources: [
+        {
+          ...response.sources[0],
+          files: [
+            {
+              ...firstFile,
+              operations: [
+                { ...firstFile.operations[0], timestamp: "2026-08-01T10:00:00.1Z" },
+                { ...firstFile.operations[1], timestamp: "2026-08-01T10:00:00Z" },
+              ],
+            },
+          ],
+        },
+        response.sources[1],
+      ],
+    };
+
+    expect(SessionFileChangesResponseSchema.safeParse(invalid).success).toBe(false);
+  });
+
+  it.each([
+    ["incorrect totals", { ...response, operationCount: 2 }],
+    [
+      "internal session history paths",
+      {
+        ...response,
+        sources: [{ ...response.sources[0], sessionPath: "/host/.omp/agent/sessions/root.jsonl" }],
+        fileCount: 1,
+        operationCount: 2,
+      },
+    ],
+    [
+      "duplicate source identities",
+      {
+        ...response,
+        sources: [...response.sources, { ...response.sources[0] }],
+        fileCount: 3,
+        operationCount: 5,
+      },
+    ],
+    [
+      "non-chronological operations",
+      {
+        ...response,
+        sources: [
+          {
+            ...response.sources[0],
+            files: [
+              {
+                ...response.sources[0]!.files[0],
+                operations: [...response.sources[0]!.files[0]!.operations].reverse(),
+              },
+            ],
+          },
+          response.sources[1],
+        ],
+      },
+    ],
+    [
+      "line totals without a retained patch",
+      {
+        ...response,
+        sources: [
+          {
+            ...response.sources[0],
+            files: [
+              {
+                ...response.sources[0]!.files[0],
+                operations: [
+                  {
+                    type: "edit",
+                    timestamp: "2026-08-01T10:00:00.000Z",
+                    sessionId: "root-session",
+                    additions: 1,
+                    deletions: 1,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        fileCount: 1,
+        operationCount: 1,
+      },
+    ],
+    ["files in an unavailable response", { ...response, state: "unavailable", message: "unreadable" }],
+    [
+      "write content",
+      {
+        ...response,
+        sources: [
+          {
+            ...response.sources[0],
+            files: [
+              {
+                ...response.sources[0]!.files[0],
+                operations: [
+                  {
+                    ...response.sources[0]!.files[0]!.operations[1],
+                    content: "secret",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        fileCount: 1,
+        operationCount: 1,
+        additions: 0,
+        deletions: 0,
+        changedLines: 0,
+      },
+    ],
+  ])("rejects %s", (_name, invalid) => {
+    expect(SessionFileChangesResponseSchema.safeParse(invalid).success).toBe(false);
   });
 });

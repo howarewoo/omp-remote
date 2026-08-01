@@ -15,6 +15,7 @@ import {
   type ServerFrame,
   type Session,
   SessionCatalogPageSchema,
+  SessionFileChangesResponseSchema,
   type SessionModelOption,
   SessionTranscriptResponseSchema,
   SessionWorkingTreeDiffResponseSchema,
@@ -34,6 +35,7 @@ import {
   getCatalogSessionMetadataPatch,
 } from "./catalog-reconciliation.js";
 import { resolveGitBranch } from "./git-branch.js";
+// woostack-defer(increment SFC-2): retain the Git-backed endpoint until its replacement.
 import { collectWorkingTreeDiff } from "./git-working-tree.js";
 import { normalizeRawMessage, normalizeSkillCommands, ToolCallTracker } from "./message-normalizer.js";
 import {
@@ -48,6 +50,7 @@ import {
   resetAskInactivityTimeout,
 } from "./rpc-ask.js";
 import { SavedWorkingDirectoryStore } from "./saved-working-directories.js";
+import { collectSessionFileChanges } from "./session-file-changes.js";
 import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
 
 const MAX_MESSAGES = 200;
@@ -184,6 +187,25 @@ app.get("/api/sessions/:sessionId/transcript", async (request, reply) => {
   } catch (error) {
     logger.error("Could not read OMP session transcript", error, { sessionId: params.data.sessionId });
     return reply.code(500).send({ error: "Session history could not be read" });
+  }
+});
+
+app.get("/api/sessions/:sessionId/changes", async (request, reply) => {
+  const params = SessionParamsSchema.safeParse(request.params);
+  if (!params.success) return reply.code(404).send({ error: "Session history was not found" });
+  const selection = sessionCatalog.fileChangeSources(params.data.sessionId);
+  if (!selection) return reply.code(404).send({ error: "Session history was not found" });
+  try {
+    return SessionFileChangesResponseSchema.parse(
+      await collectSessionFileChanges({
+        sessionId: params.data.sessionId,
+        sources: selection.sources,
+        truncated: selection.truncated,
+      }),
+    );
+  } catch (error) {
+    logger.error("Could not read session file changes", error, { sessionId: params.data.sessionId });
+    return reply.code(500).send({ error: "Session file changes could not be read" });
   }
 });
 
