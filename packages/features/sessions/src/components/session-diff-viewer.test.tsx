@@ -32,11 +32,46 @@ const AVAILABLE: SessionWorkingTreeDiffResponse = {
   message: null,
 };
 
+const MULTI_FILE_AVAILABLE: SessionWorkingTreeDiffResponse = {
+  ...AVAILABLE,
+  files: [
+    {
+      path: "src/new-name.ts",
+      oldPath: "src/old-name.ts",
+      status: "renamed",
+      additions: 2,
+      deletions: 1,
+      binary: false,
+      patch: "@@ -1 +1,2 @@\n-old\n+new\n+line",
+    },
+    {
+      path: "public/logo.png",
+      status: "modified",
+      additions: 0,
+      deletions: 0,
+      binary: true,
+      patch: "",
+    },
+  ],
+  fileCount: 2,
+  additions: 2,
+  deletions: 1,
+  changedLines: 3,
+};
+
+type TestElementProps = {
+  className?: string;
+  children?: ReactNode;
+  defaultOpen?: boolean;
+  "aria-label"?: string;
+  patch?: string;
+};
+
 function textContent(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map(textContent).join("");
   if (!isValidElement<{ children?: ReactNode }>(node)) return "";
-  if (typeof node.type === "function") {
+  if (typeof node.type === "function" && node.type.name === "DiffState") {
     const renderFunction = node.type as (props: { children?: ReactNode }) => ReactNode;
     return textContent(renderFunction(node.props));
   }
@@ -45,12 +80,16 @@ function textContent(node: ReactNode): string {
 
 function findElements(
   node: ReactNode,
-  predicate: (element: ReactElement<{ className?: string; children?: ReactNode }>) => boolean,
-): ReactElement<{ className?: string; children?: ReactNode }>[] {
+  predicate: (element: ReactElement<TestElementProps>) => boolean,
+): ReactElement<TestElementProps>[] {
   if (Array.isArray(node)) return node.flatMap((child) => findElements(child, predicate));
-  if (!isValidElement<{ className?: string; children?: ReactNode }>(node)) return [];
+  if (!isValidElement<TestElementProps>(node)) return [];
   const descendants = findElements(node.props.children, predicate);
   return predicate(node) ? [node, ...descendants] : descendants;
+}
+
+function isComponent(element: ReactElement<TestElementProps>, name: string): boolean {
+  return typeof element.type === "function" && element.type.name === name;
 }
 
 describe("session diff metadata", () => {
@@ -117,6 +156,69 @@ describe("SessionDiffViewer", () => {
     ["host error", { result: null, loading: false, error: "Host failed" }, "Host failed"],
   ])("renders the %s state", (_name, state, expected) => {
     expect(textContent(SessionDiffContent(state))).toContain(expected);
+  });
+});
+
+describe("SessionDiffContent", () => {
+  it("renders each repository-relative file as a closed, independently associated disclosure", () => {
+    const content = SessionDiffContent({
+      result: MULTI_FILE_AVAILABLE,
+      loading: false,
+      error: null,
+    });
+    const files = findElements(content, (element) => isComponent(element, "Collapsible"));
+
+    expect(files).toHaveLength(2);
+    for (const [index, file] of files.entries()) {
+      expect(file.props.defaultOpen).toBe(false);
+      const triggers = findElements(file.props.children, (element) =>
+        isComponent(element, "CollapsibleTrigger"),
+      );
+      const panels = findElements(file.props.children, (element) =>
+        isComponent(element, "CollapsibleContent"),
+      );
+      expect(triggers).toHaveLength(1);
+      expect(panels).toHaveLength(1);
+      expect(triggers[0]?.props["aria-label"]).toBe(
+        `Toggle changes for ${MULTI_FILE_AVAILABLE.files[index]?.path}`,
+      );
+    }
+  });
+
+  it("keeps paths and metadata in triggers while retaining text and binary bodies in their panels", () => {
+    const content = SessionDiffContent({
+      result: MULTI_FILE_AVAILABLE,
+      loading: false,
+      error: null,
+    });
+    const files = findElements(content, (element) => isComponent(element, "Collapsible"));
+    const renamedTrigger = findElements(files[0]?.props.children, (element) =>
+      isComponent(element, "CollapsibleTrigger"),
+    )[0];
+    const renamedPanel = findElements(files[0]?.props.children, (element) =>
+      isComponent(element, "CollapsibleContent"),
+    )[0];
+    const binaryTrigger = findElements(files[1]?.props.children, (element) =>
+      isComponent(element, "CollapsibleTrigger"),
+    )[0];
+    const binaryPanel = findElements(files[1]?.props.children, (element) =>
+      isComponent(element, "CollapsibleContent"),
+    )[0];
+
+    expect(textContent(renamedTrigger)).toContain("src/new-name.ts");
+    expect(textContent(renamedTrigger)).toContain("from src/old-name.ts");
+    expect(textContent(renamedTrigger)).toContain("Renamed");
+    expect(textContent(renamedTrigger)).toContain("+2");
+    expect(textContent(renamedTrigger)).toContain("−1");
+    expect(textContent(renamedTrigger)).not.toContain("-old");
+    const renamedDiff = findElements(renamedPanel?.props.children, (element) =>
+      isComponent(element, "UnifiedDiff"),
+    )[0];
+    expect(renamedDiff?.props).toMatchObject({ patch: "@@ -1 +1,2 @@\n-old\n+new\n+line" });
+
+    expect(textContent(binaryTrigger)).toContain("public/logo.png");
+    expect(textContent(binaryTrigger)).toContain("Modified");
+    expect(textContent(binaryPanel)).toContain("Binary file — a textual patch is not available.");
   });
 });
 

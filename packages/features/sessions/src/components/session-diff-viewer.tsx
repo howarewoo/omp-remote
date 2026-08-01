@@ -1,5 +1,6 @@
 import type { SessionWorkingTreeDiffResponse, WorkingTreeDiffFile } from "@omp-remote/protocol";
 import { Button } from "./ui/button.js";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible.js";
 import {
   Drawer,
   DrawerClose,
@@ -115,24 +116,39 @@ export function SessionDiffContent({
     <div className="session-diff-files">
       <p className="session-diff-summary">{formatWorkingTreeSummary(result)}</p>
       {result.files.map((file) => (
-        <article className="session-diff-file" key={`${file.oldPath ?? ""}:${file.path}`}>
-          <header>
-            <div>
-              <strong>{file.path}</strong>
-              {file.oldPath ? <span className="session-diff-old-path">from {file.oldPath}</span> : null}
-            </div>
-            <div className="session-diff-file-stats">
+        <Collapsible
+          className="session-diff-file"
+          defaultOpen={false}
+          key={`${file.oldPath ?? ""}:${file.path}`}
+        >
+          <CollapsibleTrigger
+            type="button"
+            className="session-diff-file-trigger"
+            aria-label={`Toggle changes for ${file.path}`}
+          >
+            <span className="session-diff-file-heading">
+              <svg className="session-diff-chevron" aria-hidden="true" viewBox="0 0 24 24">
+                <path d="m9 18 6-6-6-6" />
+              </svg>
+              <span className="session-diff-file-paths">
+                <strong>{file.path}</strong>
+                {file.oldPath ? <span className="session-diff-old-path">from {file.oldPath}</span> : null}
+              </span>
+            </span>
+            <span className="session-diff-file-stats">
               <span>{STATUS_LABEL[file.status]}</span>
               <span className="session-diff-additions">+{file.additions}</span>
               <span className="session-diff-deletions">−{file.deletions}</span>
-            </div>
-          </header>
-          {file.binary ? (
-            <p className="session-diff-binary">Binary file — a textual patch is not available.</p>
-          ) : (
-            <UnifiedDiff patch={file.patch} />
-          )}
-        </article>
+            </span>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="session-diff-file-content">
+            {file.binary ? (
+              <p className="session-diff-binary">Binary file — a textual patch is not available.</p>
+            ) : (
+              <UnifiedDiff patch={file.patch} />
+            )}
+          </CollapsibleContent>
+        </Collapsible>
       ))}
     </div>
   );

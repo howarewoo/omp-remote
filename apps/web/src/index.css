@@ -1459,28 +1459,69 @@ textarea:disabled {
   border-bottom: 1px solid var(--border);
 }
 
-.session-diff-file > header {
+.session-diff-file-trigger {
   display: flex;
+  width: 100%;
+  min-height: 2.75rem;
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
+  margin: 0;
   padding: 0.8rem 1rem;
+  border: 0;
   background: var(--muted);
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  touch-action: manipulation;
 }
 
-.session-diff-file > header > div:first-child {
+@media (hover: hover) {
+  .session-diff-file-trigger:hover {
+    background: var(--accent);
+  }
+}
+
+.session-diff-file-trigger:active {
+  background: var(--accent);
+}
+
+.session-diff-file-heading {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+
+.session-diff-file-paths {
   display: grid;
   min-width: 0;
   gap: 0.2rem;
 }
 
-.session-diff-file strong,
+.session-diff-chevron {
+  width: 0.9rem;
+  height: 0.9rem;
+  flex: 0 0 auto;
+  margin-top: 0.05rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  transition: transform 150ms ease-out;
+}
+
+.session-diff-file-trigger[data-panel-open] .session-diff-chevron {
+  transform: rotate(90deg);
+}
+
+.session-diff-file-paths strong,
 .session-diff-old-path {
   overflow-wrap: anywhere;
   font-family: var(--font-mono);
 }
 
-.session-diff-file strong {
+.session-diff-file-paths strong {
   font-size: 0.75rem;
   font-weight: 600;
 }
@@ -3093,7 +3134,7 @@ textarea:disabled {
     padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
   }
 
-  .session-diff-file > header {
+  .session-diff-file-trigger {
     align-items: stretch;
     flex-direction: column;
     gap: 0.55rem;
