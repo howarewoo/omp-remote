@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createCatalogLoadCoordinator,
   commandResultValue,
-  loadSessionWorkingTreeDiff,
+  loadSessionFileChanges,
   patchSession,
   removeAskRequest,
   sessionSourcesReady,
@@ -296,41 +296,95 @@ describe("remote ask request state", () => {
   });
 });
 
-describe("loadSessionWorkingTreeDiff", () => {
-  it("loads and validates the selected session working-tree diff", async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          sessionId: "session/a",
-          state: "available",
-          root: "/workspace",
-          files: [],
-          fileCount: 0,
-          additions: 0,
-          deletions: 0,
-          changedLines: 0,
-          message: null,
-        }),
-        { status: 200 },
-      ),
-    );
+describe("loadSessionFileChanges", () => {
+  const availableResponse = {
+    sessionId: "session/a",
+    state: "available",
+    sources: [],
+    fileCount: 0,
+    operationCount: 0,
+    additions: 0,
+    deletions: 0,
+    changedLines: 0,
+    message: null,
+  };
 
-    await expect(loadSessionWorkingTreeDiff("session/a", undefined, fetcher)).resolves.toMatchObject({
-      sessionId: "session/a",
-      state: "available",
-    });
-    expect(fetcher).toHaveBeenCalledWith("/api/sessions/session%2Fa/diff", {});
+  it("requests the encoded changes route and validates its schema", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify(availableResponse), { status: 200 }));
+
+    await expect(loadSessionFileChanges("session/a", undefined, fetcher)).resolves.toEqual(availableResponse);
+    expect(fetcher).toHaveBeenCalledWith("/api/sessions/session%2Fa/changes", {});
   });
 
-  it("surfaces the host error message without accepting an invalid response", async () => {
+  it("passes the cancellation signal to fetch", async () => {
+    const controller = new AbortController();
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify(availableResponse), { status: 200 }));
+
+    await loadSessionFileChanges("session/a", controller.signal, fetcher);
+    expect(fetcher).toHaveBeenCalledWith("/api/sessions/session%2Fa/changes", {
+      signal: controller.signal,
+    });
+  });
+
+  it("propagates host errors before parsing an error body as a response", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ error: "Session file changes could not be read" }), {
+        status: 500,
+      }),
+    );
+
+    await expect(loadSessionFileChanges("session-1", undefined, fetcher)).rejects.toThrow(
+      "Session file changes could not be read",
+    );
+  });
+
+  it.each([
+    ["non-JSON", new Response("<html>Bad gateway</html>", { status: 502 }), 502],
+    [
+      "unreadable",
+      {
+        ok: false,
+        status: 503,
+        json: vi.fn().mockRejectedValue(new Error("Response body is unavailable")),
+      } as unknown as Response,
+      503,
+    ],
+  ])("uses the status fallback for a %s non-OK response", async (_kind, response, status) => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response);
+
+    await expect(loadSessionFileChanges("session-1", undefined, fetcher)).rejects.toThrow(
+      `Session file changes request failed (${status})`,
+    );
+  });
+
+  it("preserves cancellation when a non-OK response body read aborts", async () => {
+    const controller = new AbortController();
+    const abortFailure = new Error("Response body read aborted");
+    abortFailure.name = "AbortError";
+    const response = {
+      ok: false,
+      status: 503,
+      json: vi.fn().mockImplementation(async () => {
+        controller.abort();
+        throw abortFailure;
+      }),
+    } as unknown as Response;
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response);
+
+    await expect(loadSessionFileChanges("session-1", controller.signal, fetcher)).rejects.toBe(abortFailure);
+  });
+
+  it("rejects a successful response that violates the changes schema", async () => {
     const fetcher = vi
       .fn<typeof fetch>()
       .mockResolvedValue(
-        new Response(JSON.stringify({ error: "Working tree could not be read" }), { status: 500 }),
+        new Response(JSON.stringify({ ...availableResponse, operationCount: 1 }), { status: 200 }),
       );
 
-    await expect(loadSessionWorkingTreeDiff("session-1", undefined, fetcher)).rejects.toThrow(
-      "Working tree could not be read",
-    );
+    await expect(loadSessionFileChanges("session-1", undefined, fetcher)).rejects.toThrow();
   });
 });

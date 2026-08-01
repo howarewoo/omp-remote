@@ -153,58 +153,6 @@ export const SessionTranscriptResponseSchema = z.object({
   messages: z.array(TranscriptMessageSchema),
 });
 
-export const WorkingTreeFileStatusSchema = z.enum([
-  "modified",
-  "added",
-  "deleted",
-  "renamed",
-  "copied",
-  "untracked",
-  "type_changed",
-  "unknown",
-]);
-
-export const WorkingTreeDiffFileSchema = z
-  .object({
-    path: z.string().min(1),
-    oldPath: z.string().min(1).optional(),
-    status: WorkingTreeFileStatusSchema,
-    additions: z.number().int().nonnegative(),
-    deletions: z.number().int().nonnegative(),
-    binary: z.boolean(),
-    patch: z.string(),
-  })
-  .strict();
-
-export const SessionWorkingTreeDiffResponseSchema = z
-  .object({
-    sessionId: z.string().min(1),
-    state: z.enum(["available", "not_git", "unavailable", "oversized"]),
-    root: z.string().min(1).nullable(),
-    files: z.array(WorkingTreeDiffFileSchema),
-    fileCount: z.number().int().nonnegative(),
-    additions: z.number().int().nonnegative(),
-    deletions: z.number().int().nonnegative(),
-    changedLines: z.number().int().nonnegative(),
-    message: z.string().min(1).nullable(),
-  })
-  .strict()
-  .superRefine((response, context) => {
-    const additions = response.files.reduce((total, file) => total + file.additions, 0);
-    const deletions = response.files.reduce((total, file) => total + file.deletions, 0);
-    if (
-      response.fileCount !== response.files.length ||
-      response.additions !== additions ||
-      response.deletions !== deletions ||
-      response.changedLines !== additions + deletions
-    ) {
-      context.addIssue({ code: "custom", message: "Working-tree diff totals do not match its files" });
-    }
-    if (response.state !== "available" && response.files.length > 0) {
-      context.addIssue({ code: "custom", message: "Unavailable working-tree diffs cannot contain files" });
-    }
-  });
-
 export const SessionFileEditOperationSchema = z
   .object({
     type: z.literal("edit"),
@@ -536,7 +484,6 @@ export type ExtensionFrame = z.infer<typeof ExtensionFrameSchema>;
 export type ServerFrame = z.infer<typeof ServerFrameSchema>;
 export type SessionCatalogPage = z.infer<typeof SessionCatalogPageSchema>;
 export type SessionTranscriptResponse = z.infer<typeof SessionTranscriptResponseSchema>;
-export type SessionWorkingTreeDiffResponse = z.infer<typeof SessionWorkingTreeDiffResponseSchema>;
 export type SessionChangedFile = z.infer<typeof SessionChangedFileSchema>;
 export type SessionFileChangeSource = z.infer<typeof SessionFileChangeSourceSchema>;
 export type SessionFileChangesResponse = z.infer<typeof SessionFileChangesResponseSchema>;
@@ -548,8 +495,6 @@ export type SessionCapability = z.infer<typeof SessionCapabilitySchema>;
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 export type SkillCommand = z.infer<typeof SkillCommandSchema>;
 export type TranscriptMessage = z.infer<typeof TranscriptMessageSchema>;
-export type WorkingTreeDiffFile = z.infer<typeof WorkingTreeDiffFileSchema>;
-export type WorkingTreeFileStatus = z.infer<typeof WorkingTreeFileStatusSchema>;
 
 export function compareSessionsByCreation(left: Session, right: Session): number {
   return right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id);

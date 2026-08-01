@@ -7,7 +7,7 @@ import {
   type Effort,
   filterMainSessions,
   type Session,
-  type SessionWorkingTreeDiffResponse,
+  type SessionFileChangesResponse,
 } from "@omp-remote/protocol";
 import { SESSION_STATUS_LABEL, SESSION_STATUS_TONE } from "@omp-remote/ui";
 import {
@@ -20,7 +20,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { formatWorkingTreeMetadata, SessionDiffViewer } from "./session-diff-viewer.js";
+import { formatSessionFileChangesMetadata, SessionFileChangesViewer } from "./session-file-changes-viewer.js";
 import { SubagentSessionViewer } from "./subagent-session-viewer.js";
 import { Badge } from "./ui/badge.js";
 import { Button } from "./ui/button.js";
@@ -535,7 +535,7 @@ export interface DashboardProps {
   onSearchHistory(query: string): Promise<void>;
   onLoadMoreHistory(): Promise<void>;
   onLoadTranscript(sessionId: string): Promise<void>;
-  onLoadWorkingTreeDiff(sessionId: string, signal?: AbortSignal): Promise<SessionWorkingTreeDiffResponse>;
+  onLoadSessionFileChanges(sessionId: string, signal?: AbortSignal): Promise<SessionFileChangesResponse>;
 }
 
 export function Dashboard(props: DashboardProps) {
@@ -1725,7 +1725,7 @@ function DashboardContent({
   onSearchHistory,
   onLoadMoreHistory,
   onLoadTranscript,
-  onLoadWorkingTreeDiff,
+  onLoadSessionFileChanges,
 }: DashboardProps) {
   const [viewedSubagent, setViewedSubagent] = useState<ActiveSubagent | null>(null);
   const [message, setMessage] = useState("");
@@ -1758,12 +1758,15 @@ function DashboardContent({
   const loadedTranscriptIdRef = useRef<string | null>(null);
   const configurationRequestRef = useRef<{ sessionId: string } | null>(null);
   const configurationSessionIdRef = useRef<string | null>(null);
-  const [diffOpen, setDiffOpen] = useState(false);
-  const [workingTreeDiff, setWorkingTreeDiff] = useState<SessionWorkingTreeDiffResponse | null>(null);
-  const [workingTreeDiffLoading, setWorkingTreeDiffLoading] = useState(false);
-  const [workingTreeDiffError, setWorkingTreeDiffError] = useState<string | null>(null);
-  const diffRequestRef = useRef(0);
-  const diffAbortRef = useRef<AbortController | null>(null);
+  const [fileChangesOpen, setFileChangesOpen] = useState(false);
+  const [sessionFileChanges, setSessionFileChanges] = useState<SessionFileChangesResponse | null>(null);
+  const [sessionFileChangesLoading, setSessionFileChangesLoading] = useState(false);
+  const [sessionFileChangesError, setSessionFileChangesError] = useState<string | null>(null);
+  const [sessionFileChangesSessionId, setSessionFileChangesSessionId] = useState<string | null>(null);
+  const fileChangesRequestRef = useRef(0);
+  const fileChangesAbortRef = useRef<AbortController | null>(null);
+  const fileChangesOpenRef = useRef(false);
+  const fileChangesRefreshTimerRef = useRef<number | null>(null);
   const { isMobile, setOpenMobile } = useSidebar();
 
   const mainSessions = useMemo(() => filterMainSessions(sessions), [sessions]);
@@ -1775,32 +1778,54 @@ function DashboardContent({
       null,
     [mainSessions, selectedSessionId, sessionSections],
   );
-  const refreshWorkingTreeDiff = useCallback(
+  const clearSessionFileChangesRefreshTimer = useCallback(() => {
+    if (fileChangesRefreshTimerRef.current === null) return;
+    globalThis.clearTimeout(fileChangesRefreshTimerRef.current);
+    fileChangesRefreshTimerRef.current = null;
+  }, []);
+  const refreshSessionFileChanges = useCallback(
     async (sessionId: string) => {
-      const requestNumber = ++diffRequestRef.current;
-      diffAbortRef.current?.abort();
+      const requestNumber = ++fileChangesRequestRef.current;
+      fileChangesAbortRef.current?.abort();
       const abortController = new AbortController();
-      diffAbortRef.current = abortController;
-      setWorkingTreeDiffLoading(true);
-      setWorkingTreeDiffError(null);
+      fileChangesAbortRef.current = abortController;
+      setSessionFileChangesSessionId(sessionId);
+      setSessionFileChangesLoading(true);
+      setSessionFileChangesError(null);
       try {
-        const result = await onLoadWorkingTreeDiff(sessionId, abortController.signal);
-        if (requestNumber !== diffRequestRef.current || abortController.signal.aborted) return;
-        setWorkingTreeDiff(result);
+        const result = await onLoadSessionFileChanges(sessionId, abortController.signal);
+        if (requestNumber !== fileChangesRequestRef.current || abortController.signal.aborted) return;
+        setSessionFileChanges(result);
       } catch (failure) {
-        if (requestNumber !== diffRequestRef.current || abortController.signal.aborted) return;
-        setWorkingTreeDiff(null);
-        setWorkingTreeDiffError(
-          failure instanceof Error ? failure.message : "The working tree could not be loaded.",
+        if (requestNumber !== fileChangesRequestRef.current || abortController.signal.aborted) return;
+        setSessionFileChanges(null);
+        setSessionFileChangesError(
+          failure instanceof Error ? failure.message : "Session file changes could not be loaded.",
         );
       } finally {
-        if (requestNumber === diffRequestRef.current) {
-          setWorkingTreeDiffLoading(false);
-          if (diffAbortRef.current === abortController) diffAbortRef.current = null;
+        if (requestNumber === fileChangesRequestRef.current) {
+          setSessionFileChangesLoading(false);
+          if (fileChangesAbortRef.current === abortController) fileChangesAbortRef.current = null;
         }
       }
     },
-    [onLoadWorkingTreeDiff],
+    [onLoadSessionFileChanges],
+  );
+  const handleFileChangesOpenChange = useCallback(
+    (open: boolean) => {
+      clearSessionFileChangesRefreshTimer();
+      fileChangesOpenRef.current = open;
+      setFileChangesOpen(open);
+      if (!open) {
+        fileChangesRequestRef.current += 1;
+        fileChangesAbortRef.current?.abort();
+        fileChangesAbortRef.current = null;
+        setSessionFileChangesLoading(false);
+        return;
+      }
+      if (selectedSession?.id) void refreshSessionFileChanges(selectedSession.id);
+    },
+    [clearSessionFileChangesRefreshTimer, refreshSessionFileChanges, selectedSession?.id],
   );
   const activeAskRequest = getActiveAskRequest(askRequests, selectedSession?.id ?? null);
   const currentTodo = useMemo(
@@ -1831,7 +1856,22 @@ function DashboardContent({
     );
   }, [availableModels, modelQuery]);
   const availableEfforts = currentModelOption?.efforts ?? [];
-  const workingTreeMetadata = formatWorkingTreeMetadata(workingTreeDiff, workingTreeDiffError);
+  const sessionFileChangesMatchesSelection =
+    selectedSession !== null && sessionFileChangesSessionId === selectedSession.id;
+  const visibleSessionFileChanges = sessionFileChangesMatchesSelection ? sessionFileChanges : null;
+  const visibleSessionFileChangesError = sessionFileChangesMatchesSelection ? sessionFileChangesError : null;
+  const visibleSessionFileChangesLoading =
+    sessionFileChangesLoading ||
+    (fileChangesOpen && selectedSession !== null && !sessionFileChangesMatchesSelection);
+  const sessionFileChangesMetadata = useMemo(
+    () =>
+      formatSessionFileChangesMetadata(
+        visibleSessionFileChanges,
+        visibleSessionFileChangesError,
+        visibleSessionFileChangesLoading,
+      ),
+    [visibleSessionFileChanges, visibleSessionFileChangesError, visibleSessionFileChangesLoading],
+  );
 
   useEffect(() => {
     setActiveSkillIndex(0);
@@ -1864,32 +1904,51 @@ function DashboardContent({
   }, [selectedSession?.id]);
 
   useEffect(() => {
+    clearSessionFileChangesRefreshTimer();
     const sessionId = selectedSession?.id;
     if (!sessionId) {
-      diffRequestRef.current += 1;
-      diffAbortRef.current?.abort();
-      setWorkingTreeDiff(null);
-      setWorkingTreeDiffError(null);
-      setWorkingTreeDiffLoading(false);
-      setDiffOpen(false);
+      fileChangesRequestRef.current += 1;
+      fileChangesAbortRef.current?.abort();
+      fileChangesAbortRef.current = null;
+      fileChangesOpenRef.current = false;
+      setSessionFileChangesSessionId(null);
+      setSessionFileChanges(null);
+      setSessionFileChangesError(null);
+      setSessionFileChangesLoading(false);
+      setFileChangesOpen(false);
       return;
     }
-    diffRequestRef.current += 1;
-    diffAbortRef.current?.abort();
-    diffAbortRef.current = null;
-    setWorkingTreeDiffLoading(false);
-    setWorkingTreeDiff((current) => (current?.sessionId === sessionId ? current : null));
-    const refreshTimer = globalThis.setTimeout(() => {
-      void refreshWorkingTreeDiff(sessionId);
+    const refreshGeneration = ++fileChangesRequestRef.current;
+    fileChangesAbortRef.current?.abort();
+    fileChangesAbortRef.current = null;
+    setSessionFileChangesSessionId(sessionId);
+    setSessionFileChanges((current) => (current?.sessionId === sessionId ? current : null));
+    setSessionFileChangesError(null);
+    if (!fileChangesOpenRef.current) {
+      setSessionFileChangesLoading(false);
+      return;
+    }
+    setSessionFileChangesLoading(true);
+    fileChangesRefreshTimerRef.current = globalThis.setTimeout(() => {
+      fileChangesRefreshTimerRef.current = null;
+      if (!fileChangesOpenRef.current || fileChangesRequestRef.current !== refreshGeneration) return;
+      void refreshSessionFileChanges(sessionId);
     }, 750);
-    return () => globalThis.clearTimeout(refreshTimer);
-  }, [refreshWorkingTreeDiff, selectedSession?.id, selectedSession?.lastActivity]);
+    return clearSessionFileChangesRefreshTimer;
+  }, [
+    clearSessionFileChangesRefreshTimer,
+    refreshSessionFileChanges,
+    selectedSession?.id,
+    selectedSession?.lastActivity,
+  ]);
 
   useEffect(
     () => () => {
-      diffAbortRef.current?.abort();
+      clearSessionFileChangesRefreshTimer();
+      fileChangesRequestRef.current += 1;
+      fileChangesAbortRef.current?.abort();
     },
-    [],
+    [clearSessionFileChangesRefreshTimer],
   );
 
   useEffect(() => {
@@ -2501,20 +2560,17 @@ function DashboardContent({
                     : `${Math.round(selectedSession.contextPercent)}%`}
                 </dd>
               </div>
-              <div className="session-diff-metadata">
+              <div className="session-changes-metadata">
                 <dt>Changes</dt>
                 <dd>
                   <Button
-                    className="session-diff-trigger"
+                    className="session-changes-trigger"
                     type="button"
                     variant="ghost"
-                    aria-label={`Open working tree changes. ${workingTreeMetadata}`}
-                    onClick={() => {
-                      setDiffOpen(true);
-                      void refreshWorkingTreeDiff(selectedSession.id);
-                    }}
+                    aria-label={`Open session file changes. ${sessionFileChangesMetadata}`}
+                    onClick={() => handleFileChangesOpenChange(true)}
                   >
-                    {workingTreeMetadata}
+                    {sessionFileChangesMetadata}
                   </Button>
                 </dd>
               </div>
@@ -2739,13 +2795,13 @@ function DashboardContent({
         ) : null}
       </SubagentSessionViewer>
 
-      <SessionDiffViewer
-        open={diffOpen}
+      <SessionFileChangesViewer
+        open={fileChangesOpen}
         mobile={isMobile}
-        result={workingTreeDiff}
-        loading={workingTreeDiffLoading}
-        error={workingTreeDiffError}
-        onOpenChange={setDiffOpen}
+        result={visibleSessionFileChanges}
+        loading={visibleSessionFileChangesLoading}
+        error={visibleSessionFileChangesError}
+        onOpenChange={handleFileChangesOpenChange}
       />
       <Drawer
         open={todoOpenSessionId === selectedSession?.id && currentTodo !== null}

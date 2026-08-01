@@ -30,6 +30,7 @@ vi.mock("@omp-remote/session-client", () => ({
     searchHistory: vi.fn(),
     loadMoreHistory: vi.fn(),
     loadTranscript: vi.fn(),
+    loadSessionFileChanges: vi.fn(),
   }),
 }));
 
@@ -41,6 +42,7 @@ vi.mock("./session-notifications.js", () => ({
 interface ControlledDashboardProps {
   selectedSessionId?: string | null;
   onSelectedSessionChange?: (sessionId: string) => void;
+  onLoadSessionFileChanges?: (sessionId: string, signal?: AbortSignal) => Promise<unknown>;
 }
 
 interface AppContentProps {
@@ -91,5 +93,15 @@ describe("App session URL state", () => {
     const [, splash] = (App() as ReactElement<AppContentProps>).props.children;
 
     expect(splash.props.ready).toBe(true);
+  });
+
+  it("wires the session-derived file changes client into the dashboard", () => {
+    vi.stubGlobal("window", {
+      location: new URL("https://app.test/"),
+      history: { replaceState: vi.fn() },
+    });
+
+    const [dashboard] = (App() as ReactElement<AppContentProps>).props.children;
+    expect(dashboard.props.onLoadSessionFileChanges).toBeTypeOf("function");
   });
 });

@@ -55,7 +55,7 @@ export default function App() {
         onSearchHistory={client.searchHistory}
         onLoadMoreHistory={client.loadMoreHistory}
         onLoadTranscript={client.loadTranscript}
-        onLoadWorkingTreeDiff={client.loadWorkingTreeDiff}
+        onLoadSessionFileChanges={client.loadSessionFileChanges}
       />
       <StartupSplash ready={client.sessionsReady || Boolean(client.error)} />
     </>
