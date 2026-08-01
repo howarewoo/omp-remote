@@ -42,6 +42,7 @@ export interface SessionClient {
   setModel(sessionId: string, model: string): Promise<void>;
   setEffort(sessionId: string, effort: Effort): Promise<void>;
   respondToAsk(sessionId: string, askRequestId: string, response: AskResponse): Promise<void>;
+  askActivity(sessionId: string, askRequestId: string): Promise<void>;
   searchHistory(query: string): Promise<void>;
   loadMoreHistory(): Promise<void>;
   loadTranscript(sessionId: string): Promise<void>;
@@ -108,6 +109,7 @@ export function useSessionClient(): SessionClient {
           setAskRequests((current) => removeAskRequest(current, frame.sessionId, frame.requestId));
         } else if (frame.type === "session_removed") {
           setLiveSessions((current) => current.filter((session) => session.id !== frame.sessionId));
+          setAskRequests((current) => current.filter((request) => request.sessionId !== frame.sessionId));
         } else if (frame.type === "saved_working_directories") {
           setSavedWorkingDirectories(frame.savedWorkingDirectories);
         } else if (frame.type === "command_result") {
@@ -251,19 +253,23 @@ export function useSessionClient(): SessionClient {
     };
   }, [catalogLoads]);
 
-  const send = useCallback((frame: BrowserCommand): Promise<string | undefined> => {
-    const socket = socketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      return Promise.reject(new Error("The host is not connected"));
-    }
-    return new Promise<string | undefined>((resolve, reject) => {
-      pendingRef.current.set(frame.requestId, { commandType: frame.type, resolve, reject });
-      socket.send(JSON.stringify(frame));
-    });
-  }, []);
+  const send = useCallback(
+    (frame: Exclude<BrowserCommand, { type: "ask_activity" }>): Promise<string | undefined> => {
+      const socket = socketRef.current;
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        return Promise.reject(new Error("The host is not connected"));
+      }
+      return new Promise<string | undefined>((resolve, reject) => {
+        pendingRef.current.set(frame.requestId, { commandType: frame.type, resolve, reject });
+        socket.send(JSON.stringify(frame));
+      });
+    },
+    [],
+  );
 
   const sendVoid = useCallback(
-    (frame: BrowserCommand): Promise<void> => send(frame).then(() => undefined),
+    (frame: Exclude<BrowserCommand, { type: "ask_activity" }>): Promise<void> =>
+      send(frame).then(() => undefined),
     [send],
   );
   const launch = useCallback(
@@ -336,6 +342,13 @@ export function useSessionClient(): SessionClient {
       }),
     [sendVoid],
   );
+  const askActivity = useCallback((sessionId: string, askRequestId: string): Promise<void> => {
+    const socket = socketRef.current;
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "ask_activity", sessionId, askRequestId }));
+    }
+    return Promise.resolve();
+  }, []);
 
   const sessions = useMemo(
     () =>
@@ -366,6 +379,7 @@ export function useSessionClient(): SessionClient {
     setModel,
     setEffort,
     respondToAsk,
+    askActivity,
     searchHistory,
     loadMoreHistory,
     loadTranscript,

@@ -8,6 +8,7 @@ import { createLogger } from "@omp-remote/observability";
 import { type RpcFrame, RpcSession } from "@omp-remote/omp-rpc";
 import {
   type AskRequest,
+  type AskResponse,
   BrowserCommandSchema,
   EffortSchema,
   ExtensionFrameSchema,
@@ -33,7 +34,17 @@ import {
 } from "./catalog-reconciliation.js";
 import { resolveGitBranch } from "./git-branch.js";
 import { normalizeRawMessage, normalizeSkillCommands, ReadTargetTracker } from "./message-normalizer.js";
-import { normalizeRpcAskEvent } from "./rpc-ask.js";
+import {
+  type AskInactivityTimeout,
+  clearAskInactivityTimeout,
+  createAskInactivityTimeout,
+  expireExtensionAsk,
+  isAskResponseValid,
+  normalizeRpcAskEvent,
+  ownsCurrentExtensionSocket,
+  releaseCurrentExtensionSocket,
+  resetAskInactivityTimeout,
+} from "./rpc-ask.js";
 import { SavedWorkingDirectoryStore } from "./saved-working-directories.js";
 import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
 
@@ -118,7 +129,14 @@ const browserSockets = new Set<WebSocket>();
 const rpcSessions = new Map<string, RpcSession>();
 const extensionSockets = new Map<string, WebSocket>();
 const extensionSessionBySocket = new Map<WebSocket, string>();
-const pendingAskBySession = new Map<string, { request: AskRequest; timeout: NodeJS.Timeout | undefined }>();
+const pendingAskBySession = new Map<
+  string,
+  {
+    request: AskRequest;
+    source: "rpc" | "extension";
+    timeout: AskInactivityTimeout | undefined;
+  }
+>();
 const app = Fastify({ logger: false, bodyLimit: 1024 * 1024 });
 const requestCatalogReconciliation = createCatalogReconciler({
   refresh: () => sessionCatalog.refresh(),
@@ -244,17 +262,22 @@ app.get("/ws", { websocket: true }, (socket, request) => {
       }
       return;
     }
+    if (command.type === "ask_activity") {
+      const pending = pendingAskBySession.get(command.sessionId);
+      if (pending) {
+        resetAskInactivityTimeout(pending.timeout, command.sessionId, command.askRequestId, () =>
+          expirePendingAsk(command.sessionId, command.askRequestId, pending.source),
+        );
+      }
+      return;
+    }
+
     if (command.type === "ask_response") {
       const pending = pendingAskBySession.get(command.sessionId);
-      const rpcSession = rpcSessions.get(command.sessionId);
-      const selectedValue = "value" in command.response ? command.response.value : undefined;
       if (
         !pending ||
         pending.request.requestId !== command.askRequestId ||
-        !rpcSession ||
-        (pending.request.kind === "select" &&
-          selectedValue !== undefined &&
-          !pending.request.options.includes(selectedValue))
+        !isAskResponseValid(pending.request, command.response)
       ) {
         sendToBrowser(socket, {
           type: "command_result",
@@ -267,7 +290,26 @@ app.get("/ws", { websocket: true }, (socket, request) => {
         return;
       }
       try {
-        await rpcSession.respondToUiRequest(command.askRequestId, command.response);
+        if (pending.source === "rpc") {
+          const rpcSession = rpcSessions.get(command.sessionId);
+          if (pending.request.kind === "rich" || "kind" in command.response) {
+            throw new Error("The RPC ask response did not match its request.");
+          }
+          if (!rpcSession) throw new Error("This OMP session is no longer connected.");
+          await rpcSession.respondToUiRequest(command.askRequestId, command.response);
+        } else {
+          const extensionSocket = extensionSockets.get(command.sessionId);
+          if (extensionSocket?.readyState !== WebSocket.OPEN) {
+            throw new Error("This OMP session is no longer connected.");
+          }
+          extensionSocket.send(
+            JSON.stringify({
+              command: "ask_response",
+              requestId: command.askRequestId,
+              response: command.response,
+            }),
+          );
+        }
         clearPendingAsk(command.sessionId, command.askRequestId);
         sendToBrowser(socket, {
           type: "command_result",
@@ -346,7 +388,15 @@ app.get("/ws", { websocket: true }, (socket, request) => {
       outcome: { status: "error", error: "This OMP session is no longer connected." },
     });
   });
-  socket.on("close", () => browserSockets.delete(socket));
+  socket.on("close", () => {
+    browserSockets.delete(socket);
+    if (browserSockets.size > 0) return;
+    for (const [sessionId, pending] of pendingAskBySession) {
+      if (pending.source !== "extension") continue;
+      sendExtensionAskUnavailable(sessionId, pending.request.requestId);
+      clearPendingAsk(sessionId, pending.request.requestId);
+    }
+  });
 });
 
 app.get("/extension", { websocket: true }, (socket, request) => {
@@ -369,8 +419,23 @@ app.get("/extension", { websocket: true }, (socket, request) => {
       const catalogSession = sessionCatalog.get(frame.session.id);
       const previousSessionId = extensionSessionBySocket.get(socket);
       if (previousSessionId && previousSessionId !== frame.session.id) {
-        extensionSockets.delete(previousSessionId);
-        markSessionHistorical(previousSessionId);
+        const releasedSessionId = releaseCurrentExtensionSocket(
+          socket,
+          extensionSessionBySocket,
+          extensionSockets,
+        );
+        if (releasedSessionId) {
+          clearPendingAsk(releasedSessionId);
+          markSessionHistorical(releasedSessionId);
+        }
+      }
+      const replacedSocket = extensionSockets.get(frame.session.id);
+      if (replacedSocket && replacedSocket !== socket) {
+        const pending = pendingAskBySession.get(frame.session.id);
+        if (pending?.source === "extension") {
+          sendExtensionAskUnavailable(frame.session.id, pending.request.requestId);
+          clearPendingAsk(frame.session.id, pending.request.requestId);
+        }
       }
       extensionSessionBySocket.set(socket, frame.session.id);
       extensionSockets.set(frame.session.id, socket);
@@ -382,6 +447,40 @@ app.get("/extension", { websocket: true }, (socket, request) => {
         }),
       );
       refreshSessionBranch(frame.session.id, frame.session.cwd);
+    } else if (frame.type === "ask_request") {
+      if (
+        !ownsCurrentExtensionSocket(
+          socket,
+          frame.request.sessionId,
+          extensionSessionBySocket,
+          extensionSockets,
+        ) ||
+        frame.request.kind !== "rich" ||
+        browserSockets.size === 0
+      ) {
+        socket.send(
+          JSON.stringify({
+            command: "ask_unavailable",
+            requestId: frame.request.requestId,
+          }),
+        );
+        return;
+      }
+      setPendingAsk(frame.request, "extension");
+      socket.send(JSON.stringify({ command: "ask_admitted", requestId: frame.request.requestId }));
+    } else if (frame.type === "ask_activity") {
+      if (ownsCurrentExtensionSocket(socket, frame.sessionId, extensionSessionBySocket, extensionSockets)) {
+        const pending = pendingAskBySession.get(frame.sessionId);
+        if (pending?.source === "extension") {
+          resetAskInactivityTimeout(pending.timeout, frame.sessionId, frame.requestId, () =>
+            expirePendingAsk(frame.sessionId, frame.requestId, "extension"),
+          );
+        }
+      }
+    } else if (frame.type === "ask_cancelled") {
+      if (ownsCurrentExtensionSocket(socket, frame.sessionId, extensionSessionBySocket, extensionSockets)) {
+        clearPendingAsk(frame.sessionId, frame.requestId);
+      }
     } else if (frame.type === "heartbeat") {
       const currentSession = registry.get(frame.sessionId);
       registry.update(frame.sessionId, {
@@ -422,10 +521,9 @@ app.get("/extension", { websocket: true }, (socket, request) => {
     }
   });
   socket.on("close", () => {
-    const sessionId = extensionSessionBySocket.get(socket);
+    const sessionId = releaseCurrentExtensionSocket(socket, extensionSessionBySocket, extensionSockets);
     if (!sessionId) return;
-    extensionSessionBySocket.delete(socket);
-    if (extensionSockets.get(sessionId) === socket) extensionSockets.delete(sessionId);
+    clearPendingAsk(sessionId);
     markSessionHistorical(sessionId);
   });
 });
@@ -471,7 +569,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
     if (!sessionId) return;
     const askEvent = normalizeRpcAskEvent(sessionId, frame);
     if (askEvent?.type === "request") {
-      setPendingAsk(askEvent.request);
+      setPendingAsk(askEvent.request, "rpc");
       return;
     }
     if (askEvent?.type === "cancel") {
@@ -658,30 +756,59 @@ function broadcast(frame: ServerFrame): void {
   reportBrowserBackpressure(broadcastBrowserFrame(browserSockets, frame));
 }
 
-function setPendingAsk(request: AskRequest): void {
-  clearPendingAsk(request.sessionId);
-  let timeout: NodeJS.Timeout | undefined;
-  if (request.expiresAt) {
-    timeout = setTimeout(
-      () => clearPendingAsk(request.sessionId, request.requestId),
-      Math.max(0, Date.parse(request.expiresAt) - Date.now()),
-    );
-    timeout.unref();
+function setPendingAsk(request: AskRequest, source: "rpc" | "extension"): void {
+  const previous = pendingAskBySession.get(request.sessionId);
+  if (previous?.source === "extension") {
+    sendExtensionAskUnavailable(request.sessionId, previous.request.requestId);
   }
-  pendingAskBySession.set(request.sessionId, { request, timeout });
+  clearPendingAsk(request.sessionId);
+  const timeout = createAskInactivityTimeout(request.sessionId, request.requestId, request.expiresAt, () =>
+    expirePendingAsk(request.sessionId, request.requestId, source),
+  );
+  pendingAskBySession.set(request.sessionId, { request, source, timeout });
   broadcast({ type: "ask_request", request });
 }
 
 function clearPendingAsk(sessionId: string, requestId?: string): void {
   const pending = pendingAskBySession.get(sessionId);
   if (!pending || (requestId !== undefined && pending.request.requestId !== requestId)) return;
-  clearTimeout(pending.timeout);
+  clearAskInactivityTimeout(pending.timeout);
   pendingAskBySession.delete(sessionId);
   broadcast({
     type: "ask_cancelled",
     sessionId,
     requestId: pending.request.requestId,
   });
+}
+
+function expirePendingAsk(sessionId: string, requestId: string, source: "rpc" | "extension"): void {
+  const pending = pendingAskBySession.get(sessionId);
+  if (!pending || pending.request.requestId !== requestId || pending.source !== source) return;
+  if (source === "extension") {
+    expireExtensionAsk(sessionId, requestId, sendExtensionAskResponse, clearPendingAsk);
+  } else {
+    clearPendingAsk(sessionId, requestId);
+  }
+}
+
+function sendExtensionAskResponse(sessionId: string, requestId: string, response: AskResponse): void {
+  const socket = extensionSockets.get(sessionId);
+  if (socket?.readyState === WebSocket.OPEN) {
+    socket.send(
+      JSON.stringify({
+        command: "ask_response",
+        requestId,
+        response,
+      }),
+    );
+  }
+}
+
+function sendExtensionAskUnavailable(sessionId: string, requestId: string): void {
+  const socket = extensionSockets.get(sessionId);
+  if (socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ command: "ask_unavailable", requestId }));
+  }
 }
 
 function reportBrowserBackpressure(result: BrowserFrameDeliveryResult): void {

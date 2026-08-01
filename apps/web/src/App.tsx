@@ -51,6 +51,7 @@ export default function App() {
         onSetModel={client.setModel}
         onSetEffort={client.setEffort}
         onRespondToAsk={client.respondToAsk}
+        onAskActivity={client.askActivity}
         onSearchHistory={client.searchHistory}
         onLoadMoreHistory={client.loadMoreHistory}
         onLoadTranscript={client.loadTranscript}
