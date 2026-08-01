@@ -448,7 +448,7 @@ describe("ToolTranscriptText", () => {
     expect(nodes.some((node) => node.text.includes("1091:  return <details />;"))).toBe(false);
   });
 
-  it("hides an untargeted Read error in the static frame", () => {
+  it("renders an untargeted Read error as a closed inspectable disclosure", () => {
     const text = "Error: file not found";
     const disclosure = ToolTranscriptText({
       entry: {
@@ -462,11 +462,19 @@ describe("ToolTranscriptText", () => {
       },
     });
     const nodes = renderTranscriptNodes(disclosure);
+    const details = nodes.find((node) => node.type === "details");
 
+    expect(nodes[0]).toEqual(
+      expect.objectContaining({
+        type: "div",
+        className: expect.stringContaining("read-result-disclosure"),
+      }),
+    );
+    expect(details?.open).toBe(false);
     expect(nodes.find((node) => node.className === "message-author")?.text).toContain("Read");
-    expect(nodes.some((node) => node.className === "tool-message-preview")).toBe(false);
-    expect(nodes.some((node) => node.text.includes(text))).toBe(false);
-    expect(nodes.some((node) => node.className === "tool-output-divider")).toBe(false);
+    expect(nodes.find((node) => node.className === "read-result-preview")?.text).toBe(text);
+    expect(nodes.filter((node) => node.className === "transcript-disclosure-text")).toHaveLength(2);
+    expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
   });
 
   it("shows metadata-backed Read filenames without rendering the result", () => {
@@ -489,67 +497,105 @@ describe("ToolTranscriptText", () => {
     expect(nodes.some((node) => node.text.includes("canonical read result"))).toBe(false);
   });
 
-  it("renders literal skill Read preview and full text with its separator and resolved path", () => {
+  it.each([
+    "skill://using-woostack/references/session-learning.md",
+    "pr://howarewoo/omp-remote/42",
+    "issue://OMP-123",
+    "agent://reviewer-1/output",
+    "artifact://dashboard-result",
+    "history://session-1",
+    "memory://notes/current",
+    "mcp://linear/issues",
+    "local://implementation-plan.md",
+    "rule://typescript",
+    "vault://team/secret",
+    "conflict://packages/features/sessions/src/components/dashboard.tsx",
+    "https://example.com/docs/read?mode=raw#result",
+  ])("renders the complete URI-like Read target in a closed inspectable disclosure: %s", (readTarget) => {
+    const text = "# Heading\n**bold** and [docs](https://example.com)\n- literal";
     const disclosure = ToolTranscriptText({
       entry: {
-        id: "skill-read",
+        id: `uri-read-${readTarget}`,
         role: "tool",
         toolName: "read",
-        readTarget: "skill://using-woostack/references/session-learning.md",
-        readResolvedPath: "/Users/example/.agents/skills/using-woostack/references/session-learning.md",
-        text: "# Session learning\n- Keep **output** [compact](https://example.com).\nUse `literal code`.\n```ts\nconst compact = true;\n```",
+        readTarget,
+        text,
         timestamp: "2026-07-29T12:00:00.000Z",
         streaming: false,
         presentation: "text",
       },
     });
     const nodes = renderTranscriptNodes(disclosure);
+    const details = nodes.find((node) => node.type === "details");
     const rawTextNodes = nodes.filter((node) => node.className === "transcript-disclosure-text");
-    const structuredTypes: Record<string, true> = {
-      h1: true,
-      h2: true,
-      h3: true,
-      h4: true,
-      h5: true,
-      h6: true,
-      ul: true,
-      ol: true,
-      li: true,
-      a: true,
-      strong: true,
-      code: true,
-    };
 
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain(
-      "Read skill://using-woostack/references/session-learning.md",
+    expect(nodes[0]).toEqual(
+      expect.objectContaining({
+        type: "div",
+        className: expect.stringContaining("read-result-disclosure"),
+      }),
     );
-    expect(rawTextNodes).toHaveLength(2);
-    expect(rawTextNodes.map((node) => node.text)).toEqual([
-      "# Session learning\n- Keep **output** [compact](https://example.com).\nUse `literal code`.\n```ts\nconst compact = true;\n```",
-      "# Session learning\n- Keep **output** [compact](https://example.com).\nUse `literal code`.\n```ts\nconst compact = true;\n```",
-    ]);
-    expect(nodes.some((node) => node.type !== undefined && node.type in structuredTypes)).toBe(false);
-    expect(
-      nodes.some((node) => node.className === "transcript-message-diff" || node.className === "code-block"),
-    ).toBe(false);
-    expect(nodes.find((node) => node.className === "skill-read-resolved-path")?.text).toContain(
-      "Resolved path: /Users/example/.agents/skills/using-woostack/references/session-learning.md",
-    );
+    expect(details?.open).toBe(false);
+    expect(nodes.find((node) => node.className === "message-author")?.text).toContain(`Read ${readTarget}`);
+    expect(rawTextNodes.map((node) => node.text)).toEqual([text, text]);
+    expect(nodes.some((node) => ["a", "strong", "code"].includes(node.type ?? ""))).toBe(false);
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
-    expect(nodes.findIndex((node) => node.className === "tool-output-divider")).toBeLessThan(
-      nodes.findIndex((node) => node.className === "skill-read-preview"),
+  });
+
+  it("infers a URI-like Read target from the snapshot header", () => {
+    const readTarget = "pr://howarewoo/omp-remote/42";
+    const text = `[${readTarget}#ABCD]\nPull request result`;
+    const nodes = renderTranscriptNodes(
+      ToolTranscriptText({
+        entry: {
+          id: "header-uri-read",
+          role: "tool",
+          toolName: "read",
+          text,
+          timestamp: "2026-07-29T12:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      }),
+    );
+
+    expect(nodes[0]?.className).toContain("read-result-disclosure");
+    expect(nodes.find((node) => node.className === "message-author")?.text).toContain(`Read ${readTarget}`);
+    expect(
+      nodes.filter((node) => node.className === "transcript-disclosure-text").map((node) => node.text),
+    ).toEqual([text, text]);
+  });
+
+  it("shows resolved-path metadata for an inspectable Read result", () => {
+    const readResolvedPath = "/Users/example/.agents/skills/using-woostack/references/session-learning.md";
+    const disclosure = ToolTranscriptText({
+      entry: {
+        id: "resolved-uri-read",
+        role: "tool",
+        toolName: "read",
+        readTarget: "skill://using-woostack/references/session-learning.md",
+        readResolvedPath,
+        text: "literal result",
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    });
+    const nodes = renderTranscriptNodes(disclosure);
+
+    expect(nodes.find((node) => node.className === "read-result-resolved-path")?.text).toContain(
+      `Resolved path: ${readResolvedPath}`,
     );
   });
 
-  it("renders a root skill Read with a truncated preview and SKILL.md path", () => {
+  it("truncates an inspectable Read preview without truncating its expandable raw result", () => {
     const text = Array.from({ length: 14 }, (_, index) => `line ${index + 1}`).join("\n");
     const disclosure = ToolTranscriptText({
       entry: {
-        id: "root-skill-read",
+        id: "truncated-uri-read",
         role: "tool",
         toolName: "read",
-        readTarget: "skill://using-woostack",
-        readResolvedPath: "/Users/example/.agents/skills/using-woostack/SKILL.md",
+        readTarget: "ssh://example.com/var/log/omp.log",
         text,
         timestamp: "2026-07-29T12:00:00.000Z",
         streaming: false,
@@ -558,13 +604,10 @@ describe("ToolTranscriptText", () => {
     });
     const nodes = renderTranscriptNodes(disclosure);
 
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain(
-      "Read skill://using-woostack",
+    expect(nodes.find((node) => node.className === "read-result-preview")?.text).toContain(
+      "line 12… 2 more lines",
     );
-    expect(nodes.find((node) => node.className === "skill-read-preview")?.text).toContain("… 2 more lines");
-    expect(nodes.find((node) => node.className === "skill-read-resolved-path")?.text).toContain(
-      "Resolved path: /Users/example/.agents/skills/using-woostack/SKILL.md",
-    );
+    expect(nodes.filter((node) => node.className === "transcript-disclosure-text").at(-1)?.text).toBe(text);
   });
 
   it("renders adjacent Reads as separate sequential scroller items", () => {
@@ -1014,6 +1057,7 @@ describe("parseTranscriptBlocks", () => {
 
 interface RenderedNode {
   className?: string;
+  open?: boolean;
   type?: string;
   text: string;
 }
@@ -1047,6 +1091,7 @@ function renderTranscriptNodes(node: ReactNode): RenderedNode[] {
     {
       type: element.type,
       ...(typeof element.props.className === "string" ? { className: element.props.className } : {}),
+      ...(typeof element.props.open === "boolean" ? { open: element.props.open } : {}),
       text: childGroups.map((children) => children[0]?.text ?? "").join(""),
     },
     ...childGroups.flat(),
