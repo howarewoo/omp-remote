@@ -137,6 +137,98 @@ describe("normalizeRawMessage", () => {
       ),
     ).toMatchObject({ readTarget: "/work/omp-remote/src" });
   });
+
+  it("preserves only validated resolved-path metadata for a skill read result", () => {
+    expect(
+      normalizeRawMessage(
+        {
+          id: "skill-read-result",
+          role: "toolResult",
+          toolName: "read",
+          content: "# Session learning",
+          details: {
+            meta: { source: { value: "skill://using-woostack/references/session-learning.md" } },
+            resolvedPath: "  /Users/example/.agents/skills/using-woostack/references/session-learning.md  ",
+            unrelated: { secret: true },
+          },
+        },
+        false,
+        "fallback-id",
+      ),
+    ).toEqual({
+      id: "skill-read-result",
+      role: "tool",
+      text: "# Session learning",
+      timestamp: expect.any(String),
+      streaming: false,
+      presentation: "text",
+      toolName: "read",
+      readTarget: "skill://using-woostack/references/session-learning.md",
+      readResolvedPath: "/Users/example/.agents/skills/using-woostack/references/session-learning.md",
+    });
+  });
+
+  it("keeps read results valid when resolved-path metadata is absent", () => {
+    const result = normalizeRawMessage(
+      {
+        id: "skill-read-without-resolved-path",
+        role: "toolResult",
+        toolName: "read",
+        content: "# Session learning",
+        details: {
+          meta: { source: { value: "skill://using-woostack/references/session-learning.md" } },
+        },
+      },
+      false,
+      "fallback-id",
+    );
+
+    expect(result).toMatchObject({
+      readTarget: "skill://using-woostack/references/session-learning.md",
+    });
+    expect(result).not.toHaveProperty("readResolvedPath");
+  });
+
+  it.each([
+    ["blank", "   "],
+    ["multiline", "/Users/example/skill.md\n/private"],
+    ["non-string", 42],
+    ["overlong", "x".repeat(10_001)],
+  ])("omits %s resolved-path metadata", (_case, resolvedPath) => {
+    expect(
+      normalizeRawMessage(
+        {
+          id: "skill-read-malformed-path",
+          role: "toolResult",
+          toolName: "read",
+          content: "# Session learning",
+          details: {
+            meta: { source: { value: "skill://using-woostack/references/session-learning.md" } },
+            resolvedPath,
+          },
+        },
+        false,
+        "fallback-id",
+      ),
+    ).not.toHaveProperty("readResolvedPath");
+  });
+
+  it("does not preserve resolved-path details for other tools", () => {
+    expect(
+      normalizeRawMessage(
+        {
+          id: "bash-result-details",
+          role: "toolResult",
+          toolName: "bash",
+          content: "command output",
+          details: { resolvedPath: "/Users/example/.agents/skills/private.md" },
+        },
+        false,
+        "fallback-id",
+      ),
+    ).not.toHaveProperty("readResolvedPath");
+  });
+
   it.each([":1-180", ":raw", ":5-16,960-973"])(
     "correlates a read call so its requested %s selector survives result normalization",
     (selector) => {

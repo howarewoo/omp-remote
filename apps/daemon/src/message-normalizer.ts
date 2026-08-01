@@ -27,6 +27,7 @@ const CanonicalReadDetailsSchema = z
       .passthrough()
       .optional(),
     path: z.unknown().optional(),
+    resolvedPath: z.unknown().optional(),
   })
   .passthrough();
 const CanonicalReadToolCallSchema = z
@@ -57,7 +58,7 @@ export class ReadTargetTracker {
       if (!parsed.success) continue;
       const toolCallId = typeof parsed.data.toolCallId === "string" ? parsed.data.toolCallId : parsed.data.id;
       const toolName = typeof parsed.data.toolName === "string" ? parsed.data.toolName : parsed.data.name;
-      const target = normalizeReadTarget(parsed.data.arguments.path);
+      const target = normalizeBoundedSingleLine(parsed.data.arguments.path);
       if (toolName === "read" && typeof toolCallId === "string" && toolCallId && target) {
         this.#targets.set(toolCallId, target);
       }
@@ -103,10 +104,18 @@ export function normalizeRawMessage(
   const { data } = parsed;
   if (data.role === "assistant") options.readTargetTracker?.capture(data.content);
   const toolName = typeof data.toolName === "string" && data.toolName.trim() ? data.toolName : undefined;
-  const readTarget =
-    data.role === "toolResult" && toolName === "read"
-      ? (options.readTargetTracker?.resolve(data.toolCallId, !streaming) ??
-        extractCanonicalReadTarget(data.details))
+  const isReadToolResult = data.role === "toolResult" && toolName === "read";
+  const canonicalReadDetails = isReadToolResult ? CanonicalReadDetailsSchema.safeParse(data.details) : null;
+  const readTarget = isReadToolResult
+    ? (options.readTargetTracker?.resolve(data.toolCallId, !streaming) ??
+      (canonicalReadDetails?.success
+        ? (normalizeBoundedSingleLine(canonicalReadDetails.data.meta?.source?.value) ??
+          normalizeBoundedSingleLine(canonicalReadDetails.data.path))
+        : undefined))
+    : undefined;
+  const readResolvedPath =
+    canonicalReadDetails?.success === true
+      ? normalizeBoundedSingleLine(canonicalReadDetails.data.resolvedPath)
       : undefined;
   const canonicalDiff =
     data.role === "toolResult" &&
@@ -145,6 +154,7 @@ export function normalizeRawMessage(
     presentation: isCanonicalEditDiff ? "diff" : "text",
     ...(toolName ? { toolName } : {}),
     ...(readTarget ? { readTarget } : {}),
+    ...(readResolvedPath ? { readResolvedPath } : {}),
   };
 }
 
@@ -162,17 +172,10 @@ export function normalizeSkillCommands(raw: unknown): SkillCommand[] {
   return commands;
 }
 
-function extractCanonicalReadTarget(details: unknown): string | undefined {
-  const parsed = CanonicalReadDetailsSchema.safeParse(details);
-  if (!parsed.success) return undefined;
-
-  return normalizeReadTarget(parsed.data.meta?.source?.value) ?? normalizeReadTarget(parsed.data.path);
-}
-
-function normalizeReadTarget(value: unknown): string | undefined {
+function normalizeBoundedSingleLine(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
-  const target = value.trim();
-  return target && target.length <= 10_000 && !/[\0\r\n]/.test(target) ? target : undefined;
+  const normalized = value.trim();
+  return normalized && normalized.length <= 10_000 && !/[\0\r\n]/.test(normalized) ? normalized : undefined;
 }
 
 function extractText(content: RawMessageContent): string {

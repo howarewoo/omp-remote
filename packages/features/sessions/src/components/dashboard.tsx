@@ -640,7 +640,7 @@ const HighlightedCode = memo(function HighlightedCode({
 
 export function TranscriptCodeBlock({ code, language }: { code: string; language: string | null }) {
   return (
-    <details className="code-block">
+    <details className="transcript-disclosure-frame code-block">
       <summary>
         <span className="code-block-chevron" aria-hidden="true" />
         <span>{language ?? "code"}</span>
@@ -1070,7 +1070,7 @@ export function GroupedReadTranscript({
         <div className="grouped-read-results">
           {entries.map((entry) => (
             <div className="grouped-read-result" key={entry.id}>
-              <ToolTranscriptText entry={entry} />
+              <ToolTranscriptText entry={entry} groupedReadResult />
             </div>
           ))}
         </div>
@@ -1135,7 +1135,7 @@ function TranscriptEntryHeader({
 
 export function SystemTranscriptText({ entry }: { entry: Session["messages"][number] }) {
   return (
-    <details className="system-message-disclosure">
+    <details className="system-message-disclosure transcript-disclosure-frame">
       <summary>
         <TranscriptEntryHeader entry={entry} collapsible />
         <span className="system-message-preview">{formatSystemTextPreview(entry.text)}</span>
@@ -1154,6 +1154,46 @@ function TranscriptEntryContent({ entry }: { entry: Session["messages"][number] 
     </div>
   ) : (
     <TranscriptText text={entry.text} />
+  );
+}
+
+const SKILL_READ_PREVIEW_LINES = 6;
+
+function renderSkillReadTranscript(entry: TranscriptEntryMessage) {
+  const lines = entry.text ? entry.text.split(/\r\n|\n|\r/) : [];
+  if (lines[lines.length - 1] === "") lines.pop();
+  const preview = lines.slice(0, SKILL_READ_PREVIEW_LINES).join("\n");
+  const remainingLineCount = Math.max(0, lines.length - SKILL_READ_PREVIEW_LINES);
+
+  return (
+    <details
+      className="tool-message-disclosure transcript-disclosure-frame skill-read-disclosure"
+      open={false}
+    >
+      <summary>
+        <TranscriptEntryHeader entry={entry} authorLabel={`Read ${entry.readTarget}`} collapsible />
+        <div className="skill-read-collapsed">
+          <div className="skill-read-preview">
+            <TranscriptText text={preview || "No tool output"} />
+          </div>
+          {remainingLineCount > 0 ? (
+            <div className="skill-read-expand">
+              <span>
+                {remainingLineCount} more {remainingLineCount === 1 ? "line" : "lines"}
+              </span>
+              <span>Expand</span>
+            </div>
+          ) : null}
+          {entry.readResolvedPath ? (
+            <div className="skill-read-output">
+              <span className="skill-read-output-label">Output</span>
+              <span className="skill-read-resolved-path">Resolved path: {entry.readResolvedPath}</span>
+            </div>
+          ) : null}
+        </div>
+      </summary>
+      <TranscriptEntryContent entry={entry} />
+    </details>
   );
 }
 
@@ -1181,7 +1221,7 @@ export function TodoToolTranscript({
   const progressVerb = hasDroppedTasks ? "resolved" : "complete";
 
   return (
-    <details className="tool-message-disclosure todo-tool-disclosure">
+    <details className="tool-message-disclosure transcript-disclosure-frame todo-tool-disclosure">
       <summary>
         <TranscriptEntryHeader entry={entry} collapsible />
         <div className="todo-tool-summary">
@@ -1255,7 +1295,17 @@ export function TodoToolTranscript({
 
 const MemoizedTodoToolTranscript = memo(TodoToolTranscript);
 
-export function ToolTranscriptText({ entry }: { entry: Session["messages"][number] }) {
+export function ToolTranscriptText({
+  entry,
+  groupedReadResult = false,
+}: {
+  entry: Session["messages"][number];
+  groupedReadResult?: boolean;
+}) {
+  if (!groupedReadResult && entry.toolName === "read" && entry.readTarget?.startsWith("skill://")) {
+    return renderSkillReadTranscript(entry);
+  }
+
   const todo = entry.toolName === "todo" ? parseTodoResult(entry.text) : null;
   if (todo) return <MemoizedTodoToolTranscript entry={entry} todo={todo} />;
 
@@ -1264,7 +1314,12 @@ export function ToolTranscriptText({ entry }: { entry: Session["messages"][numbe
 
   return (
     <details
-      className={cn("tool-message-disclosure", isWrite && "write-tool-disclosure")}
+      className={cn(
+        "tool-message-disclosure",
+        groupedReadResult
+          ? "grouped-read-result-disclosure"
+          : "transcript-disclosure-frame tool-output-disclosure",
+      )}
       open={entry.toolName === "edit" || isWrite}
     >
       <summary>
@@ -1277,11 +1332,11 @@ export function ToolTranscriptText({ entry }: { entry: Session["messages"][numbe
           <pre className="tool-message-preview">{formatToolTextPreview(entry.text)}</pre>
         )}
       </summary>
-      {isWrite ? (
-        <div className="write-tool-output-divider">
+      {groupedReadResult ? null : (
+        <div className="tool-output-divider">
           <span>Output</span>
         </div>
-      ) : null}
+      )}
       <TranscriptEntryContent entry={entry} />
     </details>
   );

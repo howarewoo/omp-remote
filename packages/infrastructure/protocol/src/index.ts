@@ -31,6 +31,7 @@ export const TranscriptMessageSchema = z.object({
   presentation: TranscriptPresentationSchema.default("text"),
   toolName: z.string().min(1).optional(),
   readTarget: z.string().min(1).optional(),
+  readResolvedPath: z.string().min(1).optional(),
 });
 
 export const ActiveSubagentSchema = z.object({

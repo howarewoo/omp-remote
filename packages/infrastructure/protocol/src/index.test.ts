@@ -223,6 +223,24 @@ describe("TranscriptMessageSchema", () => {
     });
   });
 
+  it("preserves optional resolved-path metadata for read results", () => {
+    expect(
+      TranscriptMessageSchema.parse({
+        id: "skill-read-result-1",
+        role: "tool",
+        text: "# Session learning",
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        toolName: "read",
+        readTarget: "skill://using-woostack/references/session-learning.md",
+        readResolvedPath: "/Users/example/.agents/skills/using-woostack/references/session-learning.md",
+      }),
+    ).toMatchObject({
+      readTarget: "skill://using-woostack/references/session-learning.md",
+      readResolvedPath: "/Users/example/.agents/skills/using-woostack/references/session-learning.md",
+    });
+  });
+
   it("defaults legacy transcript frames to text presentation", () => {
     expect(
       TranscriptMessageSchema.parse({
