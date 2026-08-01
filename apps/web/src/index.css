@@ -1994,14 +1994,7 @@ textarea:disabled {
   display: none;
 }
 
-.system-message-preview {
-  display: -webkit-box;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
+.transcript-disclosure-text,
 .tool-message-preview {
   min-width: 0;
   margin: 0;
@@ -2010,13 +2003,20 @@ textarea:disabled {
   font-family: inherit;
   font-size: inherit;
   line-height: inherit;
+  text-align: start;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
+.system-message-disclosure > summary > .transcript-disclosure-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
 :is(.system-message-disclosure, .tool-message-disclosure)
   > :where(summary:hover)
-  > :where(.system-message-preview, .tool-message-preview) {
+  > :where(.transcript-disclosure-text, .tool-message-preview) {
   color: var(--foreground);
 }
 
@@ -2043,7 +2043,7 @@ textarea:disabled {
 
 :is(.system-message-disclosure, .tool-message-disclosure)[open]
   > :where(summary)
-  > :where(.system-message-preview, .tool-message-preview) {
+  > :where(.transcript-disclosure-text, .tool-message-preview) {
   display: none;
 }
 
@@ -2089,17 +2089,7 @@ textarea:disabled {
   min-width: 0;
 }
 
-.skill-read-preview > .transcript-message,
-.skill-read-content > .transcript-message {
-  max-width: 100%;
-  color: var(--omp-gray);
-}
-
-.skill-read-preview > .transcript-message {
-  padding: 0;
-}
-
-.skill-read-content > .transcript-message {
+.skill-read-content > .transcript-disclosure-text {
   padding: 0 0.75rem 0.75rem;
 }
 
@@ -2158,7 +2148,7 @@ textarea:disabled {
   border-bottom: 1px solid var(--omp-dark-gray);
 }
 
-.transcript-disclosure-frame > .transcript-message,
+.transcript-disclosure-frame > :is(.transcript-message, .transcript-disclosure-text),
 .todo-tool-disclosure > .todo-phase-list {
   padding: 0 0.75rem 0.75rem;
 }

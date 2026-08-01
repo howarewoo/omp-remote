@@ -368,9 +368,36 @@ describe("ToolTranscriptText", () => {
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
     expect(nodes.find((node) => node.className === "message-author")?.text).toContain("Bash: pnpm test");
     expect(nodes.findIndex((node) => node.className === "tool-output-divider")).toBeLessThan(
-      nodes.findIndex((node) => node.className === "tool-message-preview"),
+      nodes.findIndex((node) => node.className === "transcript-disclosure-text"),
     );
     expect(block.props.children[0].props.children[2].props.children).toBe(formatToolTextPreview(text));
+  });
+
+  it("keeps markdown-like generic output literal with one preview and expanded text style", () => {
+    const text = "# Heading\n**bold** and [docs](https://example.com)\n- item";
+    const disclosure = ToolTranscriptText({
+      entry: {
+        id: "tool-raw-text",
+        role: "tool",
+        toolName: "bash",
+        text,
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    });
+    const preview = disclosure.props.children[0].props.children[2];
+    const expanded = disclosure.props.children[1];
+
+    expect(preview.type).toBe("pre");
+    expect(expanded.type).toBe("pre");
+    expect(preview.props.className).toBe("transcript-disclosure-text");
+    expect(expanded.props.className).toBe(preview.props.className);
+    expect(preview.props.children).toBe(formatToolTextPreview(text));
+    expect(expanded.props.children).toBe(text);
+    expect(renderTranscriptNodes(expanded).some((node) => node.type === "strong" || node.type === "a")).toBe(
+      false,
+    );
   });
 
   it("shows the Grep query, result counts, and scope in the disclosure header", () => {
@@ -417,7 +444,7 @@ describe("ToolTranscriptText", () => {
     expect(disclosure.type).toBe("div");
     expect(nodes.find((node) => node.className === "message-author")?.text).toContain("Read: dashboard.tsx");
     expect(nodes.some((node) => node.className === "tool-message-preview")).toBe(false);
-    expect(nodes.some((node) => node.className === "tool-output-divider")).toBe(true);
+    expect(nodes.some((node) => node.className === "tool-output-divider")).toBe(false);
     expect(nodes.some((node) => node.text.includes("1091:  return <details />;"))).toBe(false);
   });
 
@@ -439,7 +466,7 @@ describe("ToolTranscriptText", () => {
     expect(nodes.find((node) => node.className === "message-author")?.text).toContain("Read");
     expect(nodes.some((node) => node.className === "tool-message-preview")).toBe(false);
     expect(nodes.some((node) => node.text.includes(text))).toBe(false);
-    expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
+    expect(nodes.some((node) => node.className === "tool-output-divider")).toBe(false);
   });
 
   it("shows metadata-backed Read filenames without rendering the result", () => {
@@ -462,7 +489,7 @@ describe("ToolTranscriptText", () => {
     expect(nodes.some((node) => node.text.includes("canonical read result"))).toBe(false);
   });
 
-  it("renders a skill Read preview and resolved path", () => {
+  it("renders literal skill Read preview and full text with its separator and resolved path", () => {
     const disclosure = ToolTranscriptText({
       entry: {
         id: "skill-read",
@@ -470,20 +497,41 @@ describe("ToolTranscriptText", () => {
         toolName: "read",
         readTarget: "skill://using-woostack/references/session-learning.md",
         readResolvedPath: "/Users/example/.agents/skills/using-woostack/references/session-learning.md",
-        text: "# Session learning\nKeep output compact.",
+        text: "# Session learning\n- Keep **output** [compact](https://example.com).\nUse `literal code`.\n```ts\nconst compact = true;\n```",
         timestamp: "2026-07-29T12:00:00.000Z",
         streaming: false,
         presentation: "text",
       },
     });
     const nodes = renderTranscriptNodes(disclosure);
+    const rawTextNodes = nodes.filter((node) => node.className === "transcript-disclosure-text");
+    const structuredTypes: Record<string, true> = {
+      h1: true,
+      h2: true,
+      h3: true,
+      h4: true,
+      h5: true,
+      h6: true,
+      ul: true,
+      ol: true,
+      li: true,
+      a: true,
+      strong: true,
+      code: true,
+    };
 
     expect(nodes.find((node) => node.className === "message-author")?.text).toContain(
       "Read skill://using-woostack/references/session-learning.md",
     );
-    expect(nodes.find((node) => node.className === "skill-read-preview")?.text).toContain(
-      "Keep output compact.",
-    );
+    expect(rawTextNodes).toHaveLength(2);
+    expect(rawTextNodes.map((node) => node.text)).toEqual([
+      "# Session learning\n- Keep **output** [compact](https://example.com).\nUse `literal code`.\n```ts\nconst compact = true;\n```",
+      "# Session learning\n- Keep **output** [compact](https://example.com).\nUse `literal code`.\n```ts\nconst compact = true;\n```",
+    ]);
+    expect(nodes.some((node) => node.type !== undefined && node.type in structuredTypes)).toBe(false);
+    expect(
+      nodes.some((node) => node.className === "transcript-message-diff" || node.className === "code-block"),
+    ).toBe(false);
     expect(nodes.find((node) => node.className === "skill-read-resolved-path")?.text).toContain(
       "Resolved path: /Users/example/.agents/skills/using-woostack/references/session-learning.md",
     );
@@ -597,7 +645,7 @@ describe("ToolTranscriptText", () => {
     expect(disclosure.props.children[0].type).toBe("summary");
     expect(nodes.find((node) => node.className === "message-author")?.text).toContain("write");
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
-    expect(nodes.find((node) => node.className === "transcript-message")?.text).toContain(
+    expect(nodes.find((node) => node.className === "transcript-disclosure-text")?.text).toContain(
       "packages/features/sessions/src/components/dashboard.tsx",
     );
   });
@@ -811,6 +859,31 @@ describe("SystemTranscriptText", () => {
     ).toBe(true);
   });
 
+  it("keeps markdown-like expanded system text literal with the preview style", () => {
+    const text = "# Notice\n**literal emphasis** and [link](https://example.com)";
+    const disclosure = SystemTranscriptText({
+      entry: {
+        id: "system-raw-text",
+        role: "system",
+        text,
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    });
+    const preview = disclosure.props.children[0].props.children[1];
+    const expanded = disclosure.props.children[1];
+
+    expect(preview.type).toBe("pre");
+    expect(expanded.type).toBe("pre");
+    expect(preview.props.className).toBe("transcript-disclosure-text");
+    expect(expanded.props.className).toBe(preview.props.className);
+    expect(expanded.props.children).toBe(text);
+    expect(renderTranscriptNodes(expanded).some((node) => node.type === "strong" || node.type === "a")).toBe(
+      false,
+    );
+  });
+
   it.each([
     ["", "System message"],
     ["  Build finished.\nNo errors.  ", "Build finished. No errors."],
@@ -1009,7 +1082,9 @@ describe("structured transcript presentation", () => {
     );
 
     expect(nodes.some((node) => node.type === "article")).toBe(true);
-    expect(nodes.find((node) => node.className === "tool-message-preview")?.text).toBe("No tool output");
+    expect(nodes.find((node) => node.className === "transcript-disclosure-text")?.text).toBe(
+      "No tool output",
+    );
   });
 
   it("renders a canonical numbered edit diff with tool identity", () => {

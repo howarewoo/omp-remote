@@ -1028,14 +1028,18 @@ function TranscriptEntryHeader({
   );
 }
 
+function renderDisclosureTranscriptText(text: string) {
+  return <pre className="transcript-disclosure-text">{text}</pre>;
+}
+
 export function SystemTranscriptText({ entry }: { entry: Session["messages"][number] }) {
   return (
     <details className="system-message-disclosure transcript-disclosure-frame">
       <summary>
         <TranscriptEntryHeader entry={entry} collapsible />
-        <span className="system-message-preview">{formatSystemTextPreview(entry.text)}</span>
+        {renderDisclosureTranscriptText(formatSystemTextPreview(entry.text))}
       </summary>
-      <TranscriptText text={entry.text} />
+      {renderDisclosureTranscriptText(entry.text)}
     </details>
   );
 }
@@ -1181,13 +1185,13 @@ function SkillReadTranscript({
           <TranscriptEntryHeader entry={entry} authorLabel={authorLabel} collapsible />
           <ToolOutputDivider />
           <div className="skill-read-preview">
-            <TranscriptText text={preview} />
+            {renderDisclosureTranscriptText(preview)}
             {hiddenLineCount > 0 ? (
               <span className="skill-read-more">… {hiddenLineCount} more lines</span>
             ) : null}
           </div>
         </summary>
-        <TranscriptEntryContent entry={entry} />
+        {renderDisclosureTranscriptText(entry.text)}
       </details>
       {entry.readResolvedPath ? (
         <div className="skill-read-output">
@@ -1221,7 +1225,6 @@ export function ToolTranscriptText({ entry }: { entry: Session["messages"][numbe
         <div className="tool-message-header">
           <TranscriptEntryHeader entry={entry} authorLabel={authorLabel} />
         </div>
-        <ToolOutputDivider />
       </div>
     );
   }
@@ -1231,9 +1234,17 @@ export function ToolTranscriptText({ entry }: { entry: Session["messages"][numbe
       <summary>
         <TranscriptEntryHeader entry={entry} authorLabel={authorLabel} collapsible />
         <ToolOutputDivider />
-        {isWrite ? null : <pre className="tool-message-preview">{formatToolTextPreview(entry.text)}</pre>}
+        {isWrite ? null : entry.presentation === "diff" ? (
+          <pre className="tool-message-preview">{formatToolTextPreview(entry.text)}</pre>
+        ) : (
+          renderDisclosureTranscriptText(formatToolTextPreview(entry.text))
+        )}
       </summary>
-      <TranscriptEntryContent entry={entry} />
+      {entry.presentation === "diff" ? (
+        <TranscriptEntryContent entry={entry} />
+      ) : (
+        renderDisclosureTranscriptText(entry.text)
+      )}
     </details>
   );
 }
