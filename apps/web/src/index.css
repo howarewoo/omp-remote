@@ -869,7 +869,10 @@ textarea:disabled {
 .session-metadata {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: minmax(10rem, 1.5fr) minmax(7rem, 1fr) minmax(4.5rem, auto) minmax(5rem, auto);
+  grid-template-columns: minmax(10rem, 1.5fr) minmax(7rem, 1fr) minmax(4.5rem, auto) minmax(11rem, auto) minmax(
+      5rem,
+      auto
+    );
   align-items: stretch;
   margin: 0;
   padding: 0.65rem 0 0.75rem;
@@ -928,6 +931,20 @@ textarea:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-diff-metadata dd {
+  max-width: none;
+  margin-top: 0.2rem;
+}
+
+.session-diff-trigger.ui-button {
+  min-height: 2.5rem;
+  justify-content: flex-start;
+  padding-inline: 0.4rem;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
 }
 
 .session-configuration-trigger .icon {
@@ -1402,6 +1419,148 @@ textarea:disabled {
   fill: none;
   stroke: currentColor;
   stroke-width: 1.5;
+}
+
+.session-diff-header {
+  align-items: flex-start;
+}
+
+.session-diff-close {
+  flex: 0 0 auto;
+}
+
+.session-diff-close svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+
+.session-diff-body {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--omp-dark-gray) transparent;
+}
+
+.session-diff-summary {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+}
+
+.session-diff-file {
+  border-bottom: 1px solid var(--border);
+}
+
+.session-diff-file > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.8rem 1rem;
+  background: var(--muted);
+}
+
+.session-diff-file > header > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 0.2rem;
+}
+
+.session-diff-file strong,
+.session-diff-old-path {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+}
+
+.session-diff-file strong {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.session-diff-old-path {
+  color: var(--muted-foreground);
+  font-size: 0.625rem;
+}
+
+.session-diff-file-stats {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+}
+
+.session-diff-additions {
+  color: var(--omp-green);
+}
+
+.session-diff-deletions {
+  color: var(--omp-red);
+}
+
+.session-unified-diff {
+  margin: 0;
+  overflow-x: auto;
+  padding-block: 0.65rem;
+  background: var(--omp-code-bg);
+  scrollbar-width: thin;
+  scrollbar-color: var(--omp-dark-gray) transparent;
+}
+
+.session-unified-diff code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+}
+
+.session-unified-diff .diff-line {
+  display: block;
+  min-height: 1lh;
+}
+
+.session-diff-binary,
+.session-diff-state {
+  color: var(--muted-foreground);
+}
+
+.session-diff-binary {
+  margin: 0;
+  padding: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+}
+
+.session-diff-state {
+  display: grid;
+  max-width: 34rem;
+  place-content: center;
+  gap: 0.45rem;
+  min-height: 16rem;
+  margin: auto;
+  padding: 2rem 1.25rem;
+  text-align: center;
+}
+
+.session-diff-state strong {
+  color: var(--foreground);
+  font-size: 0.9rem;
+}
+
+.session-diff-state p {
+  max-width: 46ch;
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.55;
 }
 
 .transcript.subagent-session-transcript {
@@ -2944,6 +3103,20 @@ textarea:disabled {
     padding: 0.8rem 1rem max(1.5rem, env(safe-area-inset-bottom));
   }
 
+  .session-diff-body {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+
+  .session-diff-file > header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+
+  .session-diff-file-stats {
+    justify-content: flex-start;
+  }
+
   .sidebar-sheet .sidebar {
     width: 100%;
     height: 100%;
@@ -2990,6 +3163,10 @@ textarea:disabled {
   }
 
   .session-configuration-trigger.ui-button {
+    min-height: 2.75rem;
+  }
+
+  .session-diff-trigger.ui-button {
     min-height: 2.75rem;
   }
 
