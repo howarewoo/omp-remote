@@ -1,6 +1,6 @@
 import { Radio } from "@base-ui/react/radio";
 import { RadioGroup } from "@base-ui/react/radio-group";
-import type { AskRequest, Session, SessionWorkingTreeDiffResponse } from "@omp-remote/protocol";
+import type { AskRequest, Session, SessionFileChangesResponse } from "@omp-remote/protocol";
 import type * as ReactModule from "react";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -86,7 +86,7 @@ import {
   tokenizeCode,
   WorkingIndicator,
 } from "./dashboard.js";
-import { SessionDiffViewer } from "./session-diff-viewer.js";
+import { SessionFileChangesViewer } from "./session-file-changes-viewer.js";
 import { SubagentSessionViewer } from "./subagent-session-viewer.js";
 import {
   MessageScrollerButton,
@@ -1334,12 +1334,12 @@ const DASHBOARD_DEFAULTS = {
   onSearchHistory: vi.fn().mockResolvedValue(undefined),
   onLoadMoreHistory: vi.fn().mockResolvedValue(undefined),
   onLoadTranscript: vi.fn().mockResolvedValue(undefined),
-  onLoadWorkingTreeDiff: vi.fn().mockResolvedValue({
+  onLoadSessionFileChanges: vi.fn().mockResolvedValue({
     sessionId: "session-1",
     state: "available",
-    root: "/work/omp-remote",
-    files: [],
+    sources: [],
     fileCount: 0,
+    operationCount: 0,
     additions: 0,
     deletions: 0,
     changedLines: 0,
@@ -1417,55 +1417,325 @@ function composerDashboardProps(session: Session = BASE_SESSION): ControlledDash
   };
 }
 
-describe("dashboard working-tree refresh", () => {
-  it("clears successful counts when a later host refresh fails", async () => {
+describe("dashboard session-file-change refresh", () => {
+  type FileChangesViewerProps = {
+    open: boolean;
+    result: SessionFileChangesResponse | null;
+    loading: boolean;
+    error: string | null;
+    onOpenChange(open: boolean): void;
+  };
+
+  function changesFor(session: Session): SessionFileChangesResponse {
+    return {
+      sessionId: session.id,
+      state: "available",
+      sources: [
+        {
+          sessionId: session.id,
+          root: session.cwd,
+          files: [
+            {
+              path: `${session.cwd}/src/app.ts`,
+              operations: [
+                {
+                  type: "edit",
+                  timestamp: "2026-08-01T10:00:00.000Z",
+                  sessionId: session.id,
+                  op: "update",
+                  additions: 1,
+                  deletions: 1,
+                  patch: "@@ -1 +1 @@\n-old\n+new",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      fileCount: 1,
+      operationCount: 1,
+      additions: 1,
+      deletions: 1,
+      changedLines: 2,
+      message: null,
+    };
+  }
+
+  function fileChangesViewer(output: ReactNode): ReactElement<FileChangesViewerProps> {
+    return findElements(
+      output,
+      (element) => element.type === SessionFileChangesViewer,
+    )[0] as ReactElement<FileChangesViewerProps>;
+  }
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((settle) => {
+      resolve = settle;
+    });
+    return { promise, resolve };
+  }
+
+  it("ignores a deferred result after the drawer closes", async () => {
     vi.useFakeTimers();
     try {
-      const successfulDiff: SessionWorkingTreeDiffResponse = {
-        sessionId: BASE_SESSION.id,
-        state: "available",
-        root: BASE_SESSION.cwd,
-        files: [
-          {
-            path: "src/app.ts",
-            status: "modified",
-            additions: 2,
-            deletions: 1,
-            binary: false,
-            patch: "@@ -1 +1 @@\n-old\n+new",
-          },
-        ],
-        fileCount: 1,
-        additions: 2,
-        deletions: 1,
-        changedLines: 3,
-        message: null,
-      };
-      const onLoadWorkingTreeDiff = vi
-        .fn()
-        .mockResolvedValueOnce(successfulDiff)
-        .mockRejectedValueOnce(new Error("Host refresh failed"));
-      const firstProps = { ...composerDashboardProps(), onLoadWorkingTreeDiff };
+      const pendingChanges = deferred<SessionFileChangesResponse>();
+      const onLoadSessionFileChanges = vi.fn().mockReturnValue(pendingChanges.promise);
+      const props = { ...composerDashboardProps(), onLoadSessionFileChanges };
 
-      renderControlledDashboard(firstProps);
+      const output = renderControlledDashboard(props);
+      const viewer = fileChangesViewer(output);
+      viewer.props.onOpenChange(true);
+      await vi.advanceTimersByTimeAsync(0);
+      const signal = onLoadSessionFileChanges.mock.calls[0]?.[1] as AbortSignal;
+
+      viewer.props.onOpenChange(false);
+      pendingChanges.resolve(changesFor(BASE_SESSION));
+      await vi.advanceTimersByTimeAsync(0);
+
+      const closedOutput = renderControlledDashboard(props, {
+        preserveState: true,
+        effectsEnabled: false,
+      });
+      expect(signal.aborted).toBe(true);
+      expect(fileChangesViewer(closedOutput).props).toMatchObject({
+        open: false,
+        result: null,
+        loading: false,
+        error: null,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores a deferred result after switching sessions", async () => {
+    vi.useFakeTimers();
+    try {
+      const secondSession = {
+        ...BASE_SESSION,
+        id: "session-2",
+        name: "Second session",
+        lastActivity: "2026-07-28T18:00:00.000Z",
+      };
+      const pendingFirstChanges = deferred<SessionFileChangesResponse>();
+      const secondChanges = changesFor(secondSession);
+      const onLoadSessionFileChanges = vi
+        .fn()
+        .mockReturnValueOnce(pendingFirstChanges.promise)
+        .mockResolvedValueOnce(secondChanges);
+      const firstProps = { ...composerDashboardProps(), onLoadSessionFileChanges };
+
+      let output = renderControlledDashboard(firstProps);
+      fileChangesViewer(output).props.onOpenChange(true);
+      await vi.advanceTimersByTimeAsync(0);
+      const firstSignal = onLoadSessionFileChanges.mock.calls[0]?.[1] as AbortSignal;
+
+      const switchedProps = {
+        ...firstProps,
+        sessions: [BASE_SESSION, secondSession],
+        selectedSessionId: secondSession.id,
+      };
+      renderControlledDashboard(switchedProps, { preserveState: true });
       await vi.advanceTimersByTimeAsync(750);
-      let output = renderControlledDashboard(firstProps, { preserveState: true, effectsEnabled: false });
-      let viewer = findElements(output, (element) => element.type === SessionDiffViewer)[0] as
-        | ReactElement<{ result: SessionWorkingTreeDiffResponse | null; error: string | null }>
-        | undefined;
-      expect(viewer?.props).toMatchObject({ result: successfulDiff, error: null });
+      pendingFirstChanges.resolve(changesFor(BASE_SESSION));
+      await vi.advanceTimersByTimeAsync(0);
+
+      output = renderControlledDashboard(switchedProps, {
+        preserveState: true,
+        effectsEnabled: false,
+      });
+      expect(firstSignal.aborted).toBe(true);
+      expect(onLoadSessionFileChanges).toHaveBeenCalledTimes(2);
+      expect(fileChangesViewer(output).props).toMatchObject({
+        result: secondChanges,
+        loading: false,
+        error: null,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("loads on demand and preserves matching metadata without rescanning while closed", async () => {
+    vi.useFakeTimers();
+    try {
+      const successfulChanges = changesFor(BASE_SESSION);
+      const onLoadSessionFileChanges = vi.fn().mockResolvedValue(successfulChanges);
+      const firstProps = { ...composerDashboardProps(), onLoadSessionFileChanges };
+
+      let output = renderControlledDashboard(firstProps);
+      await vi.advanceTimersByTimeAsync(750);
+      expect(onLoadSessionFileChanges).not.toHaveBeenCalled();
+
+      let viewer = fileChangesViewer(output);
+      viewer.props.onOpenChange(true);
+      await vi.advanceTimersByTimeAsync(0);
+      output = renderControlledDashboard(firstProps, { preserveState: true, effectsEnabled: false });
+      viewer = fileChangesViewer(output);
+      expect(viewer.props).toMatchObject({
+        open: true,
+        result: successfulChanges,
+        loading: false,
+        error: null,
+      });
+      expect(onLoadSessionFileChanges).toHaveBeenCalledTimes(1);
+
+      viewer.props.onOpenChange(false);
+      const laterSession = { ...BASE_SESSION, lastActivity: "2026-07-28T18:00:00.000Z" };
+      const laterProps = { ...firstProps, sessions: [laterSession] };
+      renderControlledDashboard(laterProps, { preserveState: true });
+      await vi.advanceTimersByTimeAsync(750);
+      output = renderControlledDashboard(laterProps, {
+        preserveState: true,
+        effectsEnabled: false,
+      });
+      viewer = fileChangesViewer(output);
+      expect(onLoadSessionFileChanges).toHaveBeenCalledTimes(1);
+      expect(viewer.props).toMatchObject({
+        open: false,
+        result: successfulChanges,
+        loading: false,
+        error: null,
+      });
+      expect(textContent(output)).toContain("1 file · 1 operation");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows loading and suppresses the previous result during a debounced open-drawer switch", async () => {
+    vi.useFakeTimers();
+    try {
+      const secondSession = {
+        ...BASE_SESSION,
+        id: "session-2",
+        name: "Second session",
+        lastActivity: "2026-07-28T18:00:00.000Z",
+      };
+      const firstChanges = changesFor(BASE_SESSION);
+      const secondChanges = changesFor(secondSession);
+      const onLoadSessionFileChanges = vi
+        .fn()
+        .mockResolvedValueOnce(firstChanges)
+        .mockResolvedValueOnce(secondChanges);
+      const firstProps = { ...composerDashboardProps(), onLoadSessionFileChanges };
+
+      let output = renderControlledDashboard(firstProps);
+      fileChangesViewer(output).props.onOpenChange(true);
+      await vi.advanceTimersByTimeAsync(0);
+      output = renderControlledDashboard(firstProps, { preserveState: true, effectsEnabled: false });
+      expect(fileChangesViewer(output).props.result).toBe(firstChanges);
+
+      const switchedProps = {
+        ...firstProps,
+        sessions: [BASE_SESSION, secondSession],
+        selectedSessionId: secondSession.id,
+      };
+      output = renderControlledDashboard(switchedProps, { preserveState: true });
+      expect(fileChangesViewer(output).props).toMatchObject({
+        open: true,
+        result: null,
+        loading: true,
+        error: null,
+      });
+      expect(onLoadSessionFileChanges).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(749);
+      expect(onLoadSessionFileChanges).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      output = renderControlledDashboard(switchedProps, {
+        preserveState: true,
+        effectsEnabled: false,
+      });
+      expect(onLoadSessionFileChanges).toHaveBeenCalledTimes(2);
+      expect(onLoadSessionFileChanges.mock.calls[1]?.[0]).toBe(secondSession.id);
+      expect(fileChangesViewer(output).props).toMatchObject({
+        result: secondChanges,
+        loading: false,
+        error: null,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels scheduled refreshes on close without disrupting an immediate quick-reopen load", async () => {
+    vi.useFakeTimers();
+    try {
+      const successfulChanges = changesFor(BASE_SESSION);
+      const onLoadSessionFileChanges = vi.fn().mockResolvedValue(successfulChanges);
+      const firstProps = { ...composerDashboardProps(), onLoadSessionFileChanges };
+
+      let output = renderControlledDashboard(firstProps);
+      fileChangesViewer(output).props.onOpenChange(true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onLoadSessionFileChanges).toHaveBeenCalledTimes(1);
+
+      const firstActivityProps = {
+        ...firstProps,
+        sessions: [{ ...BASE_SESSION, lastActivity: "2026-07-28T18:00:00.000Z" }],
+      };
+      output = renderControlledDashboard(firstActivityProps, { preserveState: true });
+      fileChangesViewer(output).props.onOpenChange(false);
+      await vi.advanceTimersByTimeAsync(750);
+      expect(onLoadSessionFileChanges).toHaveBeenCalledTimes(1);
+
+      fileChangesViewer(output).props.onOpenChange(true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onLoadSessionFileChanges).toHaveBeenCalledTimes(2);
+
+      const secondActivityProps = {
+        ...firstProps,
+        sessions: [{ ...BASE_SESSION, lastActivity: "2026-07-28T19:00:00.000Z" }],
+      };
+      output = renderControlledDashboard(secondActivityProps, { preserveState: true });
+      const viewer = fileChangesViewer(output);
+      viewer.props.onOpenChange(false);
+      viewer.props.onOpenChange(true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onLoadSessionFileChanges).toHaveBeenCalledTimes(3);
+      const quickReopenSignal = onLoadSessionFileChanges.mock.calls[2]?.[1] as AbortSignal;
+
+      await vi.advanceTimersByTimeAsync(750);
+      expect(onLoadSessionFileChanges).toHaveBeenCalledTimes(3);
+      expect(quickReopenSignal.aborted).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears successful counts when an open-drawer refresh fails", async () => {
+    vi.useFakeTimers();
+    try {
+      const successfulChanges = changesFor(BASE_SESSION);
+      const onLoadSessionFileChanges = vi
+        .fn()
+        .mockResolvedValueOnce(successfulChanges)
+        .mockRejectedValueOnce(new Error("Host refresh failed"));
+      const firstProps = { ...composerDashboardProps(), onLoadSessionFileChanges };
+
+      let output = renderControlledDashboard(firstProps);
+      fileChangesViewer(output).props.onOpenChange(true);
+      await vi.advanceTimersByTimeAsync(0);
+      output = renderControlledDashboard(firstProps, { preserveState: true, effectsEnabled: false });
+      expect(fileChangesViewer(output).props.result).toBe(successfulChanges);
 
       const laterSession = { ...BASE_SESSION, lastActivity: "2026-07-28T18:00:00.000Z" };
       const laterProps = { ...firstProps, sessions: [laterSession] };
       renderControlledDashboard(laterProps, { preserveState: true });
       await vi.advanceTimersByTimeAsync(750);
-      output = renderControlledDashboard(laterProps, { preserveState: true, effectsEnabled: false });
-      viewer = findElements(output, (element) => element.type === SessionDiffViewer)[0] as
-        | ReactElement<{ result: SessionWorkingTreeDiffResponse | null; error: string | null }>
-        | undefined;
-      expect(viewer?.props).toMatchObject({ result: null, error: "Host refresh failed" });
+      output = renderControlledDashboard(laterProps, {
+        preserveState: true,
+        effectsEnabled: false,
+      });
+      expect(fileChangesViewer(output).props).toMatchObject({
+        result: null,
+        loading: false,
+        error: "Host refresh failed",
+      });
       expect(textContent(output)).toContain("Changes unavailable");
-      expect(textContent(output)).not.toContain("1 file · 3 changed lines");
+      expect(textContent(output)).not.toContain("1 file · 1 operation");
     } finally {
       vi.useRealTimers();
     }

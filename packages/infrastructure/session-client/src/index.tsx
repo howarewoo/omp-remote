@@ -10,8 +10,8 @@ import {
   SessionCatalogPageSchema,
   type SessionPatch,
   SessionTranscriptResponseSchema,
-  type SessionWorkingTreeDiffResponse,
-  SessionWorkingTreeDiffResponseSchema,
+  type SessionFileChangesResponse,
+  SessionFileChangesResponseSchema,
 } from "@omp-remote/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -48,7 +48,7 @@ export interface SessionClient {
   searchHistory(query: string): Promise<void>;
   loadMoreHistory(): Promise<void>;
   loadTranscript(sessionId: string): Promise<void>;
-  loadWorkingTreeDiff(sessionId: string, signal?: AbortSignal): Promise<SessionWorkingTreeDiffResponse>;
+  loadSessionFileChanges(sessionId: string, signal?: AbortSignal): Promise<SessionFileChangesResponse>;
 }
 
 export function useSessionClient(): SessionClient {
@@ -247,8 +247,8 @@ export function useSessionClient(): SessionClient {
     }
   }, []);
 
-  const loadWorkingTreeDiff = useCallback(
-    (sessionId: string, signal?: AbortSignal) => loadSessionWorkingTreeDiff(sessionId, signal),
+  const loadSessionFileChangesCallback = useCallback(
+    (sessionId: string, signal?: AbortSignal) => loadSessionFileChanges(sessionId, signal),
     [],
   );
 
@@ -391,29 +391,36 @@ export function useSessionClient(): SessionClient {
     searchHistory,
     loadMoreHistory,
     loadTranscript,
-    loadWorkingTreeDiff,
+    loadSessionFileChanges: loadSessionFileChangesCallback,
   };
 }
 
-export async function loadSessionWorkingTreeDiff(
+export async function loadSessionFileChanges(
   sessionId: string,
   signal?: AbortSignal,
   fetcher: typeof fetch = fetch,
-): Promise<SessionWorkingTreeDiffResponse> {
+): Promise<SessionFileChangesResponse> {
   const response = await fetcher(
-    `/api/sessions/${encodeURIComponent(sessionId)}/diff`,
+    `/api/sessions/${encodeURIComponent(sessionId)}/changes`,
     signal ? { signal } : {},
   );
-  const body: unknown = await response.json();
   if (!response.ok) {
-    const hostError =
-      typeof body === "object" && body !== null && "error" in body && typeof body.error === "string"
-        ? body.error
-        : null;
-    const message = hostError ?? `Working-tree diff request failed (${response.status})`;
-    throw new Error(message);
+    let hostError: string | null = null;
+    try {
+      const body: unknown = await response.json();
+      hostError =
+        typeof body === "object" && body !== null && "error" in body && typeof body.error === "string"
+          ? body.error
+          : null;
+    } catch (failure) {
+      const isAbortError =
+        typeof failure === "object" && failure !== null && "name" in failure && failure.name === "AbortError";
+      if (signal?.aborted || isAbortError) throw failure;
+      // The status fallback remains useful when a proxy or interrupted response does not return JSON.
+    }
+    throw new Error(hostError ?? `Session file changes request failed (${response.status})`);
   }
-  return SessionWorkingTreeDiffResponseSchema.parse(body);
+  return SessionFileChangesResponseSchema.parse(await response.json());
 }
 
 export function commandResultValue(

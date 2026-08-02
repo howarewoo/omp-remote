@@ -18,7 +18,6 @@ import {
   SessionFileChangesResponseSchema,
   type SessionModelOption,
   SessionTranscriptResponseSchema,
-  SessionWorkingTreeDiffResponseSchema,
 } from "@omp-remote/protocol";
 import { SessionRegistry } from "@omp-remote/sessions/services";
 import Fastify from "fastify";
@@ -35,8 +34,6 @@ import {
   getCatalogSessionMetadataPatch,
 } from "./catalog-reconciliation.js";
 import { resolveGitBranch } from "./git-branch.js";
-// woostack-defer(increment SFC-2): retain the Git-backed endpoint until its replacement.
-import { collectWorkingTreeDiff } from "./git-working-tree.js";
 import { normalizeRawMessage, normalizeSkillCommands, ToolCallTracker } from "./message-normalizer.js";
 import {
   type AskInactivityTimeout,
@@ -206,22 +203,6 @@ app.get("/api/sessions/:sessionId/changes", async (request, reply) => {
   } catch (error) {
     logger.error("Could not read session file changes", error, { sessionId: params.data.sessionId });
     return reply.code(500).send({ error: "Session file changes could not be read" });
-  }
-});
-
-app.get("/api/sessions/:sessionId/diff", async (request, reply) => {
-  const params = SessionParamsSchema.safeParse(request.params);
-  if (!params.success) return reply.code(404).send({ error: "Session was not found" });
-  const session = registry.get(params.data.sessionId) ?? sessionCatalog.get(params.data.sessionId);
-  if (!session) return reply.code(404).send({ error: "Session was not found" });
-  try {
-    return SessionWorkingTreeDiffResponseSchema.parse({
-      sessionId: session.id,
-      ...(await collectWorkingTreeDiff(session.cwd)),
-    });
-  } catch (error) {
-    logger.error("Could not read session working tree", error, { sessionId: session.id });
-    return reply.code(500).send({ error: "Working tree could not be read" });
   }
 });
 

@@ -939,12 +939,12 @@ textarea:disabled {
   white-space: nowrap;
 }
 
-.session-diff-metadata dd {
+.session-changes-metadata dd {
   max-width: none;
   margin-top: 0.2rem;
 }
 
-.session-diff-trigger.ui-button {
+.session-changes-trigger.ui-button {
   min-height: 2.5rem;
   justify-content: flex-start;
   padding-inline: 0.4rem;
@@ -1519,15 +1519,15 @@ textarea:disabled {
   stroke-width: 1.5;
 }
 
-.session-diff-header {
+.session-changes-header {
   align-items: flex-start;
 }
 
-.session-diff-close {
+.session-changes-close {
   flex: 0 0 auto;
 }
 
-.session-diff-close svg {
+.session-changes-close svg {
   width: 1.1rem;
   height: 1.1rem;
   fill: none;
@@ -1535,7 +1535,7 @@ textarea:disabled {
   stroke-width: 1.5;
 }
 
-.session-diff-body {
+.session-changes-body {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
@@ -1544,20 +1544,34 @@ textarea:disabled {
   scrollbar-color: var(--omp-dark-gray) transparent;
 }
 
-.session-diff-summary {
-  margin: 0;
+.session-changes-warning {
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
+  background: var(--muted);
+}
+
+.session-changes-warning p,
+.session-changes-summary {
+  margin: 0;
   color: var(--muted-foreground);
-  font-family: var(--font-mono);
   font-size: 0.6875rem;
 }
 
-.session-diff-file {
+.session-changes-warning p {
+  margin-top: 0.25rem;
+}
+
+.session-changes-summary {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+}
+
+.session-changes-file {
   border-bottom: 1px solid var(--border);
 }
 
-.session-diff-file-trigger {
+.session-changes-file-trigger {
   display: flex;
   width: 100%;
   min-height: 2.75rem;
@@ -1576,29 +1590,37 @@ textarea:disabled {
 }
 
 @media (hover: hover) {
-  .session-diff-file-trigger:hover {
+  .session-changes-file-trigger:hover {
     background: var(--accent);
   }
 }
 
-.session-diff-file-trigger:active {
+.session-changes-file-trigger:active {
   background: var(--accent);
 }
 
-.session-diff-file-heading {
+.session-changes-file-trigger:focus-visible,
+.session-change-patch-scroll:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.session-changes-file-heading {
   display: flex;
   min-width: 0;
   align-items: flex-start;
   gap: 0.55rem;
 }
 
-.session-diff-file-paths {
-  display: grid;
+.session-changes-file-heading strong {
   min-width: 0;
-  gap: 0.2rem;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
-.session-diff-chevron {
+.session-changes-chevron {
   width: 0.9rem;
   height: 0.9rem;
   flex: 0 0 auto;
@@ -1609,27 +1631,13 @@ textarea:disabled {
   transition: transform 150ms ease-out;
 }
 
-.session-diff-file-trigger[data-panel-open] .session-diff-chevron {
+.session-changes-file-trigger[data-panel-open] .session-changes-chevron {
   transform: rotate(90deg);
 }
 
-.session-diff-file-paths strong,
-.session-diff-old-path {
-  overflow-wrap: anywhere;
-  font-family: var(--font-mono);
-}
-
-.session-diff-file-paths strong {
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-
-.session-diff-old-path {
-  color: var(--muted-foreground);
-  font-size: 0.625rem;
-}
-
-.session-diff-file-stats {
+.session-changes-operation-count,
+.session-changes-operation-metadata,
+.session-changes-line-totals {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -1639,47 +1647,90 @@ textarea:disabled {
   font-size: 0.625rem;
 }
 
-.session-diff-additions {
+.session-changes-operations {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.session-changes-operation {
+  border-top: 1px solid var(--border);
+}
+
+.session-changes-operation:first-child {
+  border-top: 0;
+}
+
+.session-changes-operation-metadata {
+  flex-wrap: wrap;
+  padding: 0.65rem 1rem;
+}
+
+.session-changes-additions {
   color: var(--omp-green);
 }
 
-.session-diff-deletions {
+.session-changes-deletions {
   color: var(--omp-red);
 }
 
-.session-unified-diff {
+.session-changes-write-metadata {
+  display: grid;
+  gap: 0.5rem;
   margin: 0;
+  padding: 0 1rem 0.8rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+}
+
+.session-changes-write-metadata div {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.65rem;
+}
+
+.session-changes-write-metadata dt {
+  color: var(--muted-foreground);
+}
+
+.session-changes-write-metadata dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.session-changes-patch-omitted {
+  margin: 0;
+  padding: 0 1rem 0.8rem;
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+}
+
+.session-change-patch-scroll {
   overflow-x: auto;
-  padding-block: 0.65rem;
   background: var(--omp-code-bg);
   scrollbar-width: thin;
   scrollbar-color: var(--omp-dark-gray) transparent;
 }
 
-.session-unified-diff code {
+.session-change-patch {
+  margin: 0;
+  padding-block: 0.65rem;
+}
+
+.session-change-patch code {
   display: block;
   width: max-content;
   min-width: 100%;
 }
 
-.session-unified-diff .diff-line {
+.session-change-line {
   display: block;
   min-height: 1lh;
 }
 
-.session-diff-binary,
-.session-diff-state {
-  color: var(--muted-foreground);
-}
-
-.session-diff-binary {
-  margin: 0;
-  padding: 1rem;
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
-}
-
-.session-diff-state {
+.session-changes-state {
   display: grid;
   max-width: 34rem;
   place-content: center;
@@ -1687,15 +1738,16 @@ textarea:disabled {
   min-height: 16rem;
   margin: auto;
   padding: 2rem 1.25rem;
+  color: var(--muted-foreground);
   text-align: center;
 }
 
-.session-diff-state strong {
+.session-changes-state strong {
   color: var(--foreground);
   font-size: 0.9rem;
 }
 
-.session-diff-state p {
+.session-changes-state p {
   max-width: 46ch;
   margin: 0;
   font-size: 0.75rem;
@@ -2022,6 +2074,35 @@ textarea:disabled {
   line-height: 1.75;
   white-space: pre;
   overflow-wrap: normal;
+}
+
+.session-change-line {
+  width: max-content;
+  min-width: 100%;
+  padding: 0.05rem 0.65rem;
+  font-family: var(--font-mono);
+  font-size: var(--transcript-mono-size, 0.75rem);
+  line-height: 1.75;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.session-change-line-added {
+  color: var(--omp-green);
+  background: color-mix(in srgb, var(--omp-green) 10%, transparent);
+}
+
+.session-change-line-removed {
+  color: var(--omp-red);
+  background: color-mix(in srgb, var(--omp-red) 10%, transparent);
+}
+
+.session-change-line-meta {
+  color: #569cd6;
+}
+
+.session-change-line-context {
+  color: var(--omp-gray);
 }
 
 .diff-added {
@@ -3227,17 +3308,17 @@ textarea:disabled {
     margin-bottom: env(safe-area-inset-bottom);
   }
 
-  .session-diff-body {
+  .session-changes-body {
     padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
   }
 
-  .session-diff-file-trigger {
+  .session-changes-file-trigger {
     align-items: stretch;
     flex-direction: column;
     gap: 0.55rem;
   }
 
-  .session-diff-file-stats {
+  .session-changes-operation-count {
     justify-content: flex-start;
   }
 
@@ -3290,7 +3371,7 @@ textarea:disabled {
     min-height: 2.75rem;
   }
 
-  .session-diff-trigger.ui-button {
+  .session-changes-trigger.ui-button {
     min-height: 2.75rem;
   }
 
