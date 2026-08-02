@@ -2,12 +2,16 @@ import { createReadStream, type Dir } from "node:fs";
 import { type FileHandle, open, opendir, readdir, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { compareSessionsByCreation, type Session, type TranscriptMessage } from "@omp-remote/protocol";
+import {
+  compareSessionsByCreation,
+  truncateTranscriptText,
+  type Session,
+  type TranscriptMessage,
+} from "@omp-remote/protocol";
 import { normalizeRawMessage, ToolCallTracker } from "./message-normalizer.js";
 
 const METADATA_READ_BYTES = 16 * 1024;
 const MAX_TRANSCRIPT_MESSAGES = 200;
-const MAX_TRANSCRIPT_TEXT = 20_000;
 const METADATA_READ_CONCURRENCY = 32;
 const MAX_FILE_CHANGE_SOURCES = 256;
 
@@ -322,18 +326,18 @@ function normalizeTranscriptMessage(
 ): TranscriptMessage | null {
   if (record.type !== "message" || !isRecord(record.message)) return null;
   const timestamp = normalizeTimestamp(record.timestamp ?? record.message.timestamp);
-  return normalizeRawMessage(
+  const message = normalizeRawMessage(
     record.message,
     false,
     typeof record.id === "string" ? record.id : (text) => `${timestamp}-${messageHash(text)}`,
     {
       timestamp,
       omitEmptyText: true,
-      maxTextLength: MAX_TRANSCRIPT_TEXT,
       ignoreRawId: true,
       toolCallTracker,
     },
   );
+  return message ? { ...message, text: truncateTranscriptText(message.text) } : null;
 }
 
 function normalizeTimestamp(value: unknown, fallback?: Date): string {

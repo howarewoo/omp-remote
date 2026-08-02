@@ -22,6 +22,16 @@ export const SessionModelOptionSchema = z.object({
 });
 export const TranscriptPresentationSchema = z.enum(["text", "diff"]);
 
+export const TRANSCRIPT_TEXT_LIMIT = 20_000;
+
+export function truncateTranscriptText(text: string): string {
+  if (text.length <= TRANSCRIPT_TEXT_LIMIT) return text;
+  let end = TRANSCRIPT_TEXT_LIMIT;
+  const finalCodeUnit = text.charCodeAt(end - 1);
+  if (finalCodeUnit >= 0xd800 && finalCodeUnit <= 0xdbff) end -= 1;
+  return `${text.slice(0, end)}…`;
+}
+
 export const TranscriptMessageSchema = z.object({
   id: z.string().min(1),
   role: z.enum(["user", "assistant", "tool", "system"]),
