@@ -316,6 +316,7 @@ describe("SessionCatalog", () => {
     const removed = await catalog.refresh();
     expect(removed.upserted).toEqual([]);
     expect(removed.removed).toEqual(["session-1"]);
+    expect(catalog.fileChangeSources("session-1")).toBeUndefined();
   });
 
   it("uses a persisted edit result's canonical diff instead of its snapshot", async () => {
@@ -486,6 +487,54 @@ describe("SessionCatalog", () => {
     expect(messages).toHaveLength(200);
     expect(messages[0]).toMatchObject({ id: "message-5", text: "Message 5", streaming: false });
     expect(messages.at(-1)).toMatchObject({ id: "message-204", text: "Message 204" });
+  });
+  it("selects one root and all descendants while excluding unrelated roots", async () => {
+    const historyRoot = await makeTemporaryDirectory();
+    const worktreeA = join(historyRoot, "worktree-a");
+    const worktreeB = join(historyRoot, "worktree-b");
+    const rootPath = join(historyRoot, "project", "root.jsonl");
+    const childPath = join(historyRoot, "project", "root", "child.jsonl");
+    const grandchildPath = join(historyRoot, "project", "root", "child", "grandchild.jsonl");
+    const unrelatedPath = join(historyRoot, "project", "other.jsonl");
+    await writeSession(rootPath, {
+      id: "root-session",
+      title: "Root",
+      cwd: worktreeA,
+      timestamp: "2026-08-01T10:00:00.000Z",
+    });
+    await writeSession(childPath, {
+      id: "child-session",
+      title: "Child",
+      cwd: worktreeB,
+      timestamp: "2026-08-01T10:01:00.000Z",
+    });
+    await writeSession(grandchildPath, {
+      id: "grandchild-session",
+      title: "Grandchild",
+      cwd: worktreeB,
+      timestamp: "2026-08-01T10:02:00.000Z",
+    });
+    await writeSession(unrelatedPath, {
+      id: "other-session",
+      title: "Other",
+      cwd: worktreeA,
+      timestamp: "2026-08-01T10:03:00.000Z",
+    });
+    const catalog = new SessionCatalog([historyRoot]);
+    await catalog.refresh();
+
+    expect(catalog.fileChangeSources("root-session")).toEqual({
+      sources: [
+        { sessionId: "root-session", root: worktreeA, sessionPath: rootPath },
+        { sessionId: "child-session", root: worktreeB, sessionPath: childPath },
+        { sessionId: "grandchild-session", root: worktreeB, sessionPath: grandchildPath },
+      ],
+      truncated: false,
+    });
+    expect(catalog.fileChangeSources("other-session")?.sources).toEqual([
+      { sessionId: "other-session", root: worktreeA, sessionPath: unrelatedPath },
+    ]);
+    expect(catalog.fileChangeSources("missing-session")).toBeUndefined();
   });
 });
 

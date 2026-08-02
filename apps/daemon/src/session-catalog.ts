@@ -1,6 +1,6 @@
 import { createReadStream, type Dir } from "node:fs";
 import { type FileHandle, open, opendir, readdir, stat } from "node:fs/promises";
-import { basename, dirname, extname, join } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { compareSessionsByCreation, type Session, type TranscriptMessage } from "@omp-remote/protocol";
 import { normalizeRawMessage, ToolCallTracker } from "./message-normalizer.js";
@@ -9,6 +9,18 @@ const METADATA_READ_BYTES = 16 * 1024;
 const MAX_TRANSCRIPT_MESSAGES = 200;
 const MAX_TRANSCRIPT_TEXT = 20_000;
 const METADATA_READ_CONCURRENCY = 32;
+const MAX_FILE_CHANGE_SOURCES = 256;
+
+export interface SessionFileChangeSourceDescriptor {
+  sessionId: string;
+  root: string;
+  sessionPath: string;
+}
+
+export interface SessionFileChangeSourceSelection {
+  sources: SessionFileChangeSourceDescriptor[];
+  truncated: boolean;
+}
 
 interface SessionMetadata {
   exited: boolean;
@@ -184,6 +196,21 @@ export class SessionCatalog {
     const path = this.#entriesBySessionId.get(sessionId)?.path;
     if (!path) throw new Error("Session history was not found");
     return readTranscript(path);
+  }
+
+  fileChangeSources(sessionId: string): SessionFileChangeSourceSelection | undefined {
+    const selectedRoot = this.#rootEntriesBySessionId.get(sessionId);
+    if (!selectedRoot) return undefined;
+    const sessionPaths = new Set(this.#entriesByPath.keys());
+    const matching = [...this.#entriesByPath.values()]
+      .filter((entry) => findRootSessionPath(entry.path, sessionPaths) === selectedRoot.path)
+      .sort((left, right) => left.path.localeCompare(right.path));
+    const sources = matching.slice(0, MAX_FILE_CHANGE_SOURCES).map((entry) => ({
+      sessionId: entry.session.id,
+      root: resolve(entry.session.cwd),
+      sessionPath: entry.path,
+    }));
+    return { sources, truncated: matching.length > sources.length };
   }
 }
 
