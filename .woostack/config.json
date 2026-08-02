@@ -1,6 +1,22 @@
 {
-  "artifacts": {
-    "specPlan": "markdown"
+  "linear": {
+    "repository": "https://github.com/howarewoo/omp-remote",
+    "workspace": "omp-remote",
+    "team": "OMP",
+    "projectStatuses": {
+      "backlog": "Backlog",
+      "planned": "Planned",
+      "started": "Started",
+      "completed": "Completed",
+      "canceled": "Canceled"
+    },
+    "issueStates": {
+      "planned": "Backlog",
+      "executing": "In Progress",
+      "inReview": "In Progress",
+      "done": "Done",
+      "blocked": "In Progress"
+    }
   },
   "commit": {
     "command": "pnpm format"
