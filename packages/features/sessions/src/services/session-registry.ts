@@ -1,5 +1,6 @@
 import {
   compareSessionsByCreation,
+  truncateTranscriptText,
   type Session,
   type SessionPatch,
   type TranscriptMessage,
@@ -45,14 +46,15 @@ export class SessionRegistry {
   appendMessage(sessionId: string, message: TranscriptMessage): Session | undefined {
     const current = this.#sessions.get(sessionId);
     if (!current) return undefined;
+    const messageCopy = cloneTranscriptMessage(message);
     const messages = [...current.messages];
-    const existingIndex = messages.findIndex((item) => item.id === message.id);
-    if (existingIndex >= 0) messages[existingIndex] = { ...message };
-    else messages.push({ ...message });
+    const existingIndex = messages.findIndex((item) => item.id === messageCopy.id);
+    if (existingIndex >= 0) messages[existingIndex] = messageCopy;
+    else messages.push(messageCopy);
     const boundedMessages = messages.slice(-MAX_TRANSCRIPT_MESSAGES);
-    const next = { ...current, messages: boundedMessages, lastActivity: message.timestamp };
+    const next = { ...current, messages: boundedMessages, lastActivity: messageCopy.timestamp };
     this.#sessions.set(sessionId, next);
-    this.#emit({ type: "transcript_upsert", sessionId, message });
+    this.#emit({ type: "transcript_upsert", sessionId, message: messageCopy });
     return cloneSession(next);
   }
 
@@ -76,7 +78,11 @@ export class SessionRegistry {
           patch: cloneSessionPatch(event.patch),
         });
       } else {
-        listener({ type: event.type, sessionId: event.sessionId, message: { ...event.message } });
+        listener({
+          type: event.type,
+          sessionId: event.sessionId,
+          message: cloneTranscriptMessage(event.message),
+        });
       }
     }
   }
@@ -94,10 +100,14 @@ function cloneSession(session: Session): Session {
           })),
         }
       : {}),
-    messages: session.messages.map((message) => ({ ...message })),
+    messages: session.messages.map(cloneTranscriptMessage),
     activeSubagents: session.activeSubagents.map((subagent) => ({ ...subagent })),
     skillCommands: session.skillCommands.map((command) => ({ ...command })),
   };
+}
+
+function cloneTranscriptMessage(message: TranscriptMessage): TranscriptMessage {
+  return { ...message, text: truncateTranscriptText(message.text) };
 }
 
 function cloneSessionPatch(patch: SessionPatch): Partial<Omit<Session, "id" | "messages">> {

@@ -13,6 +13,8 @@ import {
   SessionSchema,
   SessionTranscriptResponseSchema,
   TranscriptMessageSchema,
+  TRANSCRIPT_TEXT_LIMIT,
+  truncateTranscriptText,
 } from "./index.js";
 
 describe("BrowserCommandSchema", () => {
@@ -198,6 +200,17 @@ describe("BrowserCommandSchema", () => {
         text: " ",
       }),
     ).toThrow();
+  });
+});
+
+describe("truncateTranscriptText", () => {
+  it("adds an ellipsis without splitting a UTF-16 surrogate pair", () => {
+    const exactLimit = "x".repeat(TRANSCRIPT_TEXT_LIMIT);
+    const surrogateAtBoundary = `${"x".repeat(TRANSCRIPT_TEXT_LIMIT - 1)}😀tail`;
+
+    expect(truncateTranscriptText(exactLimit)).toBe(exactLimit);
+    expect(truncateTranscriptText(`${exactLimit}tail`)).toBe(`${exactLimit}…`);
+    expect(truncateTranscriptText(surrogateAtBoundary)).toBe(`${"x".repeat(TRANSCRIPT_TEXT_LIMIT - 1)}…`);
   });
 });
 

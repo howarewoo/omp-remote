@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 const MINIMUM_SPLASH_DURATION_MS = 600;
+const MAXIMUM_SPLASH_DURATION_MS = 5_000;
 
 interface StartupSplashProps {
   ready: boolean;
@@ -8,12 +9,20 @@ interface StartupSplashProps {
 
 export function StartupSplash({ ready }: StartupSplashProps) {
   const [minimumDurationElapsed, setMinimumDurationElapsed] = useState(false);
-  const hidden = ready && minimumDurationElapsed;
+  const [hidden, setHidden] = useState(false);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setMinimumDurationElapsed(true), MINIMUM_SPLASH_DURATION_MS);
-    return () => window.clearTimeout(timer);
+    const minimumTimer = window.setTimeout(() => setMinimumDurationElapsed(true), MINIMUM_SPLASH_DURATION_MS);
+    const maximumTimer = window.setTimeout(() => setHidden(true), MAXIMUM_SPLASH_DURATION_MS);
+    return () => {
+      window.clearTimeout(minimumTimer);
+      window.clearTimeout(maximumTimer);
+    };
   }, []);
+
+  useEffect(() => {
+    if (ready && minimumDurationElapsed) setHidden(true);
+  }, [minimumDurationElapsed, ready]);
 
   return (
     <div

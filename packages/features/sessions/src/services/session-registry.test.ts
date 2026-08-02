@@ -1,4 +1,4 @@
-import type { Session, SessionPatch } from "@omp-remote/protocol";
+import { TRANSCRIPT_TEXT_LIMIT, type Session, type SessionPatch } from "@omp-remote/protocol";
 import { describe, expect, it } from "vitest";
 import { SessionRegistry } from "./session-registry.js";
 
@@ -133,6 +133,109 @@ describe("SessionRegistry", () => {
         message: expect.objectContaining({ id: "message-1", text: "Live text", streaming: true }),
       },
     ]);
+  });
+
+  it("bounds oversized transcript text on session upserts", () => {
+    const registry = new SessionRegistry();
+    const events: unknown[] = [];
+    registry.subscribe((event) => events.push(event));
+    const expectedText = `${"x".repeat(TRANSCRIPT_TEXT_LIMIT)}…`;
+
+    const stored = registry.upsert({
+      ...BASE_SESSION,
+      messages: [
+        {
+          id: "oversized-upsert",
+          role: "assistant",
+          text: "x".repeat(TRANSCRIPT_TEXT_LIMIT + 1),
+          timestamp: "2026-07-28T17:02:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      ],
+    });
+
+    expect(stored.messages[0]?.text).toBe(expectedText);
+    expect(registry.get("session-1")?.messages[0]?.text).toBe(expectedText);
+    expect(events).toEqual([
+      {
+        type: "session_upsert",
+        session: expect.objectContaining({
+          messages: [expect.objectContaining({ id: "oversized-upsert", text: expectedText })],
+        }),
+      },
+    ]);
+  });
+
+  it("bounds appended and emitted text without splitting a surrogate pair", () => {
+    const registry = new SessionRegistry();
+    registry.upsert(BASE_SESSION);
+    const events: unknown[] = [];
+    registry.subscribe((event) => events.push(event));
+    const expectedText = `${"x".repeat(TRANSCRIPT_TEXT_LIMIT - 1)}…`;
+
+    const stored = registry.appendMessage("session-1", {
+      id: "oversized-append",
+      role: "tool",
+      text: `${"x".repeat(TRANSCRIPT_TEXT_LIMIT - 1)}😀tail`,
+      timestamp: "2026-07-28T17:03:00.000Z",
+      streaming: true,
+      presentation: "diff",
+      toolName: "edit",
+      readTarget: "src/App.tsx",
+      readResolvedPath: "/work/omp-remote/src/App.tsx",
+      toolTitle: "Edit App",
+    });
+
+    expect(stored?.messages).toEqual([
+      {
+        id: "oversized-append",
+        role: "tool",
+        text: expectedText,
+        timestamp: "2026-07-28T17:03:00.000Z",
+        streaming: true,
+        presentation: "diff",
+        toolName: "edit",
+        readTarget: "src/App.tsx",
+        readResolvedPath: "/work/omp-remote/src/App.tsx",
+        toolTitle: "Edit App",
+      },
+    ]);
+    expect(events).toEqual([
+      {
+        type: "transcript_upsert",
+        sessionId: "session-1",
+        message: expect.objectContaining({
+          id: "oversized-append",
+          text: expectedText,
+          streaming: true,
+          presentation: "diff",
+          toolName: "edit",
+        }),
+      },
+    ]);
+    expect(expectedText.charCodeAt(expectedText.length - 2)).not.toBeGreaterThanOrEqual(0xd800);
+  });
+
+  it("retains only the latest 200 appended messages", () => {
+    const registry = new SessionRegistry();
+    registry.upsert(BASE_SESSION);
+
+    for (let index = 0; index <= 200; index += 1) {
+      registry.appendMessage("session-1", {
+        id: `message-${index}`,
+        role: "assistant",
+        text: `${index}`,
+        timestamp: "2026-07-28T17:04:00.000Z",
+        streaming: false,
+        presentation: "text",
+      });
+    }
+
+    const messages = registry.get("session-1")?.messages;
+    expect(messages).toHaveLength(200);
+    expect(messages?.[0]?.id).toBe("message-1");
+    expect(messages?.[199]?.id).toBe("message-200");
   });
 
   it("emits a detached metadata patch while retaining the complete session", () => {
