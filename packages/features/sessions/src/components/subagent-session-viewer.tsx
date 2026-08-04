@@ -10,6 +10,7 @@ import {
   DrawerDescription,
   DrawerHeader,
   DrawerTitle,
+  getResponsiveDrawerProps,
 } from "./ui/drawer.js";
 import {
   MessageScroller,
@@ -48,12 +49,7 @@ export function SubagentSessionViewer({
   if (!displayedSubagent) return null;
 
   return (
-    <Drawer
-      open={open}
-      onOpenChange={onOpenChange}
-      showSwipeHandle={mobile}
-      swipeDirection={mobile ? "down" : "right"}
-    >
+    <Drawer open={open} onOpenChange={onOpenChange} {...getResponsiveDrawerProps(mobile)}>
       <DrawerContent className="subagent-session-panel">
         <DrawerHeader className="subagent-session-header">
           <div>

@@ -16,6 +16,12 @@ function useDrawer(): DrawerContextValue {
   return context;
 }
 
+export function getResponsiveDrawerProps(mobile: boolean) {
+  return mobile
+    ? ({ showSwipeHandle: true, swipeDirection: "down" } as const)
+    : ({ showSwipeHandle: false, swipeDirection: "right" } as const);
+}
+
 export function Drawer({
   modal = true,
   showSwipeHandle = false,

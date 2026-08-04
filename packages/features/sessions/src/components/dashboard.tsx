@@ -33,6 +33,7 @@ import {
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
+  getResponsiveDrawerProps,
 } from "./ui/drawer.js";
 import { Input } from "./ui/input.js";
 import {
@@ -2813,7 +2814,7 @@ function DashboardContent({
         onOpenChange={(open) =>
           setTodoOpenSessionId(open && currentTodo ? (selectedSession?.id ?? null) : null)
         }
-        showSwipeHandle
+        {...getResponsiveDrawerProps(isMobile)}
       >
         <DrawerContent className="model-settings-sheet todo-tracker-sheet">
           <DrawerHeader className="model-settings-header todo-tracker-sheet-header">
@@ -2852,7 +2853,7 @@ function DashboardContent({
             setConfigurationError(null);
           }
         }}
-        showSwipeHandle
+        {...getResponsiveDrawerProps(isMobile)}
       >
         <DrawerContent className="model-settings-sheet">
           <DrawerHeader className="model-settings-header">
@@ -2955,7 +2956,7 @@ function DashboardContent({
           setConfigurationDrawer(open ? "effort" : null);
           if (!open) setConfigurationError(null);
         }}
-        showSwipeHandle
+        {...getResponsiveDrawerProps(isMobile)}
       >
         <DrawerContent className="model-settings-sheet">
           <DrawerHeader className="model-settings-header">

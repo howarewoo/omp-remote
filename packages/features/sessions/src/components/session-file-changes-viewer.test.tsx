@@ -7,7 +7,6 @@ import {
   formatSessionFileChangesSummary,
   SessionFileChangesContent,
   SessionFileChangesViewer,
-  sessionFileChangesViewerLayout,
   SessionPatch,
 } from "./session-file-changes-viewer.js";
 import { Drawer } from "./ui/drawer.js";
@@ -146,10 +145,16 @@ describe("SessionFileChangesViewer", () => {
     expect(desktop.props).toMatchObject({ showSwipeHandle: false, swipeDirection: "right" });
     desktop.props.onOpenChange(false);
     expect(onOpenChange).toHaveBeenCalledWith(false);
-    expect(sessionFileChangesViewerLayout(true)).toEqual({
-      showSwipeHandle: true,
-      swipeDirection: "down",
+
+    const mobile = SessionFileChangesViewer({
+      open: true,
+      mobile: true,
+      result: AVAILABLE,
+      loading: false,
+      error: null,
+      onOpenChange,
     });
+    expect(mobile.props).toMatchObject({ showSwipeHandle: true, swipeDirection: "down" });
   });
 
   it("labels the drawer and close control for assistive technology", () => {

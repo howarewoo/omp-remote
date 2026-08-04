@@ -14,6 +14,7 @@ import {
   DrawerDescription,
   DrawerHeader,
   DrawerTitle,
+  getResponsiveDrawerProps,
 } from "./ui/drawer.js";
 
 const INITIAL_VISIBLE_FILE_COUNT = 50;
@@ -55,12 +56,6 @@ export function formatSessionFileChangesMetadata(
   return result.state === "partial" ? `Partial · ${summary}` : summary;
 }
 
-export function sessionFileChangesViewerLayout(mobile: boolean) {
-  return mobile
-    ? ({ showSwipeHandle: true, swipeDirection: "down" } as const)
-    : ({ showSwipeHandle: false, swipeDirection: "right" } as const);
-}
-
 export function aggregateSessionChangedFiles(result: SessionFileChangesResponse): SessionChangedFile[] {
   const operationsByPath = new Map<string, SessionFileOperation[]>();
   for (const source of result.sources) {
@@ -85,7 +80,7 @@ export function SessionFileChangesViewer({
   onOpenChange,
 }: SessionFileChangesViewerProps) {
   return (
-    <Drawer open={open} onOpenChange={onOpenChange} {...sessionFileChangesViewerLayout(mobile)}>
+    <Drawer open={open} onOpenChange={onOpenChange} {...getResponsiveDrawerProps(mobile)}>
       <DrawerContent className="session-changes-panel">
         <DrawerHeader className="subagent-session-header session-changes-header">
           <div>
