@@ -1827,7 +1827,13 @@ function DashboardContent({
     },
     [clearSessionFileChangesRefreshTimer, refreshSessionFileChanges, selectedSession?.id],
   );
+  const askingSessionIds = useMemo(
+    () => new Set(askRequests.map((request) => request.sessionId)),
+    [askRequests],
+  );
   const activeAskRequest = getActiveAskRequest(askRequests, selectedSession?.id ?? null);
+  const selectedSessionStatus =
+    selectedSession && askingSessionIds.has(selectedSession.id) ? "waiting" : selectedSession?.status;
   const currentTodo = useMemo(
     () => (selectedSession ? findLatestTodoResult(selectedSession.messages) : null),
     [selectedSession?.messages],
@@ -2270,13 +2276,14 @@ function DashboardContent({
                     const selected = session.id === selectedSession?.id;
                     const displayName =
                       session.name ?? session.cwd.split("/").filter(Boolean).at(-1) ?? "Untitled session";
+                    const displayStatus = askingSessionIds.has(session.id) ? "waiting" : session.status;
                     return (
                       <button
                         className={cn("session-item", selected && "session-item-selected")}
                         type="button"
                         key={session.id}
                         aria-current={selected ? "page" : undefined}
-                        aria-label={`${displayName}, ${SESSION_STATUS_LABEL[session.status]}`}
+                        aria-label={`${displayName}, ${SESSION_STATUS_LABEL[displayStatus]}`}
                         title={displayName}
                         onClick={() => {
                           onSelectedSessionChange(session.id);
@@ -2287,7 +2294,7 @@ function DashboardContent({
                         <span
                           className={cn(
                             "session-state-dot",
-                            `session-state-${SESSION_STATUS_TONE[session.status]}`,
+                            `session-state-${SESSION_STATUS_TONE[displayStatus]}`,
                           )}
                         />
                         <span className="session-copy">
@@ -2333,7 +2340,7 @@ function DashboardContent({
         <header className="session-header">
           <div className="session-header-primary">
             <SidebarTrigger />
-            {selectedSession ? (
+            {selectedSession && selectedSessionStatus ? (
               <>
                 <div>
                   <h1>{selectedSession.name ?? "Untitled session"}</h1>
@@ -2348,11 +2355,9 @@ function DashboardContent({
                     ) : null}
                   </div>
                 </div>
-                <Badge
-                  className={cn("status-badge", `status-${SESSION_STATUS_TONE[selectedSession.status]}`)}
-                >
+                <Badge className={cn("status-badge", `status-${SESSION_STATUS_TONE[selectedSessionStatus]}`)}>
                   <span aria-hidden="true" />
-                  {SESSION_STATUS_LABEL[selectedSession.status]}
+                  {SESSION_STATUS_LABEL[selectedSessionStatus]}
                 </Badge>
                 {canKillSession(selectedSession) ? (
                   <Button
