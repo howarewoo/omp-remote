@@ -2649,6 +2649,29 @@ describe("AskToolCall", () => {
 });
 
 describe("dashboard ask stream", () => {
+  it("marks a session with a pending question as waiting", () => {
+    const output = renderControlledDashboard({
+      ...composerDashboardProps(),
+      askRequests: [SELECT_ASK],
+    });
+    const sidebarSession = findElements(
+      output,
+      (element) => element.props.className === "session-item session-item-selected",
+    )[0];
+    const statusDot = findElements(
+      sidebarSession,
+      (element) => element.props.className === "session-state-dot session-state-waiting",
+    )[0];
+    const statusBadge = findElements(
+      output,
+      (element) => element.props.className === "status-badge status-waiting",
+    )[0];
+
+    expect(sidebarSession?.props["aria-label"]).toBe("Bootstrap, Waiting");
+    expect(statusDot).toBeDefined();
+    expect(textContent(statusBadge)).toBe("Waiting");
+  });
+
   it("keeps the selected session ask as a stable row inside transcript content", async () => {
     const message = {
       id: "message-1",
