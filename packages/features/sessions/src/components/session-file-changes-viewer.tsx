@@ -136,7 +136,7 @@ export function SessionFileChangesContent({
   firstRevealedFileRef?: Ref<HTMLButtonElement>;
   revealAnnouncement?: string;
 }) {
-  if (loading)
+  if (loading && !result)
     return (
       <ChangeState title="Reading session changes" detail="Collecting recorded changes from the host." />
     );
