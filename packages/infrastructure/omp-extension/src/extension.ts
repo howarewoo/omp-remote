@@ -468,7 +468,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
     z.object({ kind: z.literal("chat") }).strict(),
     z.object({ cancelled: z.literal(true), timedOut: z.boolean().optional() }).strict(),
   ]);
-  const CommandSchema = z.discriminatedUnion("command", [
+  const CommandSchema = z.union([
     z.object({
       requestId: z.string(),
       command: z.enum(["prompt", "steer", "follow_up"]),

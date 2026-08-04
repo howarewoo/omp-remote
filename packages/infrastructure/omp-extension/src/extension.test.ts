@@ -11,6 +11,9 @@ import ompRemoteExtension, {
   normalizeExtensionMessage,
 } from "./extension.js";
 
+const compatibilityZ = { ...z };
+Reflect.deleteProperty(compatibilityZ, "discriminatedUnion");
+
 const originalArgv = [...process.argv];
 const temporaryDirectories: string[] = [];
 
@@ -137,14 +140,16 @@ describe("ompRemoteExtension", () => {
     const model = { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" };
     const setModel = vi.fn().mockResolvedValue(true);
     const setThinkingLevel = vi.fn();
+    const sendUserMessage = vi.fn();
+    const abort = vi.fn();
     const pi = {
-      zod: { z },
+      zod: { z: compatibilityZ },
       on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => {
         handlers.set(event, handler);
       }),
       getThinkingLevel: vi.fn(() => "high"),
       getCommands: vi.fn(() => []),
-      sendUserMessage: vi.fn(),
+      sendUserMessage,
       setModel,
       setThinkingLevel,
     };
@@ -153,6 +158,7 @@ describe("ompRemoteExtension", () => {
       isIdle: () => true,
       hasPendingMessages: () => false,
       getContextUsage: () => undefined,
+      abort,
       models: {
         current: () => model,
         list: () => [model],
@@ -170,6 +176,17 @@ describe("ompRemoteExtension", () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);
 
     ompRemoteExtension(pi as unknown as ExtensionAPI);
+    expect(pi.on).toHaveBeenCalledTimes(8);
+    expect(pi.on.mock.calls.map(([event]) => event)).toEqual([
+      "session_start",
+      "session_switch",
+      "agent_start",
+      "agent_end",
+      "message_start",
+      "message_update",
+      "message_end",
+      "session_shutdown",
+    ]);
     await handlers.get("session_start")?.({}, context);
     const socket = FakeWebSocket.instances[0];
     expect(socket).toBeDefined();
@@ -194,6 +211,46 @@ describe("ompRemoteExtension", () => {
       sessionId: "session-1",
       event: "message_update",
       message: { text: "Working", streaming: true },
+    });
+
+    await socket.emit("message", {
+      data: JSON.stringify({ requestId: "prompt-1", command: "prompt", text: "Prompt text" }),
+    });
+    expect(sendUserMessage).toHaveBeenNthCalledWith(1, "Prompt text");
+    expect(JSON.parse(socket.sent.at(-1) ?? "")).toMatchObject({
+      type: "command_result",
+      requestId: "prompt-1",
+      ok: true,
+    });
+
+    await socket.emit("message", {
+      data: JSON.stringify({ requestId: "steer-1", command: "steer", text: "Steer text" }),
+    });
+    expect(sendUserMessage).toHaveBeenNthCalledWith(2, "Steer text", { deliverAs: "steer" });
+    expect(JSON.parse(socket.sent.at(-1) ?? "")).toMatchObject({
+      type: "command_result",
+      requestId: "steer-1",
+      ok: true,
+    });
+
+    await socket.emit("message", {
+      data: JSON.stringify({ requestId: "follow-up-1", command: "follow_up", text: "Follow-up text" }),
+    });
+    expect(sendUserMessage).toHaveBeenNthCalledWith(3, "Follow-up text", { deliverAs: "followUp" });
+    expect(JSON.parse(socket.sent.at(-1) ?? "")).toMatchObject({
+      type: "command_result",
+      requestId: "follow-up-1",
+      ok: true,
+    });
+
+    await socket.emit("message", {
+      data: JSON.stringify({ requestId: "abort-1", command: "abort" }),
+    });
+    expect(abort).toHaveBeenCalledOnce();
+    expect(JSON.parse(socket.sent.at(-1) ?? "")).toMatchObject({
+      type: "command_result",
+      requestId: "abort-1",
+      ok: true,
     });
 
     await socket.emit("message", {
@@ -244,7 +301,7 @@ describe("ompRemoteExtension", () => {
       });
     };
     const pi = {
-      zod: { z },
+      zod: { z: compatibilityZ },
       on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => handlers.set(event, handler)),
       getThinkingLevel: vi.fn(() => "high"),
       getCommands: vi.fn(() => []),
@@ -331,7 +388,7 @@ describe("ompRemoteExtension", () => {
       },
     };
     const pi = {
-      zod: { z },
+      zod: { z: compatibilityZ },
       on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => handlers.set(event, handler)),
       getThinkingLevel: vi.fn(() => "high"),
       getCommands: vi.fn(() => []),
@@ -430,7 +487,7 @@ describe("ompRemoteExtension", () => {
       onTerminalInput: () => vi.fn(),
     };
     const pi = {
-      zod: { z },
+      zod: { z: compatibilityZ },
       on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => handlers.set(event, handler)),
       getThinkingLevel: vi.fn(() => "high"),
       getCommands: vi.fn(() => []),
@@ -524,7 +581,7 @@ describe("ompRemoteExtension", () => {
     vi.stubGlobal("WebSocket", WebSocket);
 
     ompRemoteExtension({
-      zod: { z },
+      zod: { z: compatibilityZ },
       on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => {
         handlers.set(event, handler);
       }),
