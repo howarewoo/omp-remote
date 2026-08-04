@@ -1603,6 +1603,69 @@ describe("dashboard session-file-change refresh", () => {
       vi.useRealTimers();
     }
   });
+  it("keeps the matching result visible during a deferred same-session refresh", async () => {
+    vi.useFakeTimers();
+    try {
+      const initialChanges = changesFor(BASE_SESSION);
+      const refreshedChanges = {
+        ...initialChanges,
+        operationCount: 2,
+        additions: 2,
+        changedLines: 3,
+      };
+      const pendingRefresh = deferred<SessionFileChangesResponse>();
+      const onLoadSessionFileChanges = vi
+        .fn()
+        .mockResolvedValueOnce(initialChanges)
+        .mockReturnValueOnce(pendingRefresh.promise);
+      const firstProps = { ...composerDashboardProps(), onLoadSessionFileChanges };
+
+      let output = renderControlledDashboard(firstProps);
+      fileChangesViewer(output).props.onOpenChange(true);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const refreshedProps = {
+        ...firstProps,
+        sessions: [{ ...BASE_SESSION, lastActivity: "2026-07-28T18:00:00.000Z" }],
+      };
+      renderControlledDashboard(refreshedProps, { preserveState: true });
+      output = renderControlledDashboard(refreshedProps, {
+        preserveState: true,
+        effectsEnabled: false,
+      });
+      expect(fileChangesViewer(output).props).toMatchObject({
+        result: initialChanges,
+        loading: true,
+        error: null,
+      });
+
+      await vi.advanceTimersByTimeAsync(750);
+      output = renderControlledDashboard(refreshedProps, {
+        preserveState: true,
+        effectsEnabled: false,
+      });
+      expect(onLoadSessionFileChanges).toHaveBeenCalledTimes(2);
+      expect(fileChangesViewer(output).props).toMatchObject({
+        result: initialChanges,
+        loading: true,
+        error: null,
+      });
+
+      pendingRefresh.resolve(refreshedChanges);
+      await vi.advanceTimersByTimeAsync(0);
+      output = renderControlledDashboard(refreshedProps, {
+        preserveState: true,
+        effectsEnabled: false,
+      });
+      expect(fileChangesViewer(output).props).toMatchObject({
+        result: refreshedChanges,
+        loading: false,
+        error: null,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   it("shows loading and suppresses the previous result during a debounced open-drawer switch", async () => {
     vi.useFakeTimers();

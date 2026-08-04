@@ -213,6 +213,15 @@ describe("SessionFileChangesContent", () => {
   ])("renders the %s state", (_name, props, expected) => {
     expect(textContent(renderOwnedComponents(SessionFileChangesContent(props as never)))).toContain(expected);
   });
+  it("keeps a valid result rendered during background loading", () => {
+    const content = renderOwnedComponents(
+      SessionFileChangesContent({ result: AVAILABLE, loading: true, error: null }),
+    );
+    const text = textContent(content);
+    expect(text).toContain("2 files · 3 operations");
+    expect(text).toContain("/worktrees/root-project-with-a-very-long-label/src/shared.ts");
+    expect(text).not.toContain("Reading session changes");
+  });
 
   it("shows partial warnings before the collected flat file list", () => {
     const content = renderOwnedComponents(
