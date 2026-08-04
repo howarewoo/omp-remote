@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const reactHarness = vi.hoisted(() => ({
   effectsEnabled: true,
+  isMobile: false,
   stateIndex: 0,
   refIndex: 0,
   refValues: [] as { current: unknown }[],
@@ -49,12 +50,13 @@ vi.mock("./ui/sidebar.js", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
     ...actual,
-    useSidebar: () => ({ isMobile: false, setOpenMobile: vi.fn() }),
+    useSidebar: () => ({ isMobile: reactHarness.isMobile, setOpenMobile: vi.fn() }),
   };
 });
 
 beforeEach(() => {
   reactHarness.effectsEnabled = true;
+  reactHarness.isMobile = false;
   reactHarness.refIndex = 0;
   reactHarness.refValues = [];
   reactHarness.stateIndex = 0;
@@ -86,6 +88,7 @@ import {
   tokenizeCode,
   WorkingIndicator,
 } from "./dashboard.js";
+import { Drawer } from "./ui/drawer.js";
 import { SessionFileChangesViewer } from "./session-file-changes-viewer.js";
 import { SubagentSessionViewer } from "./subagent-session-viewer.js";
 import {
@@ -1913,8 +1916,7 @@ describe("dashboard current Todo tracker", () => {
     return findElements(
       output,
       (element) =>
-        element.props.showSwipeHandle === true &&
-        textContent(element.props.children as ReactNode).includes("Current Todo"),
+        element.type === Drawer && textContent(element.props.children as ReactNode).includes("Current Todo"),
     )[0];
   }
 
@@ -1949,7 +1951,7 @@ describe("dashboard current Todo tracker", () => {
     ]);
   });
 
-  it("opens the full latest Todo in a swipe-handled drawer", () => {
+  it("opens the full latest Todo in a responsive drawer", () => {
     const props = composerDashboardProps({ ...BASE_SESSION, messages });
     let output = renderControlledDashboard(props);
     openTodoDrawer(output);
@@ -1962,6 +1964,7 @@ describe("dashboard current Todo tracker", () => {
       .join(" ");
 
     expect(drawer?.props.open).toBe(true);
+    expect(drawer?.props).toMatchObject({ showSwipeHandle: false, swipeDirection: "right" });
     expect(drawerText).toContain("Verify current Todo tracker");
     expect(drawerText).toContain("Locate todo rendering and UI conventions");
     expect(
@@ -1973,6 +1976,16 @@ describe("dashboard current Todo tracker", () => {
         );
       }),
     ).toHaveLength(1);
+  });
+
+  it("uses a mobile bottom sheet for the current Todo", () => {
+    reactHarness.isMobile = true;
+    const props = composerDashboardProps({ ...BASE_SESSION, messages });
+    let output = renderControlledDashboard(props);
+    openTodoDrawer(output);
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+
+    expect(findTodoDrawer(output)?.props).toMatchObject({ showSwipeHandle: true, swipeDirection: "down" });
   });
 
   it("closes an open Todo drawer when the selected session changes", () => {
@@ -3111,9 +3124,7 @@ function findConfigurationTrigger(output: ReactNode, kind: "model" | "effort") {
 function findConfigurationDrawer(output: ReactNode, title: "Model" | "Effort") {
   return findElements(
     output,
-    (element) =>
-      element.props.showSwipeHandle === true &&
-      textContent(element.props.children as ReactNode).includes(title),
+    (element) => element.type === Drawer && textContent(element.props.children as ReactNode).includes(title),
   )[0];
 }
 
@@ -3137,9 +3148,30 @@ describe("session model and effort selectors", () => {
 
     const drawer = findConfigurationDrawer(output, "Model");
     expect(drawer?.props.open).toBe(true);
+    expect(drawer?.props).toMatchObject({ showSwipeHandle: false, swipeDirection: "right" });
     expect(textContent(drawer?.props.children as ReactNode)).toContain("GPT-5.6");
     expect(textContent(drawer?.props.children as ReactNode)).toContain("Claude Opus 4.7");
     expect(textContent(drawer?.props.children as ReactNode)).not.toContain("Effort");
+  });
+
+  it("uses mobile bottom sheets for model and effort selectors", () => {
+    reactHarness.isMobile = true;
+    const props = configurationProps(CONFIGURABLE_SESSION);
+    let output = renderControlledDashboard(props);
+
+    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    expect(findConfigurationDrawer(output, "Model")?.props).toMatchObject({
+      showSwipeHandle: true,
+      swipeDirection: "down",
+    });
+
+    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    expect(findConfigurationDrawer(output, "Effort")?.props).toMatchObject({
+      showSwipeHandle: true,
+      swipeDirection: "down",
+    });
   });
 
   it("keeps only the most recently opened configuration drawer open", () => {
@@ -3155,6 +3187,10 @@ describe("session model and effort selectors", () => {
     output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
     expect(findConfigurationDrawer(output, "Model")?.props.open).toBe(false);
     expect(findConfigurationDrawer(output, "Effort")?.props.open).toBe(true);
+    expect(findConfigurationDrawer(output, "Effort")?.props).toMatchObject({
+      showSwipeHandle: false,
+      swipeDirection: "right",
+    });
   });
 
   it("opens truthful recovery guidance when configuration data is unavailable", () => {
