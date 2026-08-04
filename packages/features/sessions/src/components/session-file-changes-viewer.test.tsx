@@ -431,8 +431,8 @@ describe("SessionFileChangesContent", () => {
                   timestamp: "2026-08-01T09:59:00.000Z",
                   sessionId: "child-session",
                   op: "create",
-                  additions: 0,
-                  deletions: 0,
+                  additions: 62,
+                  deletions: 13,
                 },
               ],
             },
@@ -466,6 +466,25 @@ describe("SessionFileChangesContent", () => {
     expect(text).not.toContain("Descendant");
     expect(text).not.toContain("root-session");
     expect(text).not.toContain("child-session");
+    const trigger = findElements(
+      content,
+      (element) => element.props.className === "session-changes-file-trigger",
+    )[0];
+    expect(trigger?.props["aria-label"]).toBe(
+      "Toggle cumulative changes for /worktrees/root-project-with-a-very-long-label/src/shared.ts. 63 additions, 14 deletions across 3 recorded operations.",
+    );
+    expect(textContent(trigger)).toBe("/worktrees/root-project-with-a-very-long-label/src/shared.ts+63−14");
+    expect(
+      findElements(
+        trigger,
+        (element) =>
+          element.props.className === "session-changes-additions" ||
+          element.props.className === "session-changes-deletions",
+      ).map((element) => [element.props.className, textContent(element), element.props["aria-hidden"]]),
+    ).toEqual([
+      ["session-changes-additions", "+63", undefined],
+      ["session-changes-deletions", "−14", undefined],
+    ]);
   });
 
   it("sorts fractional timestamps by epoch while preserving equal-time source order", () => {

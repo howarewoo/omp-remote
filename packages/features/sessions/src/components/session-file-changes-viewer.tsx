@@ -269,21 +269,41 @@ function SessionChangedFileView({
 }) {
   const visibleOperations = file.operations.slice(0, visibleOperationCount);
   const remainingOperationCount = file.operations.length - visibleOperations.length;
+  let additions = 0;
+  let deletions = 0;
+  for (const operation of file.operations) {
+    if (operation.type !== "edit") continue;
+    additions += operation.additions;
+    deletions += operation.deletions;
+  }
+  const lastSeparatorIndex = Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\"));
+  const parentPath = lastSeparatorIndex < 0 ? "" : file.path.slice(0, lastSeparatorIndex + 1);
+  const fileName = file.path.slice(lastSeparatorIndex + 1);
   return (
     <Collapsible className="session-changes-file" defaultOpen={false}>
       <CollapsibleTrigger
         ref={triggerRef}
         type="button"
         className="session-changes-file-trigger"
-        aria-label={`Toggle ${file.operations.length} recorded ${file.operations.length === 1 ? "operation" : "operations"} for ${file.path}`}
+        aria-label={`Toggle cumulative changes for ${file.path}. ${additions} additions, ${deletions} deletions across ${file.operations.length} recorded ${file.operations.length === 1 ? "operation" : "operations"}.`}
       >
         <span className="session-changes-file-heading">
           <svg className="session-changes-chevron" aria-hidden="true" viewBox="0 0 24 24">
             <path d="m9 18 6-6-6-6" />
           </svg>
-          <strong>{file.path}</strong>
+          <strong className="session-changes-file-path" title={file.path}>
+            <span className="session-changes-file-path-parent">
+              <span className="session-changes-file-path-parent-value">{parentPath}</span>
+            </span>
+            <span className="session-changes-file-path-name">
+              <span className="session-changes-file-path-name-value">{fileName}</span>
+            </span>
+          </strong>
         </span>
-        <span className="session-changes-operation-count">{file.operations.length}</span>
+        <span className="session-changes-file-line-totals session-changes-line-totals" aria-hidden="true">
+          <span className="session-changes-additions">+{additions}</span>
+          <span className="session-changes-deletions">−{deletions}</span>
+        </span>
       </CollapsibleTrigger>
       <CollapsibleContent className="session-changes-file-content">
         <ol className="session-changes-operations">
