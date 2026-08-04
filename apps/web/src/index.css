@@ -1575,7 +1575,7 @@ textarea:disabled {
   display: flex;
   width: 100%;
   min-height: 2.75rem;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 1rem;
   margin: 0;
@@ -1607,17 +1607,53 @@ textarea:disabled {
 
 .session-changes-file-heading {
   display: flex;
+  flex: 1 1 auto;
   min-width: 0;
-  align-items: flex-start;
+  align-items: center;
   gap: 0.55rem;
 }
 
-.session-changes-file-heading strong {
+.session-changes-file-path {
+  display: flex;
+  flex: 1 1 auto;
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow: hidden;
   font-family: var(--font-mono);
   font-size: 0.75rem;
   font-weight: 600;
+  white-space: nowrap;
+}
+
+.session-changes-file-path-parent {
+  display: flex;
+  flex: 0 1000 auto;
+  min-width: 0;
+  justify-content: flex-end;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.session-changes-file-path-parent-value {
+  flex: 0 0 auto;
+}
+
+.session-changes-file-path-name {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.session-changes-file-path-name-value {
+  flex: 0 0 auto;
+}
+
+.session-changes-file-line-totals {
+  margin-inline-start: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .session-changes-chevron {
@@ -1635,7 +1671,6 @@ textarea:disabled {
   transform: rotate(90deg);
 }
 
-.session-changes-operation-count,
 .session-changes-operation-metadata,
 .session-changes-line-totals {
   display: flex;
@@ -3310,16 +3345,6 @@ textarea:disabled {
 
   .session-changes-body {
     padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
-  }
-
-  .session-changes-file-trigger {
-    align-items: stretch;
-    flex-direction: column;
-    gap: 0.55rem;
-  }
-
-  .session-changes-operation-count {
-    justify-content: flex-start;
   }
 
   .sidebar-sheet .sidebar {
