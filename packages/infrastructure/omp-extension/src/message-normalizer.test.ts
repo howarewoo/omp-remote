@@ -296,6 +296,47 @@ describe("normalizeExtensionMessage", () => {
       normalizeExtensionMessage({ id: 42, role: "assistant", content: "invalid id" }, false, "fallback-id"),
     ).toBeNull();
   });
+  it("normalizes Read image parts through the resolver and omits assistant images", () => {
+    expect(
+      normalizeExtensionMessage(
+        {
+          id: "extension-read-image",
+          role: "toolResult",
+          toolName: "read",
+          content: [{ type: "image", data: "blob:sha256:test", mimeType: "image/png" }],
+        },
+        false,
+        "fallback-id",
+        undefined,
+        () => ({ status: "unavailable", reason: "missing" }),
+      ),
+    ).toMatchObject({ images: [{ status: "unavailable", reason: "missing" }] });
+    expect(
+      normalizeExtensionMessage(
+        {
+          role: "assistant",
+          content: [{ type: "image", data: "blob:sha256:test", mimeType: "image/png" }],
+        },
+        false,
+        "fallback-id",
+      ),
+    ).toBeNull();
+    expect(
+      normalizeExtensionMessage(
+        {
+          id: "errored-read-image",
+          role: "toolResult",
+          toolName: "read",
+          isError: true,
+          content: [{ type: "image", data: "blob:sha256:test", mimeType: "image/png" }],
+        },
+        false,
+        "fallback-id",
+        undefined,
+        () => ({ status: "available", mimeType: "image/png", data: "iVBORw0KGgo=" }),
+      ),
+    ).toMatchObject({ images: [{ status: "unavailable", reason: "invalid_reference" }] });
+  });
 });
 
 describe("getSkillCommands", () => {

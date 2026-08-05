@@ -1,7 +1,19 @@
-import { SkillCommandSchema, type SkillCommand, type TranscriptMessage } from "@omp-remote/protocol";
+import {
+  type SkillCommand,
+  SkillCommandSchema,
+  type TranscriptImage,
+  type TranscriptMessage,
+} from "@omp-remote/protocol";
 import { z } from "zod";
 
-const RawContentPartSchema = z.object({ type: z.string(), text: z.string().optional() }).passthrough();
+const RawContentPartSchema = z
+  .object({
+    type: z.string(),
+    text: z.string().optional(),
+    data: z.unknown().optional(),
+    mimeType: z.unknown().optional(),
+  })
+  .passthrough();
 type RawMessageContent = string | z.infer<typeof RawContentPartSchema>[];
 
 const RawMessageSchema = z
@@ -131,6 +143,7 @@ interface NormalizeRawMessageOptions {
   maxTextLength?: number;
   ignoreRawId?: boolean;
   toolCallTracker?: ToolCallTracker;
+  resolveReadImage?: (data: string, mimeType: string) => TranscriptImage;
 }
 
 export function normalizeRawMessage(
@@ -167,6 +180,9 @@ export function normalizeRawMessage(
       ? (normalizeBoundedSingleLine(canonicalReadDetails.data.resolvedPath) ??
         (trackedReadTarget?.startsWith("skill://") ? readSourcePath : undefined))
       : undefined;
+  const images = isReadToolResult
+    ? extractReadImages(data.content, options.resolveReadImage, data.isError === true)
+    : undefined;
   const canonicalEditDetails =
     data.role === "toolResult" && toolName === "edit"
       ? CanonicalEditDetailsSchema.safeParse(data.details)
@@ -177,8 +193,10 @@ export function normalizeRawMessage(
       : undefined;
   const canonicalDiff = data.isError === false ? appliedDiff : undefined;
   const isCanonicalEditDiff = canonicalDiff !== undefined;
+  const hasImagePart =
+    isReadToolResult && Array.isArray(data.content) && data.content.some((part) => part.type === "image");
   const fullText = canonicalDiff ?? extractText(data.content);
-  if (!fullText && (options.omitEmptyText || data.role !== "toolResult")) return null;
+  if (!fullText && (options.omitEmptyText || data.role !== "toolResult") && !hasImagePart) return null;
 
   const timestamp = options.timestamp ?? normalizeRawTimestamp(data.timestamp);
   const resolvedFallbackId = typeof fallbackId === "function" ? fallbackId(fullText, timestamp) : fallbackId;
@@ -197,7 +215,6 @@ export function normalizeRawMessage(
       : data.role === "user" || data.role === "assistant" || data.role === "tool"
         ? data.role
         : "system";
-
   return {
     id,
     role,
@@ -208,8 +225,34 @@ export function normalizeRawMessage(
     ...(toolName ? { toolName } : {}),
     ...(readTarget ? { readTarget } : {}),
     ...(readResolvedPath ? { readResolvedPath } : {}),
+    ...(images?.length ? { images } : {}),
     ...(toolTitle ? { toolTitle } : {}),
   };
+}
+function extractReadImages(
+  content: RawMessageContent,
+  resolveReadImage?: (data: string, mimeType: string) => TranscriptImage,
+  readError = false,
+): TranscriptImage[] {
+  if (!Array.isArray(content)) return [];
+  const images: TranscriptImage[] = [];
+  for (const part of content) {
+    if (part.type !== "image") continue;
+    if (readError) {
+      images.push({ status: "unavailable", reason: "invalid_reference" });
+      continue;
+    }
+    if (typeof part.data !== "string") {
+      images.push({ status: "unavailable", reason: "invalid_reference" });
+      continue;
+    }
+    if (typeof part.mimeType !== "string") {
+      images.push({ status: "unavailable", reason: "unsupported_mime" });
+      continue;
+    }
+    images.push(resolveReadImage?.(part.data, part.mimeType) ?? { status: "unavailable", reason: "missing" });
+  }
+  return images;
 }
 
 export function normalizeSkillCommands(raw: unknown): SkillCommand[] {
@@ -224,6 +267,17 @@ export function normalizeSkillCommands(raw: unknown): SkillCommand[] {
     });
   }
   return commands;
+}
+export function materializeReadImages(
+  message: TranscriptMessage,
+  raw: unknown,
+  resolveReadImage: (data: string, mimeType: string) => TranscriptImage,
+): TranscriptMessage {
+  if (message.toolName !== "read") return message;
+  const parsed = RawMessageSchema.safeParse(raw);
+  if (!parsed.success) return message;
+  const images = extractReadImages(parsed.data.content, resolveReadImage, parsed.data.isError === true);
+  return images.length ? { ...message, images } : message;
 }
 
 function normalizeBoundedSingleLine(value: unknown): string | undefined {

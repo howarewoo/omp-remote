@@ -1,4 +1,9 @@
-import { TRANSCRIPT_TEXT_LIMIT, type Session, type SessionPatch } from "@omp-remote/protocol";
+import {
+  type Session,
+  type SessionPatch,
+  TRANSCRIPT_IMAGE_MAX_BYTES,
+  TRANSCRIPT_TEXT_LIMIT,
+} from "@omp-remote/protocol";
 import { describe, expect, it } from "vitest";
 import { SessionRegistry } from "./session-registry.js";
 
@@ -236,6 +241,47 @@ describe("SessionRegistry", () => {
     expect(messages).toHaveLength(200);
     expect(messages?.[0]?.id).toBe("message-1");
     expect(messages?.[199]?.id).toBe("message-200");
+  });
+
+  it("marks appended images beyond the retained session budget unavailable", () => {
+    const registry = new SessionRegistry();
+    const imageData = `${"A".repeat(Math.ceil(TRANSCRIPT_IMAGE_MAX_BYTES / 3) * 4 - 2)}==`;
+    registry.upsert({
+      ...BASE_SESSION,
+      messages: Array.from({ length: 5 }, (_, index) => ({
+        id: `retained-image-${index}`,
+        role: "tool" as const,
+        text: "image",
+        timestamp: "2026-07-28T17:04:00.000Z",
+        streaming: false,
+        presentation: "text" as const,
+        images: [{ status: "available" as const, mimeType: "image/png" as const, data: imageData }],
+      })),
+    });
+    const events: unknown[] = [];
+    registry.subscribe((event) => events.push(event));
+    registry.appendMessage("session-1", {
+      id: "overflow-image",
+      role: "tool",
+      text: "image",
+      timestamp: "2026-07-28T17:04:00.000Z",
+      streaming: false,
+      presentation: "text",
+      images: [{ status: "available", mimeType: "image/png", data: imageData }],
+    });
+    expect(
+      registry
+        .get("session-1")
+        ?.messages.slice(-2)
+        .map((message) => message.images?.[0]),
+    ).toEqual([
+      { status: "available", mimeType: "image/png", data: imageData },
+      { status: "unavailable", reason: "budget_exceeded" },
+    ]);
+    expect(events.at(-1)).toMatchObject({
+      type: "transcript_upsert",
+      message: { images: [{ status: "unavailable", reason: "budget_exceeded" }] },
+    });
   });
 
   it("emits a detached metadata patch while retaining the complete session", () => {
