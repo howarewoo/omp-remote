@@ -10,6 +10,7 @@ import {
   SessionCatalogPageSchema,
   SessionPatchSchema,
   SessionFileChangesResponseSchema,
+  SessionFileWriteOperationSchema,
   SessionSchema,
   SessionTranscriptResponseSchema,
   TranscriptMessageSchema,
@@ -881,6 +882,7 @@ describe("SessionFileChangesResponseSchema", () => {
                 sessionId: "root-session",
                 resolvedPath: "/worktree/a/src/app.ts",
                 byteCount: 12,
+                additions: 0,
               },
             ],
           },
@@ -913,7 +915,7 @@ describe("SessionFileChangesResponseSchema", () => {
     message: null,
   };
 
-  it("retains separate session/worktree identities and metadata-only writes", () => {
+  it("retains separate session/worktree identities and write byte metadata", () => {
     const parsed = SessionFileChangesResponseSchema.parse(response);
     expect(parsed.sources.map((source) => [source.sessionId, source.root])).toEqual([
       ["root-session", "/worktree/a"],
@@ -925,7 +927,89 @@ describe("SessionFileChangesResponseSchema", () => {
       sessionId: "root-session",
       resolvedPath: "/worktree/a/src/app.ts",
       byteCount: 12,
+      additions: 0,
     });
+  });
+  it("validates retained write snapshots with exact line and UTF-8 byte counts", () => {
+    const source = response.sources[0]!;
+    const file = source.files[0]!;
+    const write = {
+      type: "write" as const,
+      timestamp: "2026-08-01T10:01:00.000Z",
+      sessionId: "root-session",
+      resolvedPath: "/worktree/a/src/app.ts",
+      byteCount: 3,
+      snapshot: "é\n",
+      additions: 1,
+    };
+    const valid = {
+      ...response,
+      sources: [
+        { ...source, files: [{ ...file, operations: [file.operations[0], write] }] },
+        response.sources[1],
+      ],
+      operationCount: 3,
+      additions: 2,
+      changedLines: 3,
+    };
+    expect(
+      SessionFileChangesResponseSchema.safeParse({
+        ...valid,
+        sources: [
+          {
+            ...valid.sources[0],
+            files: [
+              {
+                ...valid.sources[0]!.files[0],
+                operations: [{ ...write, byteCount: 0, snapshot: "", additions: 0 }],
+              },
+            ],
+          },
+          valid.sources[1],
+        ],
+        additions: 0,
+        deletions: 0,
+        operationCount: 2,
+        changedLines: 0,
+      }).success,
+    ).toBe(true);
+    expect(SessionFileChangesResponseSchema.safeParse(valid).success).toBe(true);
+
+    const emptyLineMismatch = SessionFileWriteOperationSchema.safeParse({
+      ...write,
+      byteCount: 0,
+      snapshot: "",
+      additions: 1,
+    });
+    expect(emptyLineMismatch.success).toBe(false);
+    if (!emptyLineMismatch.success) {
+      expect(emptyLineMismatch.error.issues.map((issue) => issue.message)).toEqual([
+        "Write additions must match the retained snapshot",
+      ]);
+    }
+
+    const omittedLineMismatch = SessionFileWriteOperationSchema.safeParse({
+      ...write,
+      snapshot: undefined,
+      additions: 1,
+    });
+    expect(omittedLineMismatch.success).toBe(false);
+    if (!omittedLineMismatch.success) {
+      expect(omittedLineMismatch.error.issues.map((issue) => issue.message)).toEqual([
+        "Write additions must match the retained snapshot",
+      ]);
+    }
+
+    const byteCountMismatch = SessionFileWriteOperationSchema.safeParse({
+      ...write,
+      byteCount: 2,
+    });
+    expect(byteCountMismatch.success).toBe(false);
+    if (!byteCountMismatch.success) {
+      expect(byteCountMismatch.error.issues.map((issue) => issue.message)).toEqual([
+        "Write byteCount must match the retained snapshot",
+      ]);
+    }
   });
 
   it("compares operation timestamps chronologically rather than lexically", () => {

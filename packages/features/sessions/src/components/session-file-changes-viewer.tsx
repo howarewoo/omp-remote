@@ -3,6 +3,7 @@ import type {
   SessionFileChangesResponse,
   SessionFileOperation,
 } from "@omp-remote/protocol";
+import { countTextLines } from "@omp-remote/protocol";
 import { type Ref, useEffect, useRef, useState } from "react";
 import { Badge } from "./ui/badge.js";
 import { Button } from "./ui/button.js";
@@ -31,14 +32,15 @@ interface SessionFileChangesViewerProps {
   error: string | null;
   onOpenChange(open: boolean): void;
 }
-
 export function formatSessionFileChangesSummary(counts: {
   fileCount: number;
   operationCount: number;
+  additions: number;
+  deletions: number;
 }): string {
   const files = `${counts.fileCount} ${counts.fileCount === 1 ? "file" : "files"}`;
   const operations = `${counts.operationCount} ${counts.operationCount === 1 ? "operation" : "operations"}`;
-  return `${files} · ${operations}`;
+  return `${files} · ${operations} · +${counts.additions} −${counts.deletions}`;
 }
 
 export function formatSessionFileChangesMetadata(
@@ -52,6 +54,8 @@ export function formatSessionFileChangesMetadata(
   const summary = formatSessionFileChangesSummary({
     fileCount: aggregateSessionChangedFiles(result).length,
     operationCount: result.operationCount,
+    additions: result.additions,
+    deletions: result.deletions,
   });
   return result.state === "partial" ? `Partial · ${summary}` : summary;
 }
@@ -181,6 +185,8 @@ export function SessionFileChangesContent({
         {formatSessionFileChangesSummary({
           fileCount: files.length,
           operationCount: result.operationCount,
+          additions: result.additions,
+          deletions: result.deletions,
         })}
       </p>
       {visibleFiles.map((file, index) => (
@@ -272,9 +278,8 @@ function SessionChangedFileView({
   let additions = 0;
   let deletions = 0;
   for (const operation of file.operations) {
-    if (operation.type !== "edit") continue;
     additions += operation.additions;
-    deletions += operation.deletions;
+    if (operation.type === "edit") deletions += operation.deletions;
   }
   const lastSeparatorIndex = Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\"));
   const parentPath = lastSeparatorIndex < 0 ? "" : file.path.slice(0, lastSeparatorIndex + 1);
@@ -341,37 +346,101 @@ function OperationRow({ filePath, operation }: { filePath: string; operation: Se
       <div className="session-changes-operation-metadata">
         <Badge>{operation.type === "edit" ? (operation.op ?? "edit") : "write"}</Badge>
         <time dateTime={operation.timestamp}>{formatOperationTime(operation.timestamp)}</time>
-        {operation.type === "edit" ? (
-          <span className="session-changes-line-totals">
-            <span className="sr-only">
-              {operation.additions} additions, {operation.deletions} deletions
-            </span>
-            <span className="session-changes-additions" aria-hidden="true">
-              +{operation.additions}
-            </span>
-            <span className="session-changes-deletions" aria-hidden="true">
-              −{operation.deletions}
-            </span>
+        <span className="session-changes-line-totals">
+          <span className="sr-only">
+            {operation.additions} additions, {operation.type === "edit" ? operation.deletions : 0} deletions
           </span>
-        ) : null}
+          <span className="session-changes-additions" aria-hidden="true">
+            +{operation.additions}
+          </span>
+          <span className="session-changes-deletions" aria-hidden="true">
+            −{operation.type === "edit" ? operation.deletions : 0}
+          </span>
+        </span>
       </div>
       {operation.type === "write" ? (
-        <dl className="session-changes-write-metadata">
-          <div>
-            <dt>Resolved path</dt>
-            <dd>{operation.resolvedPath}</dd>
-          </div>
-          <div>
-            <dt>Bytes</dt>
-            <dd>{operation.byteCount.toLocaleString()}</dd>
-          </div>
-        </dl>
+        <>
+          <dl className="session-changes-write-metadata">
+            <div>
+              <dt>Resolved path</dt>
+              <dd>{operation.resolvedPath}</dd>
+            </div>
+            <div>
+              <dt>Bytes</dt>
+              <dd>{operation.byteCount.toLocaleString()}</dd>
+            </div>
+          </dl>
+          <SessionWriteSnapshot
+            {...(operation.snapshot !== undefined ? { snapshot: operation.snapshot } : {})}
+            filePath={operation.resolvedPath}
+            operationTimestamp={operation.timestamp}
+          />
+        </>
       ) : operation.patch ? (
         <SessionPatch patch={operation.patch} filePath={filePath} operationTimestamp={operation.timestamp} />
       ) : (
         <p className="session-changes-patch-omitted">Patch data is unavailable for this recorded edit.</p>
       )}
     </li>
+  );
+}
+
+function SessionWriteSnapshot({
+  snapshot,
+  filePath,
+  operationTimestamp,
+}: {
+  snapshot?: string;
+  filePath: string;
+  operationTimestamp: string;
+}) {
+  if (snapshot === undefined) {
+    return (
+      <section
+        className="session-change-patch-scroll session-change-write-snapshot-scroll"
+        aria-label={`Write snapshot for ${filePath} at ${operationTimestamp}`}
+      >
+        <p className="session-changes-patch-omitted">Write snapshot unavailable</p>
+      </section>
+    );
+  }
+  if (snapshot.length === 0) {
+    return (
+      <section
+        className="session-change-patch-scroll session-change-write-snapshot-scroll"
+        aria-label={`Write snapshot for ${filePath} at ${operationTimestamp}`}
+      >
+        <p className="session-changes-patch-omitted">Empty file</p>
+      </section>
+    );
+  }
+  const allLines = snapshot.split("\n");
+  if (snapshot.endsWith("\n")) allLines.pop();
+  const lines = allLines.slice(0, MAX_RENDERED_PATCH_LINES);
+  const omittedLineCount = countTextLines(snapshot) - lines.length;
+  return (
+    <section
+      className="session-change-patch-scroll session-change-write-snapshot-scroll"
+      aria-label={`Write snapshot for ${filePath} at ${operationTimestamp}`}
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: The labelled horizontal scroll region needs a keyboard focus stop.
+      tabIndex={0}
+    >
+      <pre className="session-change-patch">
+        <code>
+          {lines.map((line, index) => (
+            <span className="session-change-line session-change-line-added" key={`${index}:${line}`}>
+              {line || " "}
+            </span>
+          ))}
+        </code>
+      </pre>
+      {omittedLineCount > 0 ? (
+        <p className="session-changes-patch-omitted">
+          {omittedLineCount.toLocaleString()} additional snapshot{" "}
+          {omittedLineCount === 1 ? "line was" : "lines were"} omitted from this preview.
+        </p>
+      ) : null}
+    </section>
   );
 }
 

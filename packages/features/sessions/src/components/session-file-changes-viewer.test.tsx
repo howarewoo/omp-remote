@@ -37,6 +37,7 @@ const AVAILABLE: SessionFileChangesResponse = {
               sessionId: "root-session",
               resolvedPath: "/worktrees/root-project-with-a-very-long-label/src/shared.ts",
               byteCount: 42,
+              additions: 0,
             },
           ],
         },
@@ -89,7 +90,7 @@ function renderOwnedComponents(node: ReactNode): ReactNode {
   if (!isValidElement<TestProps>(node)) return node;
   if (
     typeof node.type === "function" &&
-    ["SessionChangedFileView", "OperationRow", "ChangeState"].includes(node.type.name)
+    ["SessionChangedFileView", "OperationRow", "ChangeState", "SessionWriteSnapshot"].includes(node.type.name)
   ) {
     return renderOwnedComponents((node.type as (props: TestProps) => ReactNode)(node.props));
   }
@@ -117,12 +118,14 @@ function findElements(
 
 describe("session file changes metadata", () => {
   it("reports unique file and operation counts with correct labels", () => {
-    expect(formatSessionFileChangesSummary({ fileCount: 1, operationCount: 1 })).toBe("1 file · 1 operation");
-    expect(formatSessionFileChangesSummary(AVAILABLE)).toBe("2 files · 3 operations");
-    expect(formatSessionFileChangesMetadata(AVAILABLE, null)).toBe("2 files · 3 operations");
+    expect(
+      formatSessionFileChangesSummary({ fileCount: 1, operationCount: 1, additions: 0, deletions: 0 }),
+    ).toBe("1 file · 1 operation · +0 −0");
+    expect(formatSessionFileChangesSummary(AVAILABLE)).toBe("2 files · 3 operations · +1 −1");
+    expect(formatSessionFileChangesMetadata(AVAILABLE, null)).toBe("2 files · 3 operations · +1 −1");
     expect(formatSessionFileChangesMetadata(AVAILABLE, null, true)).toBe("Reading changes…");
     expect(formatSessionFileChangesMetadata({ ...AVAILABLE, state: "partial" }, null)).toBe(
-      "Partial · 2 files · 3 operations",
+      "Partial · 2 files · 3 operations · +1 −1",
     );
     expect(formatSessionFileChangesMetadata(AVAILABLE, "Host failed")).toBe("Changes unavailable");
     expect(formatSessionFileChangesMetadata(null, null)).toBe("View changes");
@@ -237,6 +240,7 @@ describe("SessionFileChangesContent", () => {
       }),
     );
     const text = textContent(content);
+    expect(text).toContain("Some session changes are unavailable.");
     expect(text.indexOf("Some session changes are unavailable.")).toBeLessThan(
       text.indexOf("/worktrees/root-project-with-a-very-long-label/src/shared.ts"),
     );
@@ -449,7 +453,7 @@ describe("SessionFileChangesContent", () => {
       "root-session",
       "root-session",
     ]);
-    expect(formatSessionFileChangesMetadata(cumulative, null)).toBe("1 file · 3 operations");
+    expect(formatSessionFileChangesMetadata(cumulative, null)).toBe("1 file · 3 operations · +1 −1");
 
     const content = renderOwnedComponents(
       SessionFileChangesContent({ result: cumulative, loading: false, error: null }),
@@ -559,6 +563,117 @@ describe("SessionFileChangesContent", () => {
           element.props.className === "session-changes-deletions",
       ).every((element) => element.props["aria-hidden"] === "true"),
     ).toBe(true);
+  });
+  it("renders exact write snapshots, empty files, unavailable snapshots, and aggregate additions", () => {
+    const snapshotResult: SessionFileChangesResponse = {
+      ...AVAILABLE,
+      sources: [
+        {
+          ...AVAILABLE.sources[0]!,
+          files: [
+            {
+              path: AVAILABLE.sources[0]!.files[0]!.path,
+              operations: [
+                {
+                  type: "write",
+                  timestamp: "2026-08-01T10:01:00.000Z",
+                  sessionId: "root-session",
+                  resolvedPath: AVAILABLE.sources[0]!.files[0]!.path,
+                  byteCount: 4,
+                  snapshot: "one\n",
+                  additions: 1,
+                },
+                {
+                  type: "write",
+                  timestamp: "2026-08-01T10:02:00.000Z",
+                  sessionId: "root-session",
+                  resolvedPath: AVAILABLE.sources[0]!.files[0]!.path,
+                  byteCount: 0,
+                  snapshot: "",
+                  additions: 0,
+                },
+                {
+                  type: "write",
+                  timestamp: "2026-08-01T10:03:00.000Z",
+                  sessionId: "root-session",
+                  resolvedPath: AVAILABLE.sources[0]!.files[0]!.path,
+                  byteCount: 5,
+                  additions: 0,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      fileCount: 1,
+      operationCount: 3,
+      additions: 1,
+      deletions: 0,
+      changedLines: 1,
+    };
+    const content = renderOwnedComponents(
+      SessionFileChangesContent({ result: snapshotResult, loading: false, error: null }),
+    );
+    const text = textContent(content);
+    expect(text).toContain("one");
+    expect(text).toContain("Empty file");
+    expect(text).toContain("Write snapshot unavailable");
+    expect(text).toContain("+1−0");
+    const snapshotRegions = findElements(
+      content,
+      (element) => element.props.className?.includes("session-change-write-snapshot-scroll") === true,
+    );
+    expect(snapshotRegions.map((region) => region.props["aria-label"])).toEqual([
+      "Write snapshot for /worktrees/root-project-with-a-very-long-label/src/shared.ts at 2026-08-01T10:01:00.000Z",
+      "Write snapshot for /worktrees/root-project-with-a-very-long-label/src/shared.ts at 2026-08-01T10:02:00.000Z",
+      "Write snapshot for /worktrees/root-project-with-a-very-long-label/src/shared.ts at 2026-08-01T10:03:00.000Z",
+    ]);
+    const rows = findElements(
+      content,
+      (element) => element.props.className === "session-change-line session-change-line-added",
+    );
+    expect(rows.map(textContent)).toEqual(["one"]);
+  });
+
+  it("caps write snapshot previews at 500 rows", () => {
+    const snapshot = Array.from({ length: 650 }, (_, index) => `line ${index}`).join("\n");
+    const result: SessionFileChangesResponse = {
+      ...AVAILABLE,
+      sources: [
+        {
+          ...AVAILABLE.sources[0]!,
+          files: [
+            {
+              path: AVAILABLE.sources[0]!.files[0]!.path,
+              operations: [
+                {
+                  type: "write",
+                  timestamp: "2026-08-01T10:01:00.000Z",
+                  sessionId: "root-session",
+                  resolvedPath: AVAILABLE.sources[0]!.files[0]!.path,
+                  byteCount: new TextEncoder().encode(snapshot).byteLength,
+                  snapshot,
+                  additions: 650,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      fileCount: 1,
+      operationCount: 1,
+      additions: 650,
+      deletions: 0,
+      changedLines: 650,
+    };
+    const content = renderOwnedComponents(SessionFileChangesContent({ result, loading: false, error: null }));
+    expect(
+      findElements(
+        content,
+        (element) => element.props.className === "session-change-line session-change-line-added",
+      ),
+    ).toHaveLength(500);
+    expect(textContent(content)).toContain("150 additional snapshot lines were omitted from this preview.");
   });
 });
 

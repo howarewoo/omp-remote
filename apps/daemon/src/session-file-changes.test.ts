@@ -57,7 +57,7 @@ afterEach(async () => {
 });
 
 describe("collectSessionFileChanges", () => {
-  it("collects successful per-file edits, one unambiguous legacy edit, and metadata-only writes", async () => {
+  it("collects successful per-file edits, one unambiguous legacy edit, and exact write snapshots", async () => {
     const directory = await temporaryDirectory();
     const worktree = join(directory, "not-a-git-worktree");
     const sessionPath = join(directory, "history", "root.jsonl");
@@ -90,9 +90,9 @@ describe("collectSessionFileChanges", () => {
       state: "available",
       fileCount: 3,
       operationCount: 4,
-      additions: 3,
+      additions: 4,
       deletions: 2,
-      changedLines: 5,
+      changedLines: 6,
     });
     expect(response.sources[0]?.files[0]?.operations.map((operation) => operation.timestamp)).toEqual([
       "2026-08-01T10:00:01.000Z",
@@ -105,9 +105,11 @@ describe("collectSessionFileChanges", () => {
       sessionId: "root",
       resolvedPath: join(worktree, "src/data.txt"),
       byteCount: Buffer.byteLength(secret),
+      snapshot: secret,
+      additions: 1,
     });
     expect(response.sources[0]?.files[0]?.operations[0]).toMatchObject({ type: "edit", op: "update" });
-    expect(JSON.stringify(response)).not.toContain(secret);
+    expect(JSON.stringify(response)).toContain(secret);
   });
 
   it("uses canonical tool-call fields before compatible aliases", async () => {
@@ -569,5 +571,129 @@ describe("collectSessionFileChanges", () => {
         sources: [{ sessionId: "root", root: directory, sessionPath }],
       }),
     ).resolves.toMatchObject({ state: "partial", operationCount: 0 });
+  });
+
+  it("retains empty files and counts trailing-newline snapshots without phantom rows", async () => {
+    const directory = await temporaryDirectory();
+    const worktree = join(directory, "worktree");
+    const sessionPath = join(directory, "root.jsonl");
+    await writeJsonl(sessionPath, [
+      call("empty", "write", { path: "empty.txt", content: "" }, "2026-08-01T10:00:00.000Z"),
+      result("empty", "write", {}, "2026-08-01T10:00:01.000Z"),
+      call("trailing", "write", { path: "trailing.txt", content: "one\n" }, "2026-08-01T10:00:02.000Z"),
+      result("trailing", "write", {}, "2026-08-01T10:00:03.000Z"),
+    ]);
+    const response = await collectSessionFileChanges({
+      sessionId: "root",
+      sources: [{ sessionId: "root", root: worktree, sessionPath }],
+    });
+    const operations = response.sources[0]!.files.flatMap((file) => file.operations);
+    expect(operations).toEqual([
+      expect.objectContaining({ type: "write", snapshot: "", additions: 0 }),
+      expect.objectContaining({ type: "write", snapshot: "one\n", additions: 1 }),
+    ]);
+    expect(response).toMatchObject({ additions: 1, deletions: 0, changedLines: 1 });
+  });
+
+  it("omits individually oversized and shared-budget write snapshots while preserving metadata", async () => {
+    const directory = await temporaryDirectory();
+    const worktree = join(directory, "worktree");
+    const sessionPath = join(directory, "root.jsonl");
+    const oversized = "x".repeat(256 * 1024 + 1);
+    const bounded = "a".repeat(200 * 1024);
+    const records: unknown[] = [
+      call("oversized", "write", { path: "oversized.txt", content: oversized }, "2026-08-01T10:00:00.000Z"),
+      result("oversized", "write", {}, "2026-08-01T10:00:01.000Z"),
+    ];
+    for (let index = 0; index < 16; index += 1) {
+      const id = `bounded-${index}`;
+      const timestamp = `2026-08-01T10:01:${String(index).padStart(2, "0")}.000Z`;
+      records.push(
+        call(id, "write", { path: `bounded-${index}.txt`, content: bounded }, timestamp),
+        result(id, "write", {}, `2026-08-01T10:02:${String(index).padStart(2, "0")}.000Z`),
+      );
+    }
+    await writeJsonl(sessionPath, records);
+    const response = await collectSessionFileChanges({
+      sessionId: "root",
+      sources: [{ sessionId: "root", root: worktree, sessionPath }],
+    });
+    const operations = response.sources[0]!.files.flatMap((file) => file.operations);
+    expect(response.state).toBe("partial");
+    expect(operations).toHaveLength(17);
+    const oversizedOperation = operations.find(
+      (operation) => operation.type === "write" && operation.resolvedPath.endsWith("oversized.txt"),
+    );
+    const boundedOperations = operations.filter(
+      (operation) => operation.type === "write" && operation.resolvedPath.includes("bounded-"),
+    );
+    expect(oversizedOperation).toMatchObject({ type: "write", additions: 0 });
+    expect(oversizedOperation).not.toHaveProperty("snapshot");
+    expect(boundedOperations).toHaveLength(16);
+    expect(
+      boundedOperations.filter((operation) => operation.type === "write" && operation.snapshot !== undefined),
+    ).toHaveLength(15);
+    expect(boundedOperations[0]).toHaveProperty("snapshot", bounded);
+    const omittedOperation = boundedOperations.find(
+      (operation) => operation.type === "write" && operation.resolvedPath.endsWith("bounded-15.txt"),
+    );
+    expect(omittedOperation).toMatchObject({ type: "write", additions: 0 });
+    expect(omittedOperation?.type === "write" ? omittedOperation.snapshot : undefined).toBeUndefined();
+  });
+  it("trims multiple quote-heavy write snapshots while preserving metadata", async () => {
+    const directory = await temporaryDirectory();
+    const worktree = join(directory, "worktree");
+    const sessionPath = join(directory, "root.jsonl");
+    const snapshot = Array.from({ length: 200 * 1024 }, (_, index) => (index % 2 === 0 ? '"' : "\\")).join(
+      "",
+    );
+    const records: unknown[] = [];
+    for (let index = 0; index < 16; index += 1) {
+      const id = `trim-${index}`;
+      const timestamp = `2026-08-01T10:00:${String(index).padStart(2, "0")}.000Z`;
+      records.push(
+        call(id, "write", { path: `trim-${index}.txt`, content: snapshot }, timestamp),
+        result(id, "write", {}, `2026-08-01T10:01:${String(index).padStart(2, "0")}.000Z`),
+      );
+    }
+    await writeJsonl(sessionPath, records);
+    const response = await collectSessionFileChanges({
+      sessionId: "root",
+      sources: [{ sessionId: "root", root: worktree, sessionPath }],
+    });
+    const operations = response.sources[0]!.files.flatMap((file) => file.operations);
+    const writes = operations.filter((operation) => operation.type === "write");
+    const stripped = writes.filter((operation) => operation.snapshot === undefined);
+    expect(response).toMatchObject({ state: "partial", fileCount: 16, operationCount: 16 });
+    expect(writes.every((operation) => operation.byteCount === Buffer.byteLength(snapshot))).toBe(true);
+    expect(stripped.length).toBeGreaterThanOrEqual(2);
+    expect(stripped.length).toBeLessThan(writes.length);
+    expect(stripped.every((operation) => operation.additions === 0)).toBe(true);
+    expect(writes.every((operation) => operation.resolvedPath.startsWith(worktree))).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(response))).toBeLessThanOrEqual(4 * 1024 * 1024);
+  });
+
+  it("marks an oversized successful filesystem write partial while preserving metadata", async () => {
+    const directory = await temporaryDirectory();
+    const worktree = join(directory, "worktree");
+    const sessionPath = join(directory, "root.jsonl");
+    const content = "x".repeat(256 * 1024 + 1);
+    await writeJsonl(sessionPath, [
+      call("oversized", "write", { path: "oversized.txt", content }, "2026-08-01T10:00:00.000Z"),
+      result("oversized", "write", {}, "2026-08-01T10:00:01.000Z"),
+    ]);
+    const response = await collectSessionFileChanges({
+      sessionId: "root",
+      sources: [{ sessionId: "root", root: worktree, sessionPath }],
+    });
+    const operation = response.sources[0]?.files[0]?.operations[0];
+    expect(response).toMatchObject({ state: "partial", operationCount: 1, additions: 0, changedLines: 0 });
+    expect(operation).toMatchObject({
+      type: "write",
+      resolvedPath: join(worktree, "oversized.txt"),
+      byteCount: Buffer.byteLength(content),
+      additions: 0,
+    });
+    expect(operation).not.toHaveProperty("snapshot");
   });
 });

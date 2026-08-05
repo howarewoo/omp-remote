@@ -162,6 +162,16 @@ export const SessionTranscriptResponseSchema = z.object({
   sessionId: z.string().min(1),
   messages: z.array(TranscriptMessageSchema),
 });
+const utf8Encoder = new TextEncoder();
+
+export function countTextLines(text: string): number {
+  if (text.length === 0) return 0;
+  let count = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text.charCodeAt(index) === 10) count += 1;
+  }
+  return text.endsWith("\n") ? count : count + 1;
+}
 
 export const SessionFileEditOperationSchema = z
   .object({
@@ -190,8 +200,30 @@ export const SessionFileWriteOperationSchema = z
     sessionId: z.string().min(1),
     resolvedPath: z.string().min(1),
     byteCount: z.number().int().nonnegative(),
+    snapshot: z.string().optional(),
+    additions: z.number().int().nonnegative(),
   })
-  .strict();
+  .strict()
+  .superRefine((operation, context) => {
+    if (
+      (operation.snapshot === undefined && operation.additions !== 0) ||
+      (operation.snapshot !== undefined && countTextLines(operation.snapshot) !== operation.additions)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Write additions must match the retained snapshot",
+      });
+    }
+    if (
+      operation.snapshot !== undefined &&
+      utf8Encoder.encode(operation.snapshot).byteLength !== operation.byteCount
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "Write byteCount must match the retained snapshot",
+      });
+    }
+  });
 
 export const SessionFileOperationSchema = z.discriminatedUnion("type", [
   SessionFileEditOperationSchema,
@@ -259,7 +291,7 @@ export const SessionFileChangesResponseSchema = z
     const edits = operations.filter(
       (operation): operation is z.infer<typeof SessionFileEditOperationSchema> => operation.type === "edit",
     );
-    const additions = edits.reduce((total, operation) => total + operation.additions, 0);
+    const additions = operations.reduce((total, operation) => total + operation.additions, 0);
     const deletions = edits.reduce((total, operation) => total + operation.deletions, 0);
     if (sourceIdentities.size !== response.sources.length) {
       context.addIssue({ code: "custom", message: "Session/worktree sources must be unique" });
