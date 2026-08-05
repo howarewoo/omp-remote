@@ -2,6 +2,7 @@ import { createReadStream } from "node:fs";
 import { resolve } from "node:path";
 import {
   SessionFileChangesResponseSchema,
+  countTextLines,
   type SessionFileChangesResponse,
   type SessionFileOperation,
 } from "@omp-remote/protocol";
@@ -22,7 +23,7 @@ const MAX_PATH_LENGTH = 4_096;
 
 type TrackedCall =
   | { type: "edit"; toolName: "edit"; paths: string[] }
-  | { type: "write"; toolName: "write"; path: string; byteCount: number }
+  | { type: "write"; toolName: "write"; path: string; byteCount: number; content?: string }
   | { type: "device"; toolName: "write" };
 
 type CollectedFile = { path: string; operations: SessionFileOperation[] };
@@ -138,28 +139,37 @@ async function collectSource(
           continue;
         }
         let retainedOperation = operation;
-        let patchBytes = 0;
+        let retainedBytes = 0;
         if (operation.type === "edit" && operation.patch) {
-          patchBytes = Buffer.byteLength(JSON.stringify(operation.patch)) - 2;
-          if (patchBytes > budget.remainingPatchBytes) {
+          retainedBytes = Buffer.byteLength(operation.patch);
+          if (retainedBytes > budget.remainingPatchBytes) {
             retainedOperation = { ...operation, patch: undefined, additions: 0, deletions: 0 };
-            patchBytes = 0;
+            retainedBytes = 0;
             partial = true;
           }
         } else if (operation.type === "edit") {
           partial = true;
+        } else if (operation.snapshot !== undefined) {
+          retainedBytes = Buffer.byteLength(operation.snapshot);
+          if (retainedBytes > budget.remainingPatchBytes) {
+            retainedOperation = { ...operation, snapshot: undefined, additions: 0 };
+            retainedBytes = 0;
+            partial = true;
+          }
         }
         const metadataOperation =
           retainedOperation.type === "edit" && retainedOperation.patch
             ? { ...retainedOperation, patch: undefined, additions: 0, deletions: 0 }
-            : retainedOperation;
+            : retainedOperation.type === "write" && retainedOperation.snapshot !== undefined
+              ? { ...retainedOperation, snapshot: undefined, additions: 0 }
+              : retainedOperation;
         const contribution = Buffer.byteLength(JSON.stringify({ path, operations: [metadataOperation] }));
         if (contribution > budget.remainingResponseBytes) {
           partial = true;
           continue;
         }
         budget.remainingOperations -= 1;
-        budget.remainingPatchBytes -= patchBytes;
+        budget.remainingPatchBytes -= retainedBytes;
         budget.remainingResponseBytes -= contribution;
         const existing = files.get(path) ?? [];
         existing.push(retainedOperation);
@@ -205,8 +215,15 @@ function captureCalls(content: unknown, root: string, calls: Map<string, Tracked
       if (paths.length > 0) call = { type: "edit", toolName: "edit", paths };
     } else if (name === "write" && typeof args.content === "string") {
       const path = resolveFilePath(args.path, root);
+      const byteCount = Buffer.byteLength(args.content);
       call = path
-        ? { type: "write", toolName: "write", path, byteCount: Buffer.byteLength(args.content) }
+        ? {
+            type: "write",
+            toolName: "write",
+            path,
+            byteCount,
+            ...(byteCount <= MAX_RETAINED_PATCH_BYTES ? { content: args.content } : {}),
+          }
         : typeof args.path === "string" && /^[a-z][a-z\d+.-]*:\/\//i.test(args.path)
           ? { type: "device", toolName: "write" }
           : null;
@@ -249,10 +266,13 @@ function operationsFromResult(
             sessionId: descriptor.sessionId,
             resolvedPath: resultPath,
             byteCount: call.byteCount,
+            ...(call.content !== undefined
+              ? { snapshot: call.content, additions: countTextLines(call.content) }
+              : { additions: 0 }),
           },
         },
       ],
-      omitted: false,
+      omitted: call.content === undefined,
     };
   }
   if (!details) return { operations: [], omitted: true };
@@ -443,9 +463,11 @@ function makeResponse(
 ): SessionFileChangesResponse {
   const files = sources.flatMap((source) => source.files);
   const operations = files.flatMap((file) => file.operations);
-  const edits = operations.filter((operation) => operation.type === "edit");
-  const additions = edits.reduce((total, operation) => total + operation.additions, 0);
-  const deletions = edits.reduce((total, operation) => total + operation.deletions, 0);
+  const additions = operations.reduce((total, operation) => total + operation.additions, 0);
+  const deletions = operations.reduce(
+    (total, operation) => total + (operation.type === "edit" ? operation.deletions : 0),
+    0,
+  );
   return {
     sessionId,
     state,
@@ -484,16 +506,30 @@ function trimResponse(sources: CollectedSource[], bytesToFree: number): void {
     for (let fileIndex = files.length - 1; fileIndex >= 0; fileIndex -= 1) {
       const operations = files[fileIndex]!.operations;
       for (let operationIndex = operations.length - 1; operationIndex >= 0; operationIndex -= 1) {
-        let operation = operations[operationIndex]!;
-        if (operation.type === "edit" && operation.patch) {
+        const operation = operations[operationIndex]!;
+        if (operation.type === "write" && operation.snapshot !== undefined) {
+          const retainedOperation = { ...operation, snapshot: undefined, additions: 0 };
+          freedBytes +=
+            Buffer.byteLength(JSON.stringify(operation)) -
+            Buffer.byteLength(JSON.stringify(retainedOperation));
+          operations[operationIndex] = retainedOperation;
+        } else if (operation.type === "edit" && operation.patch) {
           const retainedOperation = { ...operation, patch: undefined, additions: 0, deletions: 0 };
           freedBytes +=
             Buffer.byteLength(JSON.stringify(operation)) -
             Buffer.byteLength(JSON.stringify(retainedOperation));
           operations[operationIndex] = retainedOperation;
-          operation = retainedOperation;
-          if (freedBytes >= bytesToFree) return;
         }
+        if (freedBytes >= bytesToFree) return;
+      }
+    }
+  }
+  for (let sourceIndex = sources.length - 1; sourceIndex >= 0; sourceIndex -= 1) {
+    const files = sources[sourceIndex]!.files;
+    for (let fileIndex = files.length - 1; fileIndex >= 0; fileIndex -= 1) {
+      const operations = files[fileIndex]!.operations;
+      for (let operationIndex = operations.length - 1; operationIndex >= 0; operationIndex -= 1) {
+        const operation = operations[operationIndex]!;
         operations.splice(operationIndex, 1);
         freedBytes += Buffer.byteLength(JSON.stringify(operation)) + 1;
         if (operations.length === 0) files.splice(fileIndex, 1);
