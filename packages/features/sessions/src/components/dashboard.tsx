@@ -8,6 +8,7 @@ import {
   filterMainSessions,
   type Session,
   type SessionFileChangesResponse,
+  type TranscriptImage,
 } from "@omp-remote/protocol";
 import { SESSION_STATUS_LABEL, SESSION_STATUS_TONE } from "@omp-remote/ui";
 import {
@@ -1047,18 +1048,195 @@ function TranscriptEntryHeader({
   );
 }
 
+export type DisclosureTranscriptSegment =
+  | { kind: "text"; text: string }
+  | { kind: "image"; alt: string; source: string };
+
+const DISCLOSURE_IMAGE_PATTERN = /(?<!\\)!\[([^\]\r\n]*)\]\((https:\/\/[^)\s]+)\)/g;
+
+export function parseDisclosureImages(text: string): DisclosureTranscriptSegment[] {
+  const segments: DisclosureTranscriptSegment[] = [];
+  let textStart = 0;
+
+  for (const match of text.matchAll(DISCLOSURE_IMAGE_PATTERN)) {
+    const matchStart = match.index;
+    if (matchStart > textStart) segments.push({ kind: "text", text: text.slice(textStart, matchStart) });
+    segments.push({ kind: "image", alt: match[1] ?? "", source: match[2] ?? "" });
+    textStart = matchStart + match[0].length;
+  }
+
+  if (textStart < text.length || segments.length === 0) {
+    segments.push({ kind: "text", text: text.slice(textStart) });
+  }
+  return segments;
+}
+
 function renderDisclosureTranscriptText(text: string) {
   return <pre className="transcript-disclosure-text">{text}</pre>;
 }
 
+function DisclosureImage({
+  alt,
+  fallbackLabel,
+  pending = false,
+  source,
+  variant,
+}: {
+  alt: string;
+  fallbackLabel: string;
+  pending?: boolean;
+  source: string | null | undefined;
+  variant: "thumbnail" | "expanded";
+}) {
+  const [loadFailed, setLoadFailed] = useState(false);
+  if (pending && !source) {
+    const loading = `Loading image: ${fallbackLabel}`;
+    return (
+      <span className="disclosure-image">
+        <span className="disclosure-image-fallback" role="status">
+          {loading}
+        </span>
+      </span>
+    );
+  }
+
+  const sourceLinkLabel = alt ? `Open image source: ${alt}` : "Open image source";
+
+  if (!source || loadFailed) {
+    const fallback = `Image unavailable: ${fallbackLabel}`;
+    const fallbackNode = (
+      <span aria-label={fallback} className="disclosure-image-fallback" role="img">
+        {fallback}
+      </span>
+    );
+    return (
+      <span className="disclosure-image">
+        {source && variant === "expanded" ? (
+          <a
+            aria-label={sourceLinkLabel}
+            className="disclosure-image-link"
+            href={source}
+            rel="noreferrer"
+            target="_blank"
+          >
+            {fallbackNode}
+          </a>
+        ) : (
+          fallbackNode
+        )}
+      </span>
+    );
+  }
+
+  const image = (
+    <img
+      alt={alt}
+      className="disclosure-image-media"
+      decoding="async"
+      loading="lazy"
+      onError={() => setLoadFailed(true)}
+      referrerPolicy="no-referrer"
+      src={source}
+    />
+  );
+
+  return (
+    <span className="disclosure-image">
+      {variant === "expanded" ? (
+        <a
+          aria-label={sourceLinkLabel}
+          className="disclosure-image-link"
+          href={source}
+          rel="noreferrer"
+          target="_blank"
+        >
+          {image}
+        </a>
+      ) : (
+        image
+      )}
+    </span>
+  );
+}
+
+function getDisclosurePlainText(segments: readonly DisclosureTranscriptSegment[]): string {
+  return segments
+    .filter(
+      (segment): segment is Extract<DisclosureTranscriptSegment, { kind: "text" }> => segment.kind === "text",
+    )
+    .map((segment) => segment.text)
+    .join("");
+}
+
+type DisclosureTranscriptContentProps =
+  | {
+      preview: string;
+      segments: readonly DisclosureTranscriptSegment[];
+      variant: "thumbnail";
+    }
+  | {
+      preview?: never;
+      segments: readonly DisclosureTranscriptSegment[];
+      variant: "expanded";
+    };
+
+function renderDisclosureTranscriptContent(props: DisclosureTranscriptContentProps) {
+  const { segments, variant } = props;
+  const images = segments.filter(
+    (segment): segment is Extract<DisclosureTranscriptSegment, { kind: "image" }> => segment.kind === "image",
+  );
+
+  return (
+    <div className="transcript-disclosure-content" data-variant={variant}>
+      {variant === "thumbnail" ? (
+        <>
+          {props.preview || images.length === 0 ? renderDisclosureTranscriptText(props.preview) : null}
+          {images.map((image, index) => (
+            <DisclosureImage
+              alt={image.alt}
+              fallbackLabel={image.alt || "image"}
+              key={`${index}:${image.source}`}
+              source={image.source}
+              variant={variant}
+            />
+          ))}
+        </>
+      ) : (
+        segments.map((segment, index) =>
+          segment.kind === "text" ? (
+            <pre className="transcript-disclosure-text" key={`${index}:text`}>
+              {segment.text}
+            </pre>
+          ) : (
+            <DisclosureImage
+              alt={segment.alt}
+              fallbackLabel={segment.alt || "image"}
+              key={`${index}:${segment.source}`}
+              source={segment.source}
+              variant={variant}
+            />
+          ),
+        )
+      )}
+    </div>
+  );
+}
+
 export function SystemTranscriptText({ entry }: { entry: Session["messages"][number] }) {
+  const segments = parseDisclosureImages(entry.text);
+  const plainText = getDisclosurePlainText(segments);
+  const preview =
+    plainText.trim().length > 0 || !segments.some((segment) => segment.kind === "image")
+      ? formatSystemTextPreview(plainText)
+      : "";
+
   return (
     <details className="system-message-disclosure transcript-disclosure-frame">
       <summary>
         <TranscriptEntryHeader entry={entry} collapsible />
-        {renderDisclosureTranscriptText(formatSystemTextPreview(entry.text))}
+        {renderDisclosureTranscriptContent({ preview, segments, variant: "thumbnail" })}
       </summary>
-      {renderDisclosureTranscriptText(entry.text)}
+      {renderDisclosureTranscriptContent({ segments, variant: "expanded" })}
     </details>
   );
 }
@@ -1222,6 +1400,90 @@ const MemoizedTodoToolTranscript = memo(TodoToolTranscript);
 
 const READ_RESULT_PREVIEW_LINES = 12;
 const URI_LIKE_READ_TARGET_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//;
+const EMPTY_TRANSCRIPT_IMAGES: readonly TranscriptImage[] = [];
+type TranscriptImageSource = {
+  image: TranscriptImage;
+  source: string | null | undefined;
+};
+const EMPTY_TRANSCRIPT_IMAGE_SOURCES: readonly TranscriptImageSource[] = [];
+
+function getReadImageLabel(readTarget: string | undefined): string {
+  if (!readTarget) return "Read";
+  if (URI_LIKE_READ_TARGET_PATTERN.test(readTarget)) return readTarget;
+  return getReadToolFilename(readTarget) ?? "Read";
+}
+
+function createTranscriptImageObjectUrl(image: TranscriptImage): string | null {
+  if (image.status !== "available") return null;
+
+  try {
+    const binary = globalThis.atob(image.data);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return globalThis.URL.createObjectURL(new Blob([bytes], { type: image.mimeType }));
+  } catch {
+    return null;
+  }
+}
+
+function useTranscriptImageObjectUrls(images: readonly TranscriptImage[]): readonly TranscriptImageSource[] {
+  const [state, setState] = useState<{
+    images: readonly TranscriptImage[];
+    sources: readonly TranscriptImageSource[];
+  }>({ images: EMPTY_TRANSCRIPT_IMAGES, sources: EMPTY_TRANSCRIPT_IMAGE_SOURCES });
+
+  useEffect(() => {
+    if (images.length === 0) {
+      setState((current) =>
+        current.images === images && current.sources === EMPTY_TRANSCRIPT_IMAGE_SOURCES
+          ? current
+          : { images, sources: EMPTY_TRANSCRIPT_IMAGE_SOURCES },
+      );
+      return;
+    }
+    const sources = images.map((image) => ({ image, source: createTranscriptImageObjectUrl(image) }));
+    setState({ images, sources });
+
+    return () => {
+      for (const entry of sources) {
+        if (entry.source) globalThis.URL.revokeObjectURL(entry.source);
+      }
+    };
+  }, [images]);
+
+  if (images.length === 0) return EMPTY_TRANSCRIPT_IMAGE_SOURCES;
+  return state.images === images ? state.sources : images.map((image) => ({ image, source: undefined }));
+}
+
+function renderReadImageDisclosureContent({
+  imageSources,
+  readTarget,
+  text,
+  variant,
+}: {
+  imageSources: readonly TranscriptImageSource[];
+  readTarget: string | undefined;
+  text: string;
+  variant: "thumbnail" | "expanded";
+}) {
+  const label = readTarget || "Read";
+
+  return (
+    <div className="transcript-disclosure-content" data-variant={variant}>
+      {text || imageSources.length === 0 ? renderDisclosureTranscriptText(text) : null}
+      {imageSources.map(({ image, source }, index) => (
+        <DisclosureImage
+          alt={label}
+          fallbackLabel={label}
+          key={`${index}:${image.status}:${source ?? ""}`}
+          pending={image.status === "available" && source === undefined}
+          source={source}
+          variant={variant}
+        />
+      ))}
+    </div>
+  );
+}
 
 function ReadResultTranscript({
   entry,
@@ -1232,11 +1494,15 @@ function ReadResultTranscript({
   className: string;
   readTarget: string | undefined;
 }) {
+  const images = entry.images ?? EMPTY_TRANSCRIPT_IMAGES;
+  const imageSources = useTranscriptImageObjectUrls(images);
   const lines = entry.text.split(/\r\n|\n|\r/);
   if (lines[lines.length - 1] === "") lines.pop();
   const preview = lines.slice(0, READ_RESULT_PREVIEW_LINES).join("\n");
   const hiddenLineCount = Math.max(0, lines.length - READ_RESULT_PREVIEW_LINES);
-  const authorLabel = readTarget ? `Read ${readTarget}` : "Read";
+  const readImageLabel = getReadImageLabel(readTarget);
+  const authorLabel = readTarget ? `Read ${readImageLabel}` : "Read";
+  const hasImages = images.length > 0;
 
   return (
     <div className={`${className} read-result-disclosure`}>
@@ -1245,15 +1511,29 @@ function ReadResultTranscript({
           <TranscriptEntryHeader entry={entry} authorLabel={authorLabel} collapsible />
           <ToolOutputDivider />
           <div className="read-result-preview">
-            {renderDisclosureTranscriptText(preview)}
+            {hasImages
+              ? renderReadImageDisclosureContent({
+                  imageSources,
+                  readTarget: readImageLabel,
+                  text: preview,
+                  variant: "thumbnail",
+                })
+              : renderDisclosureTranscriptText(preview)}
             {hiddenLineCount > 0 ? (
               <span className="read-result-more">… {hiddenLineCount} more lines</span>
             ) : null}
           </div>
         </summary>
-        {renderDisclosureTranscriptText(entry.text)}
+        {hasImages
+          ? renderReadImageDisclosureContent({
+              imageSources,
+              readTarget: readImageLabel,
+              text: entry.text,
+              variant: "expanded",
+            })
+          : renderDisclosureTranscriptText(entry.text)}
       </details>
-      {entry.readResolvedPath ? (
+      {!hasImages && entry.readResolvedPath ? (
         <div className="read-result-output">
           <div className="read-result-resolved-path">
             <span>Resolved path: {entry.readResolvedPath}</span>
@@ -1271,8 +1551,10 @@ export function ToolTranscriptText({ entry }: { entry: Session["messages"][numbe
   const isRead = entry.toolName === "read";
   const readTarget = getReadToolTarget(entry);
   const readFilename = isRead ? getReadToolFilename(readTarget) : null;
+  const hasReadImages = isRead && Boolean(entry.images?.length);
   const isInspectableRead =
-    isRead && (readTarget ? URI_LIKE_READ_TARGET_PATTERN.test(readTarget) : readFilename === null);
+    isRead &&
+    (hasReadImages || (readTarget ? URI_LIKE_READ_TARGET_PATTERN.test(readTarget) : readFilename === null));
   const isWrite = entry.toolName === "write";
   const authorLabel =
     entry.toolTitle ??
@@ -1293,6 +1575,17 @@ export function ToolTranscriptText({ entry }: { entry: Session["messages"][numbe
     );
   }
 
+  const rendersDisclosureImages = !isWrite && entry.presentation !== "diff";
+  const disclosureSegments = rendersDisclosureImages ? parseDisclosureImages(entry.text) : null;
+  const disclosurePlainText = disclosureSegments === null ? null : getDisclosurePlainText(disclosureSegments);
+  const disclosurePreview =
+    disclosureSegments === null || disclosurePlainText === null
+      ? null
+      : disclosurePlainText.trim().length > 0 ||
+          !disclosureSegments.some((segment) => segment.kind === "image")
+        ? formatToolTextPreview(disclosurePlainText)
+        : "";
+
   return (
     <details className={className} open={entry.toolName === "edit" || isWrite}>
       <summary>
@@ -1301,13 +1594,22 @@ export function ToolTranscriptText({ entry }: { entry: Session["messages"][numbe
         {isWrite ? null : entry.presentation === "diff" ? (
           <pre className="tool-message-preview">{formatToolTextPreview(entry.text)}</pre>
         ) : (
-          renderDisclosureTranscriptText(formatToolTextPreview(entry.text))
+          renderDisclosureTranscriptContent({
+            preview: disclosurePreview ?? "",
+            segments: disclosureSegments ?? [],
+            variant: "thumbnail",
+          })
         )}
       </summary>
       {entry.presentation === "diff" ? (
         <TranscriptEntryContent entry={entry} />
+      ) : isWrite ? (
+        renderDisclosureTranscriptText(formatToolTextFull(entry.text))
       ) : (
-        renderDisclosureTranscriptText(isWrite ? formatToolTextFull(entry.text) : entry.text)
+        renderDisclosureTranscriptContent({
+          segments: disclosureSegments ?? [],
+          variant: "expanded",
+        })
       )}
     </details>
   );
