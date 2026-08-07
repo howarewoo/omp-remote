@@ -11,3 +11,5 @@ coverage/
 *.log
 apps/web/public/sw.js
 apps/web/public/workbox-*.js
+
+.vscode/
