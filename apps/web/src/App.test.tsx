@@ -31,6 +31,8 @@ vi.mock("@omp-remote/session-client", () => ({
     loadMoreHistory: vi.fn(),
     loadTranscript: vi.fn(),
     loadSessionFileChanges: vi.fn(),
+    loadSessionBranchTopology: vi.fn(),
+    switchBranch: vi.fn(),
   }),
 }));
 
@@ -41,8 +43,10 @@ vi.mock("./session-notifications.js", () => ({
 
 interface ControlledDashboardProps {
   selectedSessionId?: string | null;
-  onSelectedSessionChange?: (sessionId: string) => void;
   onLoadSessionFileChanges?: (sessionId: string, signal?: AbortSignal) => Promise<unknown>;
+  onLoadSessionBranchTopology?: (sessionId: string, signal?: AbortSignal) => Promise<unknown>;
+  onSwitchBranch?: (sessionId: string, branch: string) => Promise<void>;
+  onSelectedSessionChange?: (sessionId: string) => void;
 }
 
 interface AppContentProps {
@@ -103,5 +107,16 @@ describe("App session URL state", () => {
 
     const [dashboard] = (App() as ReactElement<AppContentProps>).props.children;
     expect(dashboard.props.onLoadSessionFileChanges).toBeTypeOf("function");
+  });
+
+  it("wires branch topology loading and switching into the dashboard", () => {
+    vi.stubGlobal("window", {
+      location: new URL("https://app.test/"),
+      history: { replaceState: vi.fn() },
+    });
+
+    const [dashboard] = (App() as ReactElement<AppContentProps>).props.children;
+    expect(dashboard.props.onLoadSessionBranchTopology).toBeTypeOf("function");
+    expect(dashboard.props.onSwitchBranch).toBeTypeOf("function");
   });
 });

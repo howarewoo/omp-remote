@@ -3,10 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createCatalogLoadCoordinator,
   commandResultValue,
+  loadSessionBranchTopology,
   loadSessionFileChanges,
   patchSession,
   removeAskRequest,
   sessionSourcesReady,
+  sendBrowserCommand,
   upsertAskRequest,
   upsertTranscriptMessage,
 } from "./index.js";
@@ -47,6 +49,10 @@ describe("commandResultValue", () => {
     expect(commandResultValue("session_command", { type: "void" })).toBeUndefined();
   });
 
+  it("accepts the void result used by switch_branch", () => {
+    expect(commandResultValue("switch_branch", { type: "void" })).toBeUndefined();
+  });
+
   it("rejects a result belonging to a different command kind", () => {
     expect(() => commandResultValue("launch", { type: "void" })).toThrow(
       "The host did not identify the launched session",
@@ -57,6 +63,38 @@ describe("commandResultValue", () => {
         sessionId: "wrong-session",
       }),
     ).toThrow("The host returned a launch result for a different command");
+  });
+});
+
+describe("sendBrowserCommand", () => {
+  it("sends the exact switch frame and clears the pending request on timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = {
+        readyState: WebSocket.OPEN,
+        send: vi.fn(),
+      } as unknown as WebSocket;
+      const pendingCommands = new Map();
+      const frame = {
+        type: "switch_branch" as const,
+        requestId: "request-1",
+        sessionId: "session-1",
+        branch: "feature/sibling",
+      };
+
+      const result = sendBrowserCommand(socket, pendingCommands, frame, 1_000);
+      const rejection = expect(result).rejects.toThrow(
+        "The host did not respond before the command timed out",
+      );
+
+      expect(socket.send).toHaveBeenCalledWith(JSON.stringify(frame));
+      expect(pendingCommands.size).toBe(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await rejection;
+      expect(pendingCommands.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -293,6 +331,77 @@ describe("remote ask request state", () => {
 
     expect(removeAskRequest([newerRequest], "session-1", "ask-1")).toEqual([newerRequest]);
     expect(removeAskRequest([newerRequest], "session-1", "ask-2")).toEqual([]);
+  });
+});
+
+describe("loadSessionBranchTopology", () => {
+  const availableResponse = {
+    sessionId: "session/a",
+    branches: [{ name: "main" }, { name: "feature/child", parent: "main" }],
+    currentBranch: "feature/child",
+  };
+
+  it("requests the encoded branches route and validates its schema", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify(availableResponse), { status: 200 }));
+
+    await expect(loadSessionBranchTopology("session/a", undefined, fetcher)).resolves.toEqual(
+      availableResponse,
+    );
+    expect(fetcher).toHaveBeenCalledWith("/api/sessions/session%2Fa/branches", {});
+  });
+
+  it("passes the cancellation signal to fetch", async () => {
+    const controller = new AbortController();
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(new Response(JSON.stringify(availableResponse), { status: 200 }));
+
+    await loadSessionBranchTopology("session/a", controller.signal, fetcher);
+    expect(fetcher).toHaveBeenCalledWith("/api/sessions/session%2Fa/branches", {
+      signal: controller.signal,
+    });
+  });
+
+  it("propagates the exact host error text", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ error: "Cannot switch branches while the session is running." }), {
+        status: 409,
+      }),
+    );
+
+    await expect(loadSessionBranchTopology("session-1", undefined, fetcher)).rejects.toThrow(
+      "Cannot switch branches while the session is running.",
+    );
+  });
+  it("preserves an abort raised while reading a failed response", async () => {
+    const controller = new AbortController();
+    const abortFailure = new Error("Topology response read aborted");
+    abortFailure.name = "AbortError";
+    const response = {
+      ok: false,
+      status: 503,
+      json: vi.fn().mockImplementation(async () => {
+        controller.abort();
+        throw abortFailure;
+      }),
+    } as unknown as Response;
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response);
+
+    await expect(loadSessionBranchTopology("session-1", controller.signal, fetcher)).rejects.toBe(
+      abortFailure,
+    );
+  });
+
+  it("rejects a successful response that violates the topology schema", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ...availableResponse, unexpected: true }), { status: 200 }),
+      );
+
+    await expect(loadSessionBranchTopology("session-1", undefined, fetcher)).rejects.toThrow();
   });
 });
 

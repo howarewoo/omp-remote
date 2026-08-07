@@ -8,6 +8,7 @@ import {
   filterMainSessions,
   type Session,
   type SessionFileChangesResponse,
+  type SessionBranchTopology,
   type TranscriptImage,
 } from "@omp-remote/protocol";
 import { SESSION_STATUS_LABEL, SESSION_STATUS_TONE } from "@omp-remote/ui";
@@ -21,6 +22,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { SessionBranchSelector } from "./session-branch-selector.js";
 import { formatSessionFileChangesMetadata, SessionFileChangesViewer } from "./session-file-changes-viewer.js";
 import { SubagentSessionViewer } from "./subagent-session-viewer.js";
 import { Badge } from "./ui/badge.js";
@@ -538,6 +540,8 @@ export interface DashboardProps {
   onLoadMoreHistory(): Promise<void>;
   onLoadTranscript(sessionId: string): Promise<void>;
   onLoadSessionFileChanges(sessionId: string, signal?: AbortSignal): Promise<SessionFileChangesResponse>;
+  onLoadSessionBranchTopology(sessionId: string, signal?: AbortSignal): Promise<SessionBranchTopology>;
+  onSwitchBranch(sessionId: string, branch: string): Promise<void>;
 }
 
 export function Dashboard(props: DashboardProps) {
@@ -2081,6 +2085,8 @@ function DashboardContent({
   onLoadMoreHistory,
   onLoadTranscript,
   onLoadSessionFileChanges,
+  onLoadSessionBranchTopology,
+  onSwitchBranch,
 }: DashboardProps) {
   const [viewedSubagent, setViewedSubagent] = useState<ActiveSubagent | null>(null);
   const [message, setMessage] = useState("");
@@ -2121,6 +2127,16 @@ function DashboardContent({
   const fileChangesRequestRef = useRef(0);
   const fileChangesAbortRef = useRef<AbortController | null>(null);
   const fileChangesOpenRef = useRef(false);
+  const [branchSelectorOpen, setBranchSelectorOpen] = useState(false);
+  const [branchTopology, setBranchTopology] = useState<SessionBranchTopology | null>(null);
+  const [branchQuery, setBranchQuery] = useState("");
+  const [branchTopologyLoading, setBranchTopologyLoading] = useState(false);
+  const [branchTopologyError, setBranchTopologyError] = useState<string | null>(null);
+  const [branchCheckoutPending, setBranchCheckoutPending] = useState<string | null>(null);
+  const [branchCheckoutError, setBranchCheckoutError] = useState<string | null>(null);
+  const branchRequestGenerationRef = useRef(0);
+  const branchSelectorSessionIdRef = useRef<string | null>(null);
+  const branchLoadAbortRef = useRef<AbortController | null>(null);
   const fileChangesRefreshTimerRef = useRef<number | null>(null);
   const { isMobile, setOpenMobile } = useSidebar();
 
@@ -2132,6 +2148,90 @@ function DashboardContent({
       sessionSections[0]?.sessions[0] ??
       null,
     [mainSessions, selectedSessionId, sessionSections],
+  );
+  const canSwitchSelectedSessionBranch =
+    selectedSession !== null &&
+    selectedSession.branch !== null &&
+    selectedSession.source !== "history" &&
+    selectedSession.connected &&
+    connection === "connected" &&
+    (selectedSession.status === "idle" || selectedSession.status === "waiting");
+  const resetBranchSelector = useCallback(() => {
+    branchRequestGenerationRef.current += 1;
+    branchLoadAbortRef.current?.abort();
+    branchLoadAbortRef.current = null;
+    branchSelectorSessionIdRef.current = null;
+    setBranchSelectorOpen(false);
+    setBranchTopology(null);
+    setBranchQuery("");
+    setBranchTopologyLoading(false);
+    setBranchTopologyError(null);
+    setBranchCheckoutPending(null);
+    setBranchCheckoutError(null);
+  }, []);
+  const handleBranchSelectorOpenChange = useCallback(
+    (open: boolean) => {
+      if (!open) {
+        if (branchCheckoutPending !== null) return;
+        resetBranchSelector();
+        return;
+      }
+      if (!selectedSession || !canSwitchSelectedSessionBranch) return;
+      if (branchSelectorSessionIdRef.current === selectedSession.id) return;
+
+      branchLoadAbortRef.current?.abort();
+      const abortController = new AbortController();
+      const generation = ++branchRequestGenerationRef.current;
+      const sessionId = selectedSession.id;
+      branchLoadAbortRef.current = abortController;
+      branchSelectorSessionIdRef.current = sessionId;
+      setBranchSelectorOpen(true);
+      setBranchTopology(null);
+      setBranchQuery("");
+      setBranchTopologyLoading(true);
+      setBranchTopologyError(null);
+      setBranchCheckoutPending(null);
+      setBranchCheckoutError(null);
+
+      void onLoadSessionBranchTopology(sessionId, abortController.signal)
+        .then((topology) => {
+          if (
+            generation !== branchRequestGenerationRef.current ||
+            abortController.signal.aborted ||
+            branchSelectorSessionIdRef.current !== sessionId ||
+            topology.sessionId !== sessionId
+          )
+            return;
+          setBranchTopology(topology);
+        })
+        .catch((failure: unknown) => {
+          if (
+            generation !== branchRequestGenerationRef.current ||
+            abortController.signal.aborted ||
+            branchSelectorSessionIdRef.current !== sessionId
+          )
+            return;
+          setBranchTopologyError(
+            failure instanceof Error ? failure.message : "Local branch topology could not be loaded.",
+          );
+        })
+        .finally(() => {
+          if (
+            generation === branchRequestGenerationRef.current &&
+            branchSelectorSessionIdRef.current === sessionId
+          ) {
+            setBranchTopologyLoading(false);
+            if (branchLoadAbortRef.current === abortController) branchLoadAbortRef.current = null;
+          }
+        });
+    },
+    [
+      branchCheckoutPending,
+      canSwitchSelectedSessionBranch,
+      onLoadSessionBranchTopology,
+      resetBranchSelector,
+      selectedSession,
+    ],
   );
   const clearSessionFileChangesRefreshTimer = useCallback(() => {
     if (fileChangesRefreshTimerRef.current === null) return;
@@ -2263,6 +2363,38 @@ function DashboardContent({
     setConfigurationPending(null);
     setConfigurationError(null);
   }, [selectedSession?.id]);
+
+  useLayoutEffect(() => {
+    if (branchSelectorSessionIdRef.current === null) return;
+    const invalidSession =
+      !selectedSession ||
+      branchSelectorSessionIdRef.current !== selectedSession.id ||
+      selectedSession.branch === null ||
+      selectedSession.source === "history" ||
+      !selectedSession.connected ||
+      connection !== "connected" ||
+      selectedSession.status === "disconnected" ||
+      selectedSession.status === "history" ||
+      (branchTopology !== null && selectedSession.branch !== branchTopology.currentBranch);
+    if (invalidSession) resetBranchSelector();
+  }, [
+    connection,
+    branchTopology?.currentBranch,
+    resetBranchSelector,
+    selectedSession?.branch,
+    selectedSession?.connected,
+    selectedSession?.id,
+    selectedSession?.source,
+    selectedSession?.status,
+  ]);
+
+  useEffect(
+    () => () => {
+      branchRequestGenerationRef.current += 1;
+      branchLoadAbortRef.current?.abort();
+    },
+    [],
+  );
 
   useEffect(() => {
     clearSessionFileChangesRefreshTimer();
@@ -2541,6 +2673,38 @@ function DashboardContent({
     }
   };
 
+  const selectBranch = async (branch: string) => {
+    if (
+      !selectedSession ||
+      !canSwitchSelectedSessionBranch ||
+      branchCheckoutPending !== null ||
+      !branchTopology?.branches.some((candidate) => candidate.name === branch) ||
+      branch === branchTopology.currentBranch
+    )
+      return;
+    const generation = branchRequestGenerationRef.current;
+    const sessionId = selectedSession.id;
+    setBranchCheckoutPending(branch);
+    setBranchCheckoutError(null);
+    try {
+      await onSwitchBranch(sessionId, branch);
+      if (
+        generation !== branchRequestGenerationRef.current ||
+        branchSelectorSessionIdRef.current !== sessionId
+      )
+        return;
+      resetBranchSelector();
+    } catch (failure) {
+      if (
+        generation !== branchRequestGenerationRef.current ||
+        branchSelectorSessionIdRef.current !== sessionId
+      )
+        return;
+      setBranchCheckoutPending(null);
+      setBranchCheckoutError(failure instanceof Error ? failure.message : "Branch checkout failed.");
+    }
+  };
+
   return (
     <div className="app-shell">
       <Sidebar collapsible="icon">
@@ -2699,16 +2863,7 @@ function DashboardContent({
               <>
                 <div>
                   <h1>{selectedSession.name ?? "Untitled session"}</h1>
-                  <div className="session-header-details">
-                    <p>{selectedSession.cwd}</p>
-                    {selectedSession.branch ? (
-                      <span className="session-branch">
-                        <span aria-hidden="true">git:</span>
-                        <span className="sr-only">Git branch </span>
-                        {selectedSession.branch}
-                      </span>
-                    ) : null}
-                  </div>
+                  <p>{selectedSession.cwd}</p>
                 </div>
                 <Badge className={cn("status-badge", `status-${SESSION_STATUS_TONE[selectedSessionStatus]}`)}>
                   <span aria-hidden="true" />
@@ -2874,6 +3029,31 @@ function DashboardContent({
             ) : null}
 
             <dl className="session-metadata">
+              {selectedSession.branch ? (
+                <div className="session-branch-metadata">
+                  <dt>Branch</dt>
+                  <dd>
+                    {canSwitchSelectedSessionBranch ? (
+                      <Button
+                        className="session-branch-trigger"
+                        type="button"
+                        variant="ghost"
+                        aria-label={`Switch branch. Current branch ${selectedSession.branch}`}
+                        onClick={() => handleBranchSelectorOpenChange(true)}
+                      >
+                        <span className="session-branch-value" title={selectedSession.branch}>
+                          {selectedSession.branch}
+                        </span>
+                        <Icon name="up" />
+                      </Button>
+                    ) : (
+                      <span className="session-branch-value" title={selectedSession.branch}>
+                        {selectedSession.branch}
+                      </span>
+                    )}
+                  </dd>
+                </div>
+              ) : null}
               <div className="session-configuration-metadata">
                 <dt>Model</dt>
                 <dd>
@@ -3162,6 +3342,21 @@ function DashboardContent({
         loading={visibleSessionFileChangesLoading}
         error={visibleSessionFileChangesError}
         onOpenChange={handleFileChangesOpenChange}
+      />
+      <SessionBranchSelector
+        open={branchSelectorOpen && Boolean(selectedSession?.branch)}
+        mobile={isMobile}
+        currentBranch={branchTopology?.currentBranch ?? selectedSession?.branch ?? ""}
+        topology={branchTopology?.sessionId === selectedSession?.id ? branchTopology : null}
+        query={branchQuery}
+        loading={branchTopologyLoading}
+        loadError={branchTopologyError}
+        checkoutPending={branchCheckoutPending}
+        checkoutError={branchCheckoutError}
+        running={selectedSession?.status === "running"}
+        onQueryChange={setBranchQuery}
+        onSelectBranch={(branch) => void selectBranch(branch)}
+        onOpenChange={handleBranchSelectorOpenChange}
       />
       <Drawer
         open={todoOpenSessionId === selectedSession?.id && currentTodo !== null}
