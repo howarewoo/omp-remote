@@ -108,6 +108,12 @@ describe("normalizeExtensionMessage", () => {
             },
             {
               type: "toolCall",
+              toolCallId: "write-call",
+              name: "write",
+              arguments: { path: "packages/features/sessions/src/components/dashboard.tsx" },
+            },
+            {
+              type: "toolCall",
               toolCallId: "grep-call",
               name: "grep",
               arguments: { pattern: "toolCallId", path: "apps;packages" },
@@ -169,6 +175,22 @@ describe("normalizeExtensionMessage", () => {
         tracker,
       ),
     ).toMatchObject({ toolTitle: "Edit: 🟦 src/a.ts ⟦+1⟧" });
+    expect(
+      normalizeExtensionMessage(
+        {
+          role: "toolResult",
+          toolCallId: "write-call",
+          toolName: "write",
+          content: "Wrote 42 bytes",
+          details: {
+            resolvedPath: "/work/omp-remote/packages/features/sessions/src/components/dashboard.tsx",
+          },
+        },
+        false,
+        "write",
+        tracker,
+      ),
+    ).toMatchObject({ toolTitle: "Write: packages/features/sessions/src/components/dashboard.tsx" });
     expect(
       normalizeExtensionMessage(
         {

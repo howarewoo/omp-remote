@@ -1151,6 +1151,7 @@ describe("ToolTranscriptText", () => {
         id: "write-1",
         role: "tool",
         toolName: "write",
+        toolTitle: "Write: packages/features/sessions/src/components/dashboard.tsx",
         text,
         timestamp: "2026-07-29T12:00:00.000Z",
         streaming: false,
@@ -1165,7 +1166,9 @@ describe("ToolTranscriptText", () => {
       "tool-message-disclosure transcript-disclosure-frame tool-output-disclosure",
     );
     expect(disclosure.props.children[0].type).toBe("summary");
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("write");
+    expect(nodes.find((node) => node.className === "message-author")?.text).toContain(
+      "Write: packages/features/sessions/src/components/dashboard.tsx",
+    );
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
     expect(disclosure.props.children[1].props.children).toBe(text);
   });
