@@ -7,6 +7,8 @@ import {
   type Effort,
   ServerFrameSchema,
   type Session,
+  SessionBranchTopologySchema,
+  type SessionBranchTopology,
   SessionCatalogPageSchema,
   type SessionPatch,
   SessionTranscriptResponseSchema,
@@ -17,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const RECONNECT_DELAY_MS = 1_500;
 const CATALOG_PAGE_SIZE = 100;
+const SWITCH_BRANCH_TIMEOUT_MS = 30_000;
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
 type SuccessfulCommandValue = Extract<CommandResult["outcome"], { status: "ok" }>["value"];
@@ -24,6 +27,7 @@ type PendingCommand = {
   commandType: BrowserCommand["type"];
   resolve: (value: string | undefined) => void;
   reject: (error: Error) => void;
+  timeoutId?: ReturnType<typeof globalThis.setTimeout>;
 };
 
 export interface SessionClient {
@@ -47,8 +51,43 @@ export interface SessionClient {
   askActivity(sessionId: string, askRequestId: string): Promise<void>;
   searchHistory(query: string): Promise<void>;
   loadMoreHistory(): Promise<void>;
-  loadTranscript(sessionId: string): Promise<void>;
   loadSessionFileChanges(sessionId: string, signal?: AbortSignal): Promise<SessionFileChangesResponse>;
+  loadSessionBranchTopology(sessionId: string, signal?: AbortSignal): Promise<SessionBranchTopology>;
+  switchBranch(sessionId: string, branch: string): Promise<void>;
+  loadTranscript(sessionId: string): Promise<void>;
+}
+
+function clearPendingCommandTimeout(pending: PendingCommand): void {
+  if (pending.timeoutId !== undefined) globalThis.clearTimeout(pending.timeoutId);
+}
+
+export function sendBrowserCommand(
+  socket: WebSocket | null,
+  pendingCommands: Map<string, PendingCommand>,
+  frame: Exclude<BrowserCommand, { type: "ask_activity" }>,
+  timeoutMs?: number,
+): Promise<string | undefined> {
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    return Promise.reject(new Error("The host is not connected"));
+  }
+  return new Promise<string | undefined>((resolve, reject) => {
+    const pending: PendingCommand = { commandType: frame.type, resolve, reject };
+    pendingCommands.set(frame.requestId, pending);
+    if (timeoutMs !== undefined) {
+      pending.timeoutId = globalThis.setTimeout(() => {
+        if (pendingCommands.get(frame.requestId) !== pending) return;
+        pendingCommands.delete(frame.requestId);
+        reject(new Error("The host did not respond before the command timed out"));
+      }, timeoutMs);
+    }
+    try {
+      socket.send(JSON.stringify(frame));
+    } catch (failure) {
+      clearPendingCommandTimeout(pending);
+      pendingCommands.delete(frame.requestId);
+      reject(failure instanceof Error ? failure : new Error("The command could not be sent"));
+    }
+  });
 }
 
 export function useSessionClient(): SessionClient {
@@ -118,6 +157,7 @@ export function useSessionClient(): SessionClient {
         } else if (frame.type === "command_result") {
           const pending = pendingRef.current.get(frame.requestId);
           if (!pending) return;
+          clearPendingCommandTimeout(pending);
           pendingRef.current.delete(frame.requestId);
           if (frame.outcome.status === "error") {
             pending.reject(new Error(frame.outcome.error ?? "The host rejected the command"));
@@ -149,7 +189,10 @@ export function useSessionClient(): SessionClient {
       disposed = true;
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
       socketRef.current?.close();
-      for (const pending of pendingRef.current.values()) pending.reject(new Error("Dashboard disconnected"));
+      for (const pending of pendingRef.current.values()) {
+        clearPendingCommandTimeout(pending);
+        pending.reject(new Error("Dashboard disconnected"));
+      }
       pendingRef.current.clear();
     };
   }, []);
@@ -251,6 +294,10 @@ export function useSessionClient(): SessionClient {
     (sessionId: string, signal?: AbortSignal) => loadSessionFileChanges(sessionId, signal),
     [],
   );
+  const loadSessionBranchTopologyCallback = useCallback(
+    (sessionId: string, signal?: AbortSignal) => loadSessionBranchTopology(sessionId, signal),
+    [],
+  );
 
   useEffect(() => {
     const baseline = catalogLoads.loadBaseline();
@@ -262,23 +309,28 @@ export function useSessionClient(): SessionClient {
   }, [catalogLoads]);
 
   const send = useCallback(
-    (frame: Exclude<BrowserCommand, { type: "ask_activity" }>): Promise<string | undefined> => {
-      const socket = socketRef.current;
-      if (!socket || socket.readyState !== WebSocket.OPEN) {
-        return Promise.reject(new Error("The host is not connected"));
-      }
-      return new Promise<string | undefined>((resolve, reject) => {
-        pendingRef.current.set(frame.requestId, { commandType: frame.type, resolve, reject });
-        socket.send(JSON.stringify(frame));
-      });
-    },
+    (frame: Exclude<BrowserCommand, { type: "ask_activity" }>, timeoutMs?: number) =>
+      sendBrowserCommand(socketRef.current, pendingRef.current, frame, timeoutMs),
     [],
   );
 
   const sendVoid = useCallback(
-    (frame: Exclude<BrowserCommand, { type: "ask_activity" }>): Promise<void> =>
-      send(frame).then(() => undefined),
+    (frame: Exclude<BrowserCommand, { type: "ask_activity" }>, timeoutMs?: number): Promise<void> =>
+      send(frame, timeoutMs).then(() => undefined),
     [send],
+  );
+  const switchBranch = useCallback(
+    (sessionId: string, branch: string) =>
+      sendVoid(
+        {
+          type: "switch_branch",
+          requestId: crypto.randomUUID(),
+          sessionId,
+          branch,
+        },
+        SWITCH_BRANCH_TIMEOUT_MS,
+      ),
+    [sendVoid],
   );
   const launch = useCallback(
     (cwd: string, resume: string | null) =>
@@ -392,7 +444,35 @@ export function useSessionClient(): SessionClient {
     loadMoreHistory,
     loadTranscript,
     loadSessionFileChanges: loadSessionFileChangesCallback,
+    loadSessionBranchTopology: loadSessionBranchTopologyCallback,
+    switchBranch,
   };
+}
+export async function loadSessionBranchTopology(
+  sessionId: string,
+  signal?: AbortSignal,
+  fetcher: typeof fetch = fetch,
+): Promise<SessionBranchTopology> {
+  const response = await fetcher(
+    `/api/sessions/${encodeURIComponent(sessionId)}/branches`,
+    signal ? { signal } : {},
+  );
+  if (!response.ok) {
+    let hostError: string | null = null;
+    try {
+      const body: unknown = await response.json();
+      hostError =
+        typeof body === "object" && body !== null && "error" in body && typeof body.error === "string"
+          ? body.error
+          : null;
+    } catch (failure) {
+      const isAbortError =
+        typeof failure === "object" && failure !== null && "name" in failure && failure.name === "AbortError";
+      if (signal?.aborted || isAbortError) throw failure;
+    }
+    throw new Error(hostError ?? `Session branch topology request failed (${response.status})`);
+  }
+  return SessionBranchTopologySchema.parse(await response.json());
 }
 
 export async function loadSessionFileChanges(

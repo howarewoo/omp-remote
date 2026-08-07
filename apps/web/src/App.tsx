@@ -56,6 +56,8 @@ export default function App() {
         onLoadMoreHistory={client.loadMoreHistory}
         onLoadTranscript={client.loadTranscript}
         onLoadSessionFileChanges={client.loadSessionFileChanges}
+        onLoadSessionBranchTopology={client.loadSessionBranchTopology}
+        onSwitchBranch={client.switchBranch}
       />
       <StartupSplash ready={client.sessionsReady || Boolean(client.error)} />
     </>
