@@ -111,7 +111,7 @@ Optional environment variables:
 | --- | --- | --- |
 | `OMP_REMOTE_HOST` | `127.0.0.1` | Authoritative daemon bind and development proxy host; loopback only |
 | `OMP_REMOTE_PORT` | `4387` | Authoritative daemon and development proxy port |
-| `OMP_REMOTE_ORIGIN` | local and `*.ts.net` origins | Exact browser origin override |
+| `OMP_REMOTE_ORIGIN` | loopback origins; request-host-matched `*.ts.net` origins | Exact browser origin override |
 | `OMP_REMOTE_OMP_PATH` | `omp` | OMP executable used for RPC sessions |
 | `OMP_REMOTE_EXTENSION_URL` | `ws://127.0.0.1:4387/extension` | Extension registration socket |
 

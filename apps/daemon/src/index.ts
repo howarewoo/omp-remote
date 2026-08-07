@@ -9,11 +9,14 @@ import { type RpcFrame, RpcSession } from "@omp-remote/omp-rpc";
 import {
   type AskRequest,
   type AskResponse,
+  type BrowserCommand,
   BrowserCommandSchema,
   EffortSchema,
   ExtensionFrameSchema,
   type ServerFrame,
   type Session,
+  type SessionBranchTopology,
+  SessionBranchTopologySchema,
   SessionCatalogPageSchema,
   SessionFileChangesResponseSchema,
   type SessionModelOption,
@@ -35,7 +38,13 @@ import {
   createReconciledSessionRegistrar,
   getCatalogSessionMetadataPatch,
 } from "./catalog-reconciliation.js";
-import { resolveGitBranch } from "./git-branch.js";
+import {
+  assertBranchSwitchSessionState,
+  loadGitBranchTopology,
+  resolveGitBranch,
+  resolveGitWorktree,
+  switchGitBranch,
+} from "./git-branch.js";
 import {
   materializeReadImages,
   normalizeRawMessage,
@@ -86,6 +95,9 @@ function sanitizeExtensionSession<T extends { messages: TranscriptMessage[] }>(
 }
 
 const MAX_MESSAGES = 200;
+const BRANCH_SWITCH_STATE_TIMEOUT_MS = 2_000;
+const MAX_CONCURRENT_BRANCH_TOPOLOGY_LOADS = 4;
+const MAX_CONCURRENT_WORKTREE_RESOLUTIONS = 8;
 const logger = createLogger("omp-remote-daemon");
 const EnvironmentSchema = z.object({
   OMP_REMOTE_HOST: z.enum(["127.0.0.1", "::1", "localhost"]).default("127.0.0.1"),
@@ -166,6 +178,10 @@ const browserSockets = new Set<WebSocket>();
 const rpcSessions = new Map<string, RpcSession>();
 const extensionSockets = new Map<string, WebSocket>();
 const extensionSessionBySocket = new Map<WebSocket, string>();
+const switchingGitWorktrees = new Set<string>();
+const branchSwitchingSessionIds = new Set<string>();
+const branchTopologyLoads = new Map<string, Promise<SessionBranchTopology | null>>();
+let activeBranchTopologyLoads = 0;
 const pendingAskBySession = new Map<
   string,
   {
@@ -174,6 +190,36 @@ const pendingAskBySession = new Map<
     timeout: AskInactivityTimeout | undefined;
   }
 >();
+
+class BranchTopologyCapacityError extends Error {}
+
+async function loadSessionBranchTopology(
+  cwd: string,
+  sessionId: string,
+): Promise<SessionBranchTopology | null> {
+  const worktree = await resolveGitWorktree(cwd);
+  if (!worktree) return null;
+  const pendingLoad = branchTopologyLoads.get(worktree);
+  if (pendingLoad) {
+    const topology = await pendingLoad;
+    return topology ? { ...topology, sessionId } : null;
+  }
+  if (activeBranchTopologyLoads >= MAX_CONCURRENT_BRANCH_TOPOLOGY_LOADS) {
+    throw new BranchTopologyCapacityError("Branch topology capacity is exhausted");
+  }
+
+  activeBranchTopologyLoads += 1;
+  const load = loadGitBranchTopology(cwd, sessionId);
+  branchTopologyLoads.set(worktree, load);
+  try {
+    const topology = await load;
+    return topology ? { ...topology, sessionId } : null;
+  } finally {
+    if (branchTopologyLoads.get(worktree) === load) branchTopologyLoads.delete(worktree);
+    activeBranchTopologyLoads -= 1;
+  }
+}
+
 const app = Fastify({ logger: false, bodyLimit: 1024 * 1024 });
 const requestCatalogReconciliation = createCatalogReconciler({
   refresh: () => sessionCatalog.refresh(),
@@ -241,8 +287,37 @@ app.get("/api/sessions/:sessionId/changes", async (request, reply) => {
   }
 });
 
+app.get("/api/sessions/:sessionId/branches", async (request, reply) => {
+  const params = SessionParamsSchema.safeParse(request.params);
+  const session = params.success ? registry.get(params.data.sessionId) : undefined;
+  if (
+    !params.success ||
+    !session?.connected ||
+    session.source === "history" ||
+    session.status === "disconnected" ||
+    session.status === "history"
+  ) {
+    return reply.code(404).send({ error: "Live session was not found" });
+  }
+  try {
+    const topology = await loadSessionBranchTopology(session.cwd, session.id);
+    if (!topology) return reply.code(409).send({ error: "Session is not on a local Git branch" });
+    const parsedTopology = SessionBranchTopologySchema.safeParse(topology);
+    if (!parsedTopology.success) {
+      return reply.code(422).send({ error: "Session branch topology exceeds supported limits" });
+    }
+    return parsedTopology.data;
+  } catch (error) {
+    if (error instanceof BranchTopologyCapacityError) {
+      return reply.code(503).send({ error: "Session branch topology is temporarily unavailable" });
+    }
+    logger.error("Could not read session branch topology", error, { sessionId: session.id });
+    return reply.code(500).send({ error: "Session branch topology could not be read" });
+  }
+});
+
 app.get("/ws", { websocket: true }, (socket, request) => {
-  if (!originAllowed(request.headers.origin)) {
+  if (!originAllowed(request.headers.origin, request.headers.host)) {
     socket.close(1008, "Origin is not allowed");
     return;
   }
@@ -382,6 +457,45 @@ app.get("/ws", { websocket: true }, (socket, request) => {
           },
         });
       }
+      return;
+    }
+
+    if (command.type === "switch_branch") {
+      const startedAt = Date.now();
+      try {
+        await switchSessionBranch(command);
+        sendToBrowser(socket, {
+          type: "command_result",
+          requestId: command.requestId,
+          outcome: { status: "ok", value: { type: "void" } },
+        });
+      } catch (error) {
+        logger.error("Could not switch Git branch", error, {
+          sessionId: command.sessionId,
+          branch: command.branch,
+          stage: "switch_branch",
+          elapsedMs: Date.now() - startedAt,
+        });
+        sendToBrowser(socket, {
+          type: "command_result",
+          requestId: command.requestId,
+          outcome: {
+            status: "error",
+            error: error instanceof Error ? error.message : "OMP rejected the branch switch",
+          },
+        });
+      }
+      return;
+    }
+    if (await branchSwitchBlocksSessionCommand(command)) {
+      sendToBrowser(socket, {
+        type: "command_result",
+        requestId: command.requestId,
+        outcome: {
+          status: "error",
+          error: "Cannot run a prompt while the session is switching branches.",
+        },
+      });
       return;
     }
 
@@ -804,6 +918,162 @@ function refreshSessionBranch(sessionId: string, cwd: string): void {
   });
 }
 
+function sameSessionRegistration(left: Session, right: Session): boolean {
+  return (
+    left.id === right.id &&
+    left.source === right.source &&
+    left.cwd === right.cwd &&
+    left.createdAt === right.createdAt &&
+    left.sessionPath === right.sessionPath
+  );
+}
+
+function isLiveBranchSession(session: Session): boolean {
+  return (
+    session.connected &&
+    session.source !== "history" &&
+    session.status !== "disconnected" &&
+    session.status !== "history"
+  );
+}
+
+async function branchSwitchBlocksSessionCommand(
+  command: Extract<BrowserCommand, { type: "session_command" }>,
+): Promise<boolean> {
+  if (command.command !== "prompt" && command.command !== "steer" && command.command !== "follow_up") {
+    return false;
+  }
+  if (branchSwitchingSessionIds.has(command.sessionId)) return true;
+  if (switchingGitWorktrees.size === 0) return false;
+  const session = registry.get(command.sessionId);
+  if (!session || !isLiveBranchSession(session)) return false;
+  const worktree = await resolveGitWorktree(session.cwd);
+  return worktree !== null && switchingGitWorktrees.has(worktree);
+}
+
+async function sessionsInGitWorktree(expectedSession: Session, worktree: string): Promise<Session[]> {
+  const candidates = registry.list().filter(isLiveBranchSession);
+  const resolvedWorktrees = new Array<string | null>(candidates.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(MAX_CONCURRENT_WORKTREE_RESOLUTIONS, candidates.length);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < candidates.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        const candidate = candidates[index];
+        if (!candidate) continue;
+        resolvedWorktrees[index] =
+          candidate.cwd === expectedSession.cwd ? worktree : await resolveGitWorktree(candidate.cwd);
+      }
+    }),
+  );
+  return candidates.filter((_, index) => resolvedWorktrees[index] === worktree);
+}
+
+async function assertSessionIdleForBranchSwitch(session: Session): Promise<void> {
+  assertBranchSwitchSessionState(session);
+  if (session.source === "rpc") {
+    const rpcSession = rpcSessions.get(session.id);
+    if (!rpcSession) throw new Error("This OMP session is no longer connected.");
+    const state = RpcStateResponseSchema.parse(
+      await rpcSession.request({ type: "get_state" }, { timeoutMs: BRANCH_SWITCH_STATE_TIMEOUT_MS }),
+    );
+    if (state.data.isStreaming || state.data.queuedMessageCount) {
+      throw new Error("Cannot switch branches while a session in the Git worktree is running.");
+    }
+    return;
+  }
+  if (session.source === "extension") {
+    const extensionSocket = extensionSockets.get(session.id);
+    if (extensionSocket?.readyState !== WebSocket.OPEN) {
+      throw new Error("This OMP session is no longer connected.");
+    }
+    return;
+  }
+  throw new Error("Historical sessions cannot switch branches.");
+}
+
+async function refreshGitWorktreeSessions(
+  expectedSession: Session,
+  worktree: string,
+  branch: string | null,
+): Promise<boolean> {
+  let expectedSessionUpdated = false;
+  for (const candidate of await sessionsInGitWorktree(expectedSession, worktree)) {
+    const current = registry.get(candidate.id);
+    if (!current || !sameSessionRegistration(candidate, current)) continue;
+    if (candidate.id === expectedSession.id && !sameSessionRegistration(expectedSession, current)) {
+      continue;
+    }
+    if (!registry.update(candidate.id, { branch })) continue;
+    if (candidate.id === expectedSession.id) expectedSessionUpdated = true;
+  }
+  return expectedSessionUpdated;
+}
+
+async function switchSessionBranch(
+  command: Extract<BrowserCommand, { type: "switch_branch" }>,
+): Promise<void> {
+  const session = registry.get(command.sessionId);
+  if (!session) throw new Error("This OMP session is no longer connected.");
+  assertBranchSwitchSessionState(session);
+
+  const worktree = await resolveGitWorktree(session.cwd);
+  if (!worktree) throw new Error("Session is not in a Git worktree.");
+  if (switchingGitWorktrees.has(worktree)) {
+    throw new Error("A branch switch is already in progress for this Git worktree.");
+  }
+  switchingGitWorktrees.add(worktree);
+  const lockedSessionIds = new Set([session.id]);
+  branchSwitchingSessionIds.add(session.id);
+
+  try {
+    const switchSessions: Session[] = [];
+    let refreshedSession: Session | undefined;
+    for (const candidate of await sessionsInGitWorktree(session, worktree)) {
+      const current = registry.get(candidate.id);
+      if (!current || !sameSessionRegistration(candidate, current)) {
+        if (candidate.id === session.id) {
+          throw new Error("This OMP session is no longer connected.");
+        }
+        continue;
+      }
+      if (candidate.id === session.id && !sameSessionRegistration(session, current)) {
+        throw new Error("This OMP session is no longer connected.");
+      }
+      lockedSessionIds.add(current.id);
+      branchSwitchingSessionIds.add(current.id);
+      switchSessions.push(current);
+      if (current.id === session.id) refreshedSession = current;
+    }
+    if (!refreshedSession) throw new Error("This OMP session is no longer connected.");
+    await Promise.all(switchSessions.map(assertSessionIdleForBranchSwitch));
+
+    const checkedSession = registry.get(command.sessionId);
+    if (!checkedSession || !sameSessionRegistration(refreshedSession, checkedSession)) {
+      throw new Error("This OMP session is no longer connected.");
+    }
+    assertBranchSwitchSessionState(checkedSession);
+
+    let switchError: unknown;
+    try {
+      await switchGitBranch(checkedSession.cwd, command.branch);
+    } catch (error) {
+      switchError = error;
+    }
+    const branch = await resolveGitBranch(checkedSession.cwd);
+    if (!(await refreshGitWorktreeSessions(checkedSession, worktree, branch))) {
+      throw new Error("This OMP session is no longer connected.");
+    }
+    if (switchError) throw switchError;
+    if (branch !== command.branch) throw new Error("Git did not switch to the requested branch.");
+  } finally {
+    for (const sessionId of lockedSessionIds) branchSwitchingSessionIds.delete(sessionId);
+    switchingGitWorktrees.delete(worktree);
+  }
+}
+
 function syncCatalogSession(catalogSession: Session): void {
   const liveSession = registry.get(catalogSession.id);
   if (!liveSession) return;
@@ -914,16 +1184,17 @@ function markSessionHistorical(sessionId: string): void {
   registry.update(sessionId, { connected: false, status: "disconnected" });
 }
 
-function originAllowed(origin: string | undefined): boolean {
+function originAllowed(origin: string | undefined, host: string | undefined): boolean {
   if (!origin) return false;
   if (environment.OMP_REMOTE_ORIGIN) return origin === environment.OMP_REMOTE_ORIGIN;
   try {
-    const hostname = new URL(origin).hostname;
+    const originUrl = new URL(origin);
+    const { hostname } = originUrl;
+    if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]") return true;
     return (
-      hostname === "localhost" ||
-      hostname === "127.0.0.1" ||
-      hostname === "[::1]" ||
-      hostname.endsWith(".ts.net")
+      originUrl.protocol === "https:" &&
+      hostname.endsWith(".ts.net") &&
+      originUrl.host === host?.toLowerCase()
     );
   } catch {
     return false;

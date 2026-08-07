@@ -133,16 +133,42 @@ export class RpcSession {
     return this.request({ type: "get_state" });
   }
 
-  request(command: RpcFrame): Promise<RpcFrame> {
+  request(command: RpcFrame, options: { timeoutMs?: number } = {}): Promise<RpcFrame> {
     const child = this.#child;
     if (!child?.stdin.writable) return Promise.reject(new Error("OMP RPC session is not connected"));
+    const timeoutMs = options.timeoutMs;
+    if (
+      timeoutMs !== undefined &&
+      (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_483_647)
+    ) {
+      return Promise.reject(new Error("OMP RPC request timeout is out of range"));
+    }
     const id = `remote_${this.#nextRequest++}`;
     return new Promise<RpcFrame>((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
+      let timeout: NodeJS.Timeout | undefined;
+      const pending: PendingRequest = {
+        resolve: (frame) => {
+          clearTimeout(timeout);
+          resolve(frame);
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+      };
+      this.#pending.set(id, pending);
+      if (timeoutMs !== undefined) {
+        timeout = setTimeout(() => {
+          if (this.#pending.get(id) !== pending) return;
+          this.#pending.delete(id);
+          reject(new Error("OMP RPC request timed out"));
+        }, timeoutMs);
+        timeout.unref();
+      }
       child.stdin.write(`${JSON.stringify({ ...command, id })}\n`, (error) => {
-        if (!error) return;
+        if (!error || this.#pending.get(id) !== pending) return;
         this.#pending.delete(id);
-        reject(error);
+        pending.reject(error);
       });
     });
   }
