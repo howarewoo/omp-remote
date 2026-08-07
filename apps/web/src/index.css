@@ -2261,7 +2261,114 @@ textarea:disabled {
   overflow-wrap: anywhere;
 }
 
-.system-message-disclosure > summary > .transcript-disclosure-text {
+.transcript-disclosure-content {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.55rem;
+}
+
+.transcript-disclosure-content > :is(.transcript-disclosure-text, .disclosure-image) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.transcript-disclosure-content[data-variant="thumbnail"] {
+  gap: 0.35rem;
+}
+
+.transcript-disclosure-content[data-variant="expanded"] {
+  padding: 0 0.75rem 0.75rem;
+}
+
+.disclosure-image {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.transcript-disclosure-content[data-variant="thumbnail"] .disclosure-image {
+  width: min(100%, 12rem);
+}
+
+.transcript-disclosure-content[data-variant="expanded"] .disclosure-image {
+  max-height: min(70vh, 40rem);
+  overflow: auto;
+}
+
+.disclosure-image-link {
+  display: block;
+  width: fit-content;
+  min-width: 0;
+  max-width: 100%;
+  border-radius: var(--radius);
+  color: inherit;
+  text-decoration: none;
+}
+
+.disclosure-image-media {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: none;
+  border: 1px solid var(--omp-dark-gray);
+  border-radius: var(--radius);
+  background: var(--omp-tool-message);
+  object-fit: contain;
+  object-position: left top;
+}
+
+.transcript-disclosure-content[data-variant="thumbnail"] .disclosure-image-media {
+  width: 100%;
+  height: 5rem;
+  max-height: none;
+  object-fit: cover;
+}
+
+.disclosure-image-fallback {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 4.5rem;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--omp-dark-gray);
+  border-radius: var(--radius);
+  background: var(--omp-tool-message);
+  color: var(--omp-gray);
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.transcript-disclosure-content[data-variant="thumbnail"] .disclosure-image-fallback {
+  min-height: 3rem;
+}
+
+@media (hover: hover) {
+  .disclosure-image-link:hover .disclosure-image-media {
+    border-color: var(--omp-gray);
+  }
+}
+
+.disclosure-image-link:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.system-message-disclosure > summary > .transcript-disclosure-text,
+.system-message-disclosure
+  > summary
+  > .transcript-disclosure-content[data-variant="thumbnail"]
+  > .transcript-disclosure-text {
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -2269,7 +2376,11 @@ textarea:disabled {
 
 :is(.system-message-disclosure, .tool-message-disclosure)
   > :where(summary:hover)
-  > :where(.transcript-disclosure-text, .tool-message-preview) {
+  > :where(.transcript-disclosure-text, .tool-message-preview),
+:is(.system-message-disclosure, .tool-message-disclosure)
+  > :where(summary:hover)
+  > .transcript-disclosure-content[data-variant="thumbnail"]
+  > .transcript-disclosure-text {
   color: var(--foreground);
 }
 
@@ -2296,7 +2407,11 @@ textarea:disabled {
 
 :is(.system-message-disclosure, .tool-message-disclosure)[open]
   > :where(summary)
-  > :where(.transcript-disclosure-text, .tool-message-preview) {
+  > :where(
+    .transcript-disclosure-text,
+    .tool-message-preview,
+    .transcript-disclosure-content[data-variant="thumbnail"]
+  ) {
   display: none;
 }
 
@@ -3421,6 +3536,23 @@ textarea:disabled {
 
   .transcript-entry > .transcript-message {
     padding-left: 0;
+  }
+
+  .transcript-disclosure-content,
+  .disclosure-image,
+  .disclosure-image-link,
+  .disclosure-image-media,
+  .disclosure-image-fallback {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .transcript-disclosure-content[data-variant="expanded"] .disclosure-image {
+    max-height: min(60dvh, 28rem);
+  }
+
+  .transcript-disclosure-content[data-variant="thumbnail"] .disclosure-image-media {
+    height: 4rem;
   }
 
   .code-block code {
