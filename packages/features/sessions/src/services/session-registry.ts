@@ -1,9 +1,10 @@
 import {
+  boundTranscriptImageBudget,
   compareSessionsByCreation,
-  truncateTranscriptText,
   type Session,
   type SessionPatch,
   type TranscriptMessage,
+  truncateTranscriptText,
 } from "@omp-remote/protocol";
 
 const MAX_TRANSCRIPT_MESSAGES = 200;
@@ -25,9 +26,11 @@ export class SessionRegistry {
     const session = this.#sessions.get(sessionId);
     return session ? cloneSession(session) : undefined;
   }
-
   upsert(session: Session): Session {
-    const next = cloneSession(session);
+    const next = cloneSession({
+      ...session,
+      messages: boundTranscriptImageBudget(session.messages),
+    });
     this.#sessions.set(session.id, next);
     this.#emit({ type: "session_upsert", session: next });
     return cloneSession(next);
@@ -51,10 +54,17 @@ export class SessionRegistry {
     const existingIndex = messages.findIndex((item) => item.id === messageCopy.id);
     if (existingIndex >= 0) messages[existingIndex] = messageCopy;
     else messages.push(messageCopy);
-    const boundedMessages = messages.slice(-MAX_TRANSCRIPT_MESSAGES);
-    const next = { ...current, messages: boundedMessages, lastActivity: messageCopy.timestamp };
+    const boundedMessages = boundTranscriptImageBudget(messages.slice(-MAX_TRANSCRIPT_MESSAGES));
+    const boundedMessage = boundedMessages.find((item) => item.id === messageCopy.id) ?? messageCopy;
+    const next = { ...current, messages: boundedMessages, lastActivity: boundedMessage.timestamp };
     this.#sessions.set(sessionId, next);
-    this.#emit({ type: "transcript_upsert", sessionId, message: messageCopy });
+    const changedMessages = boundedMessages.filter((candidate) => {
+      const previous = current.messages.find((item) => item.id === candidate.id);
+      return candidate.id === messageCopy.id || !previous || !transcriptImagesEqual(previous, candidate);
+    });
+    for (const changedMessage of changedMessages) {
+      this.#emit({ type: "transcript_upsert", sessionId, message: changedMessage });
+    }
     return cloneSession(next);
   }
 
@@ -88,6 +98,22 @@ export class SessionRegistry {
   }
 }
 
+function transcriptImagesEqual(left: TranscriptMessage, right: TranscriptMessage): boolean {
+  if (left.images?.length !== right.images?.length) return false;
+  for (let index = 0; index < (left.images?.length ?? 0); index += 1) {
+    const leftImage = left.images?.[index];
+    const rightImage = right.images?.[index];
+    if (!leftImage || !rightImage || leftImage.status !== rightImage.status) return false;
+    if (leftImage.status === "unavailable" && rightImage.status === "unavailable") {
+      if (leftImage.reason !== rightImage.reason) return false;
+      continue;
+    }
+    if (leftImage.status !== "available" || rightImage.status !== "available") return false;
+    if (leftImage.mimeType !== rightImage.mimeType || leftImage.data !== rightImage.data) return false;
+  }
+  return true;
+}
+
 function cloneSession(session: Session): Session {
   return {
     ...session,
@@ -107,7 +133,11 @@ function cloneSession(session: Session): Session {
 }
 
 function cloneTranscriptMessage(message: TranscriptMessage): TranscriptMessage {
-  return { ...message, text: truncateTranscriptText(message.text) };
+  return {
+    ...message,
+    text: truncateTranscriptText(message.text),
+    ...(message.images ? { images: message.images.map((image) => ({ ...image })) } : {}),
+  };
 }
 
 function cloneSessionPatch(patch: SessionPatch): Partial<Omit<Session, "id" | "messages">> {

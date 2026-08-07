@@ -529,6 +529,56 @@ describe("normalizeRawMessage", () => {
       normalizeRawMessage({ id: 42, role: "assistant", content: "invalid id" }, false, "fallback-id"),
     ).toBeNull();
   });
+  it("normalizes only Read image parts through the supplied blob resolver", () => {
+    const normalized = normalizeRawMessage(
+      {
+        id: "read-image",
+        role: "toolResult",
+        toolName: "read",
+        content: [
+          { type: "text", text: "A screenshot" },
+          { type: "image", data: "blob:sha256:abc", mimeType: "image/png" },
+        ],
+      },
+      false,
+      "fallback-id",
+      {
+        resolveReadImage: (data, mimeType) => ({
+          status: "available",
+          data: `${data}:${mimeType}`,
+          mimeType: "image/png",
+        }),
+      },
+    );
+    expect(normalized).toMatchObject({
+      text: "A screenshot",
+      images: [{ status: "available", mimeType: "image/png" }],
+    });
+    expect(
+      normalizeRawMessage(
+        {
+          id: "assistant-image",
+          role: "assistant",
+          content: [{ type: "image", data: "blob:sha256:abc", mimeType: "image/png" }],
+        },
+        false,
+        "fallback-id",
+      ),
+    ).toBeNull();
+    const errored = normalizeRawMessage(
+      {
+        id: "errored-read-image",
+        role: "toolResult",
+        toolName: "read",
+        isError: true,
+        content: [{ type: "image", data: "blob:sha256:abc", mimeType: "image/png" }],
+      },
+      false,
+      "fallback-id",
+      { resolveReadImage: () => ({ status: "available", mimeType: "image/png", data: "iVBORw0KGgo=" }) },
+    );
+    expect(errored?.images).toEqual([{ status: "unavailable", reason: "invalid_reference" }]);
+  });
 });
 
 describe("normalizeSkillCommands", () => {

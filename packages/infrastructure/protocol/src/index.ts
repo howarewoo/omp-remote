@@ -22,6 +22,137 @@ export const SessionModelOptionSchema = z.object({
 });
 export const TranscriptPresentationSchema = z.enum(["text", "diff"]);
 
+export const TRANSCRIPT_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+export const TRANSCRIPT_IMAGE_SESSION_MAX_BYTES = 50 * 1024 * 1024;
+
+export const TranscriptImageMimeTypeSchema = z.enum([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/avif",
+]);
+export const TranscriptImageUnavailableReasonSchema = z.enum([
+  "invalid_reference",
+  "missing",
+  "unsupported_mime",
+  "mime_mismatch",
+  "oversized",
+  "budget_exceeded",
+]);
+export type TranscriptImageUnavailableReason = z.infer<typeof TranscriptImageUnavailableReasonSchema>;
+
+function isTranscriptImageBase64Alphabet(data: string): boolean {
+  let paddingStarted = false;
+  let paddingCount = 0;
+  for (const character of data) {
+    if (character === "=") {
+      paddingStarted = true;
+      paddingCount += 1;
+      continue;
+    }
+    const code = character.charCodeAt(0);
+    const isAlphabetCharacter =
+      (code >= 0x41 && code <= 0x5a) ||
+      (code >= 0x61 && code <= 0x7a) ||
+      (code >= 0x30 && code <= 0x39) ||
+      character === "+" ||
+      character === "/";
+    if (paddingStarted || !isAlphabetCharacter) return false;
+  }
+  return paddingCount <= 2;
+}
+
+export function getTranscriptImageBase64ByteLength(data: string): number {
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  return Math.floor((data.length * 3) / 4) - padding;
+}
+
+const TranscriptImageAvailableSchema = z
+  .object({
+    status: z.literal("available"),
+    mimeType: TranscriptImageMimeTypeSchema,
+    data: z
+      .string()
+      .min(1)
+      .max(Math.ceil(TRANSCRIPT_IMAGE_MAX_BYTES / 3) * 4)
+      .refine(isTranscriptImageBase64Alphabet)
+      .refine((data) => data.length % 4 === 0)
+      .refine((data) => getTranscriptImageBase64ByteLength(data) <= TRANSCRIPT_IMAGE_MAX_BYTES),
+  })
+  .strict();
+const TranscriptImageUnavailableSchema = z
+  .object({
+    status: z.literal("unavailable"),
+    reason: TranscriptImageUnavailableReasonSchema,
+  })
+  .strict();
+export const TranscriptImageSchema = z.discriminatedUnion("status", [
+  TranscriptImageAvailableSchema,
+  TranscriptImageUnavailableSchema,
+]);
+
+export type TranscriptImageMimeType = z.infer<typeof TranscriptImageMimeTypeSchema>;
+export type TranscriptImage = z.infer<typeof TranscriptImageSchema>;
+
+export function getTranscriptImageByteLength(image: TranscriptImage): number {
+  return image.status === "available" ? getTranscriptImageBase64ByteLength(image.data) : 0;
+}
+
+export function validateTranscriptImageBytes(
+  bytes: Uint8Array,
+  mimeType: string,
+): TranscriptImageUnavailableReason | null {
+  if (bytes.byteLength > TRANSCRIPT_IMAGE_MAX_BYTES) return "oversized";
+  if (!TranscriptImageMimeTypeSchema.safeParse(mimeType).success) return "unsupported_mime";
+  const startsWith = (signature: readonly number[], offset = 0): boolean =>
+    signature.every((value, index) => bytes[offset + index] === value);
+  const ftypBoxSize =
+    bytes.length >= 4 ? bytes[0]! * 0x1000000 + (bytes[1]! << 16) + (bytes[2]! << 8) + bytes[3]! : 0;
+  const hasValidFtypBox = ftypBoxSize >= 16 && ftypBoxSize <= bytes.length;
+  const isAvifFtyp = hasValidFtypBox && startsWith([0x66, 0x74, 0x79, 0x70], 4);
+  const majorBrandIsAvif = startsWith([0x61, 0x76, 0x69, 0x66], 8) || startsWith([0x61, 0x76, 0x69, 0x73], 8);
+  let hasAvifCompatibleBrand = false;
+  for (let offset = 16; hasValidFtypBox && offset + 4 <= ftypBoxSize; offset += 4) {
+    if (startsWith([0x61, 0x76, 0x69, 0x66], offset) || startsWith([0x61, 0x76, 0x69, 0x73], offset)) {
+      hasAvifCompatibleBrand = true;
+      break;
+    }
+  }
+  const isAvif =
+    isAvifFtyp && (majorBrandIsAvif || (startsWith([0x6d, 0x69, 0x66, 0x31], 8) && hasAvifCompatibleBrand));
+  const matches =
+    mimeType === "image/png"
+      ? startsWith([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      : mimeType === "image/jpeg"
+        ? startsWith([0xff, 0xd8, 0xff])
+        : mimeType === "image/gif"
+          ? startsWith([0x47, 0x49, 0x46, 0x38]) &&
+            (bytes[4] === 0x37 || bytes[4] === 0x39) &&
+            bytes[5] === 0x61
+          : mimeType === "image/webp"
+            ? startsWith([0x52, 0x49, 0x46, 0x46]) && startsWith([0x57, 0x45, 0x42, 0x50], 8)
+            : isAvif;
+  return matches ? null : "mime_mismatch";
+}
+
+export function boundTranscriptImageBudget(messages: readonly TranscriptMessage[]): TranscriptMessage[] {
+  let retainedBytes = 0;
+  return messages.map((message) => {
+    if (!message.images?.length) return { ...message };
+    const images = message.images.map((image) => {
+      if (image.status !== "available") return { ...image };
+      const imageBytes = getTranscriptImageByteLength(image);
+      if (retainedBytes + imageBytes > TRANSCRIPT_IMAGE_SESSION_MAX_BYTES) {
+        return { status: "unavailable" as const, reason: "budget_exceeded" as const };
+      }
+      retainedBytes += imageBytes;
+      return { ...image };
+    });
+    return { ...message, images };
+  });
+}
+
 export const TRANSCRIPT_TEXT_LIMIT = 20_000;
 
 export function truncateTranscriptText(text: string): string {
@@ -43,6 +174,7 @@ export const TranscriptMessageSchema = z.object({
   readTarget: z.string().min(1).optional(),
   readResolvedPath: z.string().min(1).optional(),
   toolTitle: z.string().min(1).optional(),
+  images: z.array(TranscriptImageSchema).min(1).optional(),
 });
 
 export const ActiveSubagentSchema = z.object({

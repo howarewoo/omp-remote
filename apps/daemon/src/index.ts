@@ -18,6 +18,8 @@ import {
   SessionFileChangesResponseSchema,
   type SessionModelOption,
   SessionTranscriptResponseSchema,
+  type TranscriptMessage,
+  validateTranscriptImageBytes,
 } from "@omp-remote/protocol";
 import { SessionRegistry } from "@omp-remote/sessions/services";
 import Fastify from "fastify";
@@ -34,7 +36,12 @@ import {
   getCatalogSessionMetadataPatch,
 } from "./catalog-reconciliation.js";
 import { resolveGitBranch } from "./git-branch.js";
-import { normalizeRawMessage, normalizeSkillCommands, ToolCallTracker } from "./message-normalizer.js";
+import {
+  materializeReadImages,
+  normalizeRawMessage,
+  normalizeSkillCommands,
+  ToolCallTracker,
+} from "./message-normalizer.js";
 import {
   type AskInactivityTimeout,
   clearAskInactivityTimeout,
@@ -47,8 +54,36 @@ import {
   resetAskInactivityTimeout,
 } from "./rpc-ask.js";
 import { SavedWorkingDirectoryStore } from "./saved-working-directories.js";
+import {
+  createReadImageResolver,
+  resolveAgentBlobDirectory,
+  resolveSessionRoots,
+  SessionCatalog,
+} from "./session-catalog.js";
 import { collectSessionFileChanges } from "./session-file-changes.js";
-import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
+
+function sanitizeTranscriptMessageImages(message: TranscriptMessage): TranscriptMessage {
+  if (!message.images?.length) return message;
+  return {
+    ...message,
+    images: message.images.map((image) => {
+      if (image.status !== "available") return image;
+      const bytes = Buffer.from(image.data, "base64");
+      return validateTranscriptImageBytes(bytes, image.mimeType)
+        ? { status: "unavailable" as const, reason: "mime_mismatch" as const }
+        : image;
+    }),
+  };
+}
+
+function sanitizeExtensionSession<T extends { messages: TranscriptMessage[] }>(
+  session: T,
+): Omit<T, "messages"> & { messages: TranscriptMessage[] } {
+  return {
+    ...session,
+    messages: session.messages.map(sanitizeTranscriptMessageImages),
+  };
+}
 
 const MAX_MESSAGES = 200;
 const logger = createLogger("omp-remote-daemon");
@@ -150,7 +185,7 @@ const registerExtensionSession = createReconciledSessionRegistrar({
   requestCatalogReconciliation,
 });
 
-await app.register(fastifyWebsocket, { options: { maxPayload: 1024 * 1024 } });
+await app.register(fastifyWebsocket, { options: { maxPayload: 96 * 1024 * 1024 } });
 
 app.get("/healthz", async () => ({
   service: "omp-remote",
@@ -462,7 +497,7 @@ app.get("/extension", { websocket: true }, (socket, request) => {
       extensionSockets.set(frame.session.id, socket);
       ignoreCatalogReconciliationFailure(
         registerExtensionSession({
-          ...frame.session,
+          ...sanitizeExtensionSession(frame.session),
           createdAt: catalogSession?.createdAt ?? frame.session.createdAt ?? frame.session.lastActivity,
           activeSubagents: catalogSession?.activeSubagents ?? [],
         }),
@@ -530,7 +565,9 @@ app.get("/extension", { websocket: true }, (socket, request) => {
         effort: frame.effort,
         lastActivity: new Date().toISOString(),
       });
-      if (frame.message) registry.appendMessage(frame.sessionId, frame.message);
+      if (frame.message) {
+        registry.appendMessage(frame.sessionId, sanitizeTranscriptMessageImages(frame.message));
+      }
     } else {
       broadcast({
         type: "command_result",
@@ -583,6 +620,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
     onStderr: (text) => logger.info("OMP RPC stderr", { text: text.trim().slice(0, 1_000) }),
   });
   let sessionId: string | undefined;
+  let sessionBlobDirectory: string | undefined;
   let messageSequence = 0;
   let activeMessageId: string | undefined;
   const toolCallTracker = new ToolCallTracker();
@@ -621,7 +659,12 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
         parsed.data.message,
         parsed.data.type !== "message_end",
         activeMessageId ?? `rpc-message-${sessionId}-${++messageSequence}`,
-        { toolCallTracker },
+        {
+          toolCallTracker,
+          ...(sessionBlobDirectory
+            ? { resolveReadImage: createReadImageResolver(sessionBlobDirectory) }
+            : {}),
+        },
       );
       if (message) registry.appendMessage(sessionId, message);
       if (parsed.data.type === "message_end") activeMessageId = undefined;
@@ -631,6 +674,9 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
   const stateResponse = RpcStateResponseSchema.parse(await rpc.start());
   sessionId = stateResponse.data.sessionId;
   if (!sessionId) throw new Error("OMP RPC did not return a session ID");
+  sessionBlobDirectory = stateResponse.data.sessionFile
+    ? resolveAgentBlobDirectory(stateResponse.data.sessionFile)
+    : undefined;
   const contextPercent = normalizePercent(stateResponse.data.contextUsage?.percent);
   const catalogSession = sessionCatalog.get(sessionId);
   const [skillCommands, availableModels] = await Promise.all([
@@ -673,18 +719,20 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
       ? messagesResponse.data
       : messagesResponse.data.messages;
     const visibleMessageStart = Math.max(0, messages.length - MAX_MESSAGES);
+    const retained: Array<{ raw: unknown; message: TranscriptMessage }> = [];
     for (const [index, rawMessage] of messages.entries()) {
-      if (index < visibleMessageStart) {
-        toolCallTracker.observe(rawMessage);
-        continue;
-      }
       const message = normalizeRawMessage(
         rawMessage,
         false,
         `rpc-history-${sessionId}-${Math.max(0, index - visibleMessageStart)}`,
         { toolCallTracker },
       );
-      if (message) registry.appendMessage(sessionId, message);
+      if (index >= visibleMessageStart && message) retained.push({ raw: rawMessage, message });
+    }
+    const resolveImage = sessionBlobDirectory ? createReadImageResolver(sessionBlobDirectory) : undefined;
+    for (const { raw, message } of retained) {
+      const materialized = resolveImage ? materializeReadImages(message, raw, resolveImage) : message;
+      registry.appendMessage(sessionId, materialized);
     }
   } catch (error) {
     logger.error("Could not load initial OMP transcript", error, { sessionId });

@@ -1,5 +1,7 @@
-import { existsSync } from "node:fs";
-import { dirname } from "node:path";
+import { createHash } from "node:crypto";
+import { closeSync, existsSync, constants as fsConstants, fstatSync, openSync, readSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import type {
   ExtensionAPI,
   ExtensionAskDialogQuestion,
@@ -7,27 +9,32 @@ import type {
   ExtensionContext,
   ExtensionUIDialogOptions,
 } from "@oh-my-pi/pi-coding-agent";
-import type { AskResponse, ExtensionCommand } from "@omp-remote/protocol";
+import {
+  type AskResponse,
+  boundTranscriptImageBudget,
+  type ExtensionCommand,
+  getTranscriptImageByteLength,
+  TRANSCRIPT_IMAGE_MAX_BYTES,
+  TRANSCRIPT_IMAGE_SESSION_MAX_BYTES,
+  type TranscriptImage,
+  type TranscriptImageMimeType,
+  type TranscriptMessage,
+  validateTranscriptImageBytes,
+} from "@omp-remote/protocol";
 
 const DEFAULT_EXTENSION_URL = "ws://127.0.0.1:4387/extension";
 const RECONNECT_DELAY_MS = 2_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
 
-type TranscriptRole = "user" | "assistant" | "tool" | "system";
-type TranscriptPresentation = "text" | "diff";
+type ExtensionTranscriptMessage = TranscriptMessage;
 
-type ExtensionTranscriptMessage = {
-  id: string;
-  role: TranscriptRole;
-  text: string;
-  timestamp: string;
-  streaming: boolean;
-  presentation: TranscriptPresentation;
-  toolName?: string;
-  readTarget?: string;
-  readResolvedPath?: string;
-  toolTitle?: string;
-};
+export function boundExtensionTranscriptMessages(
+  messages: readonly ExtensionTranscriptMessage[],
+): ExtensionTranscriptMessage[] {
+  return boundTranscriptImageBudget(messages);
+}
+
+type TranscriptRole = TranscriptMessage["role"];
 
 type FallbackId = string | (() => string);
 type AvailableCommand = {
@@ -82,7 +89,7 @@ type TrackedToolCall = {
 type RawExtensionMessage = {
   id?: unknown;
   role: string;
-  content: string | Array<{ type: string; text?: string }>;
+  content: string | Array<{ type: string; text?: string; data?: unknown; mimeType?: unknown }>;
   timestamp?: unknown;
   toolName?: unknown;
   toolCallId?: unknown;
@@ -144,6 +151,7 @@ export function normalizeExtensionMessage(
   streaming: boolean,
   fallbackId: FallbackId,
   toolCallTracker?: ExtensionToolCallTracker,
+  resolveReadImage?: (data: string, mimeType: string) => TranscriptImage,
 ): ExtensionTranscriptMessage | null {
   if (
     typeof raw !== "object" ||
@@ -194,6 +202,10 @@ export function normalizeExtensionMessage(
       ? (normalizeBoundedSingleLine(details?.resolvedPath) ??
         (trackedReadTarget?.startsWith("skill://") ? readSourcePath : undefined))
       : undefined;
+  const images =
+    message.role === "toolResult" && toolName === "read"
+      ? extractReadImages(message.content, resolveReadImage, message.isError === true)
+      : undefined;
   const toolTitle =
     message.role === "toolResult"
       ? formatExtensionToolTitle(toolName, toolCall?.arguments, details, appliedDiff)
@@ -219,8 +231,46 @@ export function normalizeExtensionMessage(
     ...(toolName ? { toolName } : {}),
     ...(readTarget ? { readTarget } : {}),
     ...(readResolvedPath ? { readResolvedPath } : {}),
+    ...(images?.length ? { images } : {}),
     ...(toolTitle ? { toolTitle } : {}),
   };
+}
+function extractReadImages(
+  content: RawExtensionMessage["content"],
+  resolveReadImage?: (data: string, mimeType: string) => TranscriptImage,
+  readError = false,
+): TranscriptImage[] {
+  if (!Array.isArray(content)) return [];
+  const images: TranscriptImage[] = [];
+  for (const part of content) {
+    if (part.type !== "image") continue;
+    if (readError) {
+      images.push({ status: "unavailable", reason: "invalid_reference" });
+      continue;
+    }
+    if (typeof part.data !== "string") {
+      images.push({ status: "unavailable", reason: "invalid_reference" });
+      continue;
+    }
+    if (typeof part.mimeType !== "string") {
+      images.push({ status: "unavailable", reason: "unsupported_mime" });
+      continue;
+    }
+    images.push(resolveReadImage?.(part.data, part.mimeType) ?? { status: "unavailable", reason: "missing" });
+  }
+  return images;
+}
+export function materializeExtensionReadImages(
+  message: ExtensionTranscriptMessage,
+  raw: unknown,
+  resolveReadImage: (data: string, mimeType: string) => TranscriptImage,
+): ExtensionTranscriptMessage {
+  if (message.toolName !== "read") return message;
+  if (typeof raw !== "object" || raw === null || !("content" in raw) || !isContent(raw.content)) {
+    return message;
+  }
+  const images = extractReadImages(raw.content, resolveReadImage, "isError" in raw && raw.isError === true);
+  return images.length ? { ...message, images } : message;
 }
 
 function formatExtensionToolTitle(
@@ -447,6 +497,55 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+function resolveOwnReadImage(
+  reference: string,
+  mimeType: string,
+  maxBytes = TRANSCRIPT_IMAGE_MAX_BYTES,
+): TranscriptImage {
+  const match = /^blob:sha256:([a-f0-9]{64})$/.exec(reference);
+  const hash = match?.[1];
+  const agentDirectory = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".omp", "agent");
+  if (!hash) return { status: "unavailable", reason: "invalid_reference" };
+  let handle: number | undefined;
+  try {
+    const blobPath = join(agentDirectory, "blobs", hash);
+    handle = openSync(blobPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const fileStats = fstatSync(handle);
+    if (!fileStats.isFile()) return { status: "unavailable", reason: "invalid_reference" };
+    if (fileStats.size > TRANSCRIPT_IMAGE_MAX_BYTES) return { status: "unavailable", reason: "oversized" };
+    if (fileStats.size > maxBytes) return { status: "unavailable", reason: "budget_exceeded" };
+    const buffer = Buffer.allocUnsafe(Math.min(TRANSCRIPT_IMAGE_MAX_BYTES, maxBytes) + 1);
+    const bytesRead = readSync(handle, buffer, 0, buffer.length, 0);
+    if (bytesRead > TRANSCRIPT_IMAGE_MAX_BYTES) return { status: "unavailable", reason: "oversized" };
+    if (bytesRead > maxBytes) return { status: "unavailable", reason: "budget_exceeded" };
+    const bytes = buffer.subarray(0, bytesRead);
+    if (createHash("sha256").update(bytes).digest("hex") !== hash) {
+      return { status: "unavailable", reason: "invalid_reference" };
+    }
+    const reason = validateTranscriptImageBytes(bytes, mimeType);
+    if (reason) return { status: "unavailable", reason };
+    return {
+      status: "available",
+      mimeType: mimeType as TranscriptImageMimeType,
+      data: bytes.toString("base64"),
+    };
+  } catch {
+    return { status: "unavailable", reason: "missing" };
+  } finally {
+    if (handle !== undefined) closeSync(handle);
+  }
+}
+
+function createOwnReadImageResolver(maxBytes: number) {
+  let remainingBytes = maxBytes;
+  return (reference: string, mimeType: string): TranscriptImage => {
+    if (remainingBytes <= 0) return { status: "unavailable", reason: "budget_exceeded" };
+    const image = resolveOwnReadImage(reference, mimeType, remainingBytes);
+    if (image.status === "available") remainingBytes -= getTranscriptImageByteLength(image);
+    return image;
+  };
+}
+
 export default function ompRemoteExtension(pi: ExtensionAPI): void {
   const rpcMode = isRpcMode();
   const { z } = pi.zod;
@@ -519,6 +618,27 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
   let activeMessageId: string | undefined;
   let messageSequence = 0;
   const liveToolCallTracker = new ExtensionToolCallTracker();
+  let producerReadImageResolver: (data: string, mimeType: string) => TranscriptImage = resolveOwnReadImage;
+  const retainedMessagesBySession = new Map<string, Map<string, ExtensionTranscriptMessage>>();
+
+  const boundLiveMessage = (
+    sessionId: string,
+    message: ExtensionTranscriptMessage,
+  ): ExtensionTranscriptMessage => {
+    const retained =
+      retainedMessagesBySession.get(sessionId) ?? new Map<string, ExtensionTranscriptMessage>();
+    retained.set(message.id, message);
+    while (retained.size > 200) {
+      const oldestId = retained.keys().next().value;
+      if (oldestId === undefined) break;
+      retained.delete(oldestId);
+    }
+    const bounded = boundExtensionTranscriptMessages([...retained.values()]);
+    retained.clear();
+    for (const retainedMessage of bounded) retained.set(retainedMessage.id, retainedMessage);
+    retainedMessagesBySession.set(sessionId, retained);
+    return retained.get(message.id) ?? message;
+  };
 
   const normalizeContextPercent = (ctx: ExtensionContext): number | null => {
     const percent = ctx.getContextUsage()?.percent;
@@ -537,6 +657,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
       streaming,
       fallbackId ?? (() => `extension-message-${++messageSequence}`),
       toolCallTracker,
+      producerReadImageResolver,
     );
 
   const send = (frame: object): void => {
@@ -711,14 +832,22 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
 
   const sessionSnapshot = (ctx: ExtensionContext) => {
     const snapshotToolCallTracker = new ExtensionToolCallTracker();
+    producerReadImageResolver = createOwnReadImageResolver(TRANSCRIPT_IMAGE_SESSION_MAX_BYTES);
     const messages = ctx.sessionManager
       .getBranch()
+      .slice(-200)
       .map((entry) => SessionEntrySchema.safeParse(entry))
       .filter((entry) => entry.success)
       .map((entry) => normalizeMessage(entry.data.message, false, entry.data.id, snapshotToolCallTracker))
       .filter((message) => message !== null)
       .slice(-200);
     const sessionId = ctx.sessionManager.getSessionId();
+    const boundedMessages = boundExtensionTranscriptMessages(messages);
+    messages.splice(0, messages.length, ...boundedMessages);
+    retainedMessagesBySession.set(
+      sessionId,
+      new Map(boundedMessages.map((message) => [message.id, message])),
+    );
     const now = new Date().toISOString();
     const createdAt = sessionCreatedAt.get(sessionId) ?? messages[0]?.timestamp ?? now;
     sessionCreatedAt.set(sessionId, createdAt);
@@ -833,7 +962,22 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
     streaming: boolean,
   ): void => {
     if (!context) return;
-    const normalized = message ? normalizeMessage(message, streaming, activeMessageId) : null;
+    const sessionId = context.sessionManager.getSessionId();
+    const retained = retainedMessagesBySession.get(sessionId);
+    const replacementId =
+      typeof message === "object" && message !== null && "id" in message && typeof message.id === "string"
+        ? message.id
+        : activeMessageId;
+    let retainedBytes = 0;
+    for (const [retainedId, retainedMessage] of retained ?? []) {
+      if (retainedId === replacementId || !retainedMessage.images) continue;
+      for (const image of retainedMessage.images) retainedBytes += getTranscriptImageByteLength(image);
+    }
+    producerReadImageResolver = createOwnReadImageResolver(
+      Math.max(0, TRANSCRIPT_IMAGE_SESSION_MAX_BYTES - retainedBytes),
+    );
+    const nextMessage = message ? normalizeMessage(message, streaming, activeMessageId) : null;
+    const normalized = nextMessage ? boundLiveMessage(sessionId, nextMessage) : null;
     const model = context.models.current();
     send({
       type: "event",
