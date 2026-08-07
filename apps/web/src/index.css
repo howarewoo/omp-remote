@@ -3067,7 +3067,7 @@ textarea:disabled {
 }
 
 .transcript-ask {
-  width: min(100%, 74ch);
+  width: 100%;
   min-width: 0;
   gap: 0.75rem;
 }
@@ -3088,6 +3088,11 @@ textarea:disabled {
   font-size: var(--transcript-body-size);
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+.ask-progress {
+  color: var(--omp-gray);
+  font-family: var(--font-mono);
+  font-size: var(--transcript-mono-size);
 }
 
 .ask-options,
