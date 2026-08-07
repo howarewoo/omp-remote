@@ -1,5 +1,6 @@
 import type { Session } from "@omp-remote/protocol";
 import { describe, expect, it, vi } from "vitest";
+import { SessionRegistry } from "@omp-remote/sessions/services";
 import type { CatalogDiff } from "./session-catalog.js";
 import {
   createCatalogReconciler,
@@ -227,5 +228,24 @@ describe("createCatalogReconciler", () => {
     expect(syncCatalogSession).toHaveBeenCalledWith(
       expect.objectContaining({ id: ROOT_SESSION.id, activeSubagents: [ACTIVE_WORKER] }),
     );
+  });
+});
+
+describe("session branch registry updates", () => {
+  it("emits the normal session patch when checkout changes the branch", () => {
+    const registry = new SessionRegistry();
+    const events: unknown[] = [];
+    registry.subscribe((event) => events.push(event));
+    registry.upsert({ ...ROOT_SESSION, source: "rpc", status: "idle", branch: "main" });
+    events.length = 0;
+
+    expect(registry.update(ROOT_SESSION.id, { branch: "feature/target" })?.branch).toBe("feature/target");
+    expect(events).toEqual([
+      {
+        type: "session_update",
+        sessionId: ROOT_SESSION.id,
+        patch: { branch: "feature/target" },
+      },
+    ]);
   });
 });

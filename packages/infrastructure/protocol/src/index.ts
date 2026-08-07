@@ -294,7 +294,90 @@ export const SessionTranscriptResponseSchema = z.object({
   sessionId: z.string().min(1),
   messages: z.array(TranscriptMessageSchema),
 });
+export const SESSION_BRANCH_TOPOLOGY_MAX_BRANCHES = 10_000;
+export const SESSION_BRANCH_NAME_MAX_BYTES = 4_096;
 const utf8Encoder = new TextEncoder();
+const SessionBranchNameSchema = z
+  .string()
+  .min(1)
+  .max(SESSION_BRANCH_NAME_MAX_BYTES)
+  .refine(
+    (branch) => utf8Encoder.encode(branch).byteLength <= SESSION_BRANCH_NAME_MAX_BYTES,
+    "Branch name exceeds the supported UTF-8 byte limit",
+  );
+
+export const SessionBranchTopologyNodeSchema = z
+  .object({
+    name: SessionBranchNameSchema,
+    parent: SessionBranchNameSchema.optional(),
+  })
+  .strict();
+
+export const SessionBranchTopologySchema = z
+  .object({
+    sessionId: z.string().min(1),
+    branches: z.array(SessionBranchTopologyNodeSchema).max(SESSION_BRANCH_TOPOLOGY_MAX_BRANCHES),
+    currentBranch: SessionBranchNameSchema,
+  })
+  .strict()
+  .superRefine((topology, context) => {
+    const names = new Set(topology.branches.map((branch) => branch.name));
+    if (names.size !== topology.branches.length) {
+      context.addIssue({ code: "custom", message: "Branch names must be unique", path: ["branches"] });
+    }
+    for (const [index, branch] of topology.branches.entries()) {
+      if (branch.parent && !names.has(branch.parent)) {
+        context.addIssue({
+          code: "custom",
+          message: "Branch parents must refer to a local branch",
+          path: ["branches", index, "parent"],
+        });
+      }
+    }
+    const parentByName = new Map<string, string>();
+    for (const branch of topology.branches) {
+      if (branch.parent) parentByName.set(branch.name, branch.parent);
+    }
+    const checkedNames = new Set<string>();
+    for (const [index, branch] of topology.branches.entries()) {
+      if (checkedNames.has(branch.name)) continue;
+      const path = new Set<string>();
+      let name: string | undefined = branch.name;
+      while (name && !checkedNames.has(name)) {
+        if (path.has(name)) {
+          context.addIssue({
+            code: "custom",
+            message: "Branch parents must not form a cycle",
+            path: ["branches", index, "parent"],
+          });
+          break;
+        }
+        path.add(name);
+        name = parentByName.get(name);
+      }
+      for (const visitedName of path) checkedNames.add(visitedName);
+    }
+    if (!names.has(topology.currentBranch)) {
+      context.addIssue({ code: "custom", message: "Current branch must be listed", path: ["currentBranch"] });
+    }
+  });
+
+export type SessionBranchTopologyNode = z.infer<typeof SessionBranchTopologyNodeSchema>;
+export type SessionBranchTopology = z.infer<typeof SessionBranchTopologySchema>;
+
+export const SwitchBranchCommandSchema = z
+  .object({
+    type: z.literal("switch_branch"),
+    requestId: z.string().min(1),
+    sessionId: z.string().min(1),
+    branch: SessionBranchNameSchema.refine(
+      (branch) => !branch.startsWith("-"),
+      "Branch names cannot start with a dash",
+    ),
+  })
+  .strict();
+
+export type SwitchBranchCommand = z.infer<typeof SwitchBranchCommandSchema>;
 
 export function countTextLines(text: string): number {
   if (text.length === 0) return 0;
@@ -461,6 +544,7 @@ export const BrowserCommandSchema = z.union([
     requestId: z.string().min(1),
     cwd: z.string().trim().min(1),
   }),
+  SwitchBranchCommandSchema,
   z.object({
     type: z.literal("session_command"),
     requestId: z.string().min(1),

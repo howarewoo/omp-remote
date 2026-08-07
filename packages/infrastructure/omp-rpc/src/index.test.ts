@@ -95,6 +95,57 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it("times out a request without terminating the RPC session", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "omp-remote-rpc-timeout-"));
+    const executable = join(directory, "rpc-timeout-fixture.cjs");
+    await writeFile(
+      executable,
+      `#!/usr/bin/env node
+const readline = require("node:readline");
+process.stdout.write(JSON.stringify({ type: "ready", supportedProtocolVersions: [] }) + "\\n");
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const frame = JSON.parse(line);
+  if (frame.type === "stall") return;
+  process.stdout.write(JSON.stringify({
+    type: "response",
+    id: frame.id,
+    success: true,
+    data: { sessionId: "fixture-session", isStreaming: false },
+  }) + "\\n");
+});
+`,
+    );
+    await chmod(executable, 0o755);
+
+    let rpc: RpcSession | undefined;
+    try {
+      rpc = new RpcSession({
+        cwd: directory,
+        ompPath: executable,
+        resume: null,
+        onStderr: () => undefined,
+      });
+      await rpc.start();
+
+      await expect(rpc.request({ type: "stall" }, { timeoutMs: 10 })).rejects.toThrow(
+        "OMP RPC request timed out",
+      );
+      await expect(rpc.request({ type: "stall" }, { timeoutMs: 1.5 })).rejects.toThrow(
+        "OMP RPC request timeout is out of range",
+      );
+      await expect(rpc.request({ type: "stall" }, { timeoutMs: 2_147_483_648 })).rejects.toThrow(
+        "OMP RPC request timeout is out of range",
+      );
+      await expect(rpc.request({ type: "get_state" })).resolves.toMatchObject({
+        type: "response",
+        data: { sessionId: "fixture-session" },
+      });
+    } finally {
+      await rpc?.terminate().catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it("launches RPC UI mode without disabling extensions", async () => {
     const directory = await mkdtemp(join(tmpdir(), "omp-remote-rpc-"));
     const executable = join(directory, "rpc-fixture.cjs");
