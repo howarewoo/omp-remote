@@ -2,6 +2,16 @@
 
 A phone-first PWA for supervising multiple [Oh My Pi](https://omp.sh) coding sessions from a private Tailnet. A loopback-only host daemon serves the dashboard, launches OMP RPC sessions, and accepts automatic registrations from ordinary terminal OMP sessions.
 
+## Screenshots
+
+### Desktop
+
+[![Desktop OMP Remote dashboard showing an active coding session at 1440×900](docs/screenshots/desktop.webp)](docs/screenshots/desktop.webp)
+
+### Mobile
+
+[![Mobile OMP Remote dashboard showing an active coding session at 390×844](docs/screenshots/mobile.webp)](docs/screenshots/mobile.webp)
+
 ## Comparison with OMP mobile options
 
 OMP support is called out explicitly; tools limited to the upstream Pi Coding Agent are intentionally excluded.
