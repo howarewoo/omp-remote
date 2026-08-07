@@ -296,6 +296,10 @@ function formatToolTitle(
     const command = normalizeHeaderValue(args?.command);
     return command ? `Bash: ${command}` : undefined;
   }
+  if (toolName === "write") {
+    const path = normalizeBoundedSingleLine(args?.path);
+    return path ? `Write: ${path}` : undefined;
+  }
   if (toolName === "edit") {
     const parsedDetails = CanonicalEditDetailsSchema.safeParse(details);
     const inputPaths = extractEditPaths(args?.input);

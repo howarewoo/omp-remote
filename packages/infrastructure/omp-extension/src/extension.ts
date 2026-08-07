@@ -283,6 +283,10 @@ function formatExtensionToolTitle(
     const command = normalizeHeaderValue(args?.command);
     return command ? `Bash: ${command}` : undefined;
   }
+  if (toolName === "write") {
+    const path = normalizeBoundedSingleLine(args?.path);
+    return path ? `Write: ${path}` : undefined;
+  }
   if (toolName === "edit") {
     const inputPaths = extractEditPaths(args?.input);
     const perFilePaths = Array.isArray(details?.perFileResults)

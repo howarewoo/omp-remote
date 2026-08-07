@@ -354,6 +354,13 @@ describe("normalizeRawMessage", () => {
       expected: "Bash: pnpm --filter sessions test && pnpm lint",
     },
     {
+      toolName: "write",
+      arguments: { path: "packages/features/sessions/src/components/dashboard.tsx" },
+      details: { resolvedPath: "/work/omp-remote/packages/features/sessions/src/components/dashboard.tsx" },
+      content: "Wrote 42 bytes",
+      expected: "Write: packages/features/sessions/src/components/dashboard.tsx",
+    },
+    {
       toolName: "edit",
       arguments: {
         input:
