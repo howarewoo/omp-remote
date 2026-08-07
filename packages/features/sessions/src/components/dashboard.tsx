@@ -1768,14 +1768,28 @@ function RichAskToolCall({ request, connection, onRespond, onActivity }: AskTool
   const [answers, setAnswers] = useState<RichAnswer[]>(() =>
     request.questions.map(() => ({ selectedOptions: [], customInput: "", note: "" })),
   );
+  const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
   const [state, setState] = useState<"idle" | "sending">("idle");
   const [error, setError] = useState<string | null>(null);
+  const activeQuestionTitleRef = useRef<HTMLLegendElement | null>(null);
+  const hasRenderedQuestion = useRef(false);
   const sending = state === "sending";
   const askId = `ask-answer-${encodeURIComponent(request.sessionId)}-${encodeURIComponent(request.requestId)}`;
+  const questionCount = request.questions.length;
+  const lastQuestionIndex = Math.max(questionCount - 1, 0);
+  const boundedActiveQuestionIndex = Math.min(activeQuestionIndex, lastQuestionIndex);
+  const activeQuestion = request.questions[boundedActiveQuestionIndex];
   const complete = request.questions.every(
     (_question, index) =>
       (answers[index]?.selectedOptions.length ?? 0) > 0 || Boolean(answers[index]?.customInput.trim()),
   );
+
+  useLayoutEffect(() => {
+    if (hasRenderedQuestion.current) {
+      activeQuestionTitleRef.current?.focus();
+    }
+    hasRenderedQuestion.current = true;
+  }, [request.requestId, boundedActiveQuestionIndex]);
 
   const updateAnswer = (index: number, update: (answer: RichAnswer) => RichAnswer) => {
     setAnswers((current) => {
@@ -1835,138 +1849,156 @@ function RichAskToolCall({ request, connection, onRespond, onActivity }: AskTool
         </span>
       </header>
       <strong className="ask-title" id={`${askId}-title`}>
-        {request.questions.length === 1 ? "One question" : `${request.questions.length} questions`}
+        {questionCount === 1 ? "One question" : `${questionCount} questions`}
       </strong>
+      {questionCount > 1 ? (
+        <span className="ask-progress" aria-live="polite">
+          Question {boundedActiveQuestionIndex + 1} of {questionCount}
+        </span>
+      ) : null}
       <div className="ask-question-list">
-        {request.questions.map((question, questionIndex) => {
-          const answer = answers[questionIndex] ?? { selectedOptions: [], customInput: "", note: "" };
-          return (
-            <fieldset className="ask-question" key={question.id}>
-              <legend className="ask-question-title" id={`${askId}-${questionIndex}-legend`}>
-                {question.header ? <span className="ask-question-header">{question.header}</span> : null}
-                <span>{question.question}</span>
-              </legend>
-              {question.multi ? (
-                <div className="ask-options">
-                  {question.options.map((option, optionIndex) => {
-                    const selected = answer.selectedOptions.includes(option.label);
-                    return (
-                      <Button
-                        type="button"
-                        variant={selected ? "default" : "outline"}
-                        className="ask-option ask-rich-option"
-                        aria-pressed={selected}
-                        disabled={sending || connection !== "connected"}
-                        onClick={() => {
-                          onActivity();
-                          updateAnswer(questionIndex, (current) => ({
-                            ...current,
-                            selectedOptions: selected
-                              ? current.selectedOptions.filter((label) => label !== option.label)
-                              : [...current.selectedOptions, option.label],
-                          }));
-                        }}
-                        key={`${option.label}-${optionIndex}`}
-                      >
-                        <span className="ask-option-copy">
-                          <span>
-                            {option.label}
-                            {question.recommended === optionIndex ? <Badge>Recommended</Badge> : null}
-                          </span>
-                          {option.description ? (
-                            <span className="ask-option-description">{option.description}</span>
-                          ) : null}
-                          {option.preview ? (
-                            <span className="ask-option-preview">{option.preview}</span>
-                          ) : null}
+        {activeQuestion ? (
+          <fieldset className="ask-question" key={activeQuestion.id}>
+            <legend
+              className="ask-question-title"
+              id={`${askId}-${boundedActiveQuestionIndex}-legend`}
+              ref={activeQuestionTitleRef}
+              tabIndex={-1}
+            >
+              {activeQuestion.header ? (
+                <span className="ask-question-header">{activeQuestion.header}</span>
+              ) : null}
+              <span>{activeQuestion.question}</span>
+            </legend>
+            {activeQuestion.multi ? (
+              <div className="ask-options">
+                {activeQuestion.options.map((option, optionIndex) => {
+                  const answer = answers[boundedActiveQuestionIndex] ?? {
+                    selectedOptions: [],
+                    customInput: "",
+                    note: "",
+                  };
+                  const selected = answer.selectedOptions.includes(option.label);
+                  return (
+                    <Button
+                      type="button"
+                      variant={selected ? "default" : "outline"}
+                      className="ask-option ask-rich-option"
+                      aria-pressed={selected}
+                      disabled={sending || connection !== "connected"}
+                      onClick={() => {
+                        onActivity();
+                        updateAnswer(boundedActiveQuestionIndex, (current) => ({
+                          ...current,
+                          selectedOptions: selected
+                            ? current.selectedOptions.filter((label) => label !== option.label)
+                            : [...current.selectedOptions, option.label],
+                        }));
+                      }}
+                      key={`${option.label}-${optionIndex}`}
+                    >
+                      <span className="ask-option-copy">
+                        <span>
+                          {option.label}
+                          {activeQuestion.recommended === optionIndex ? <Badge>Recommended</Badge> : null}
                         </span>
-                      </Button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <RadioGroup
-                  className="ask-options"
-                  aria-labelledby={`${askId}-${questionIndex}-legend`}
-                  name={`${askId}-${questionIndex}`}
-                  value={answer.selectedOptions[0] ?? ""}
-                  disabled={sending || connection !== "connected"}
-                  onValueChange={(value) => {
-                    onActivity();
-                    updateAnswer(questionIndex, (current) => ({
-                      ...current,
-                      selectedOptions: [value],
-                      customInput: "",
-                    }));
-                  }}
-                >
-                  {question.options.map((option, optionIndex) => {
-                    const selected = answer.selectedOptions.includes(option.label);
-                    return (
-                      <Radio.Root
-                        value={option.label}
-                        render={
-                          <button
-                            type="button"
-                            data-slot="button"
-                            className={cn(
-                              "ui-button",
-                              selected ? "ui-button-default" : "ui-button-outline",
-                              "ui-button-size-default",
-                              "ask-option ask-rich-option",
-                            )}
-                          />
-                        }
-                        key={`${option.label}-${optionIndex}`}
-                      >
-                        <span className="ask-option-copy">
-                          <span>
-                            {option.label}
-                            {question.recommended === optionIndex ? <Badge>Recommended</Badge> : null}
-                          </span>
-                          {option.description ? (
-                            <span className="ask-option-description">{option.description}</span>
-                          ) : null}
-                          {option.preview ? (
-                            <span className="ask-option-preview">{option.preview}</span>
-                          ) : null}
-                        </span>
-                      </Radio.Root>
-                    );
-                  })}
-                </RadioGroup>
-              )}
-              <label htmlFor={`${askId}-${questionIndex}-custom`}>Custom answer</label>
-              <Textarea
-                id={`${askId}-${questionIndex}-custom`}
-                className="ask-textarea"
-                value={answer.customInput}
-                onChange={(event) => {
+                        {option.description ? (
+                          <span className="ask-option-description">{option.description}</span>
+                        ) : null}
+                        {option.preview ? <span className="ask-option-preview">{option.preview}</span> : null}
+                      </span>
+                    </Button>
+                  );
+                })}
+              </div>
+            ) : (
+              <RadioGroup
+                className="ask-options"
+                aria-labelledby={`${askId}-${boundedActiveQuestionIndex}-legend`}
+                name={`${askId}-${boundedActiveQuestionIndex}`}
+                value={answers[boundedActiveQuestionIndex]?.selectedOptions[0] ?? ""}
+                disabled={sending || connection !== "connected"}
+                onValueChange={(value) => {
                   onActivity();
-                  updateAnswer(questionIndex, (current) => ({
+                  updateAnswer(boundedActiveQuestionIndex, (current) => ({
                     ...current,
-                    selectedOptions: question.multi ? current.selectedOptions : [],
-                    customInput: event.target.value,
+                    selectedOptions: [value],
+                    customInput: "",
                   }));
                 }}
-                disabled={sending || connection !== "connected"}
-                rows={2}
-              />
-              <label htmlFor={`${askId}-${questionIndex}-note`}>Note (optional)</label>
-              <Textarea
-                id={`${askId}-${questionIndex}-note`}
-                className="ask-textarea"
-                value={answer.note}
-                onChange={(event) => {
-                  onActivity();
-                  updateAnswer(questionIndex, (current) => ({ ...current, note: event.target.value }));
-                }}
-                disabled={sending || connection !== "connected"}
-                rows={2}
-              />
-            </fieldset>
-          );
-        })}
+              >
+                {activeQuestion.options.map((option, optionIndex) => {
+                  const answer = answers[boundedActiveQuestionIndex] ?? {
+                    selectedOptions: [],
+                    customInput: "",
+                    note: "",
+                  };
+                  const selected = answer.selectedOptions.includes(option.label);
+                  return (
+                    <Radio.Root
+                      value={option.label}
+                      render={
+                        <button
+                          type="button"
+                          data-slot="button"
+                          className={cn(
+                            "ui-button",
+                            selected ? "ui-button-default" : "ui-button-outline",
+                            "ui-button-size-default",
+                            "ask-option ask-rich-option",
+                          )}
+                        />
+                      }
+                      key={`${option.label}-${optionIndex}`}
+                    >
+                      <span className="ask-option-copy">
+                        <span>
+                          {option.label}
+                          {activeQuestion.recommended === optionIndex ? <Badge>Recommended</Badge> : null}
+                        </span>
+                        {option.description ? (
+                          <span className="ask-option-description">{option.description}</span>
+                        ) : null}
+                        {option.preview ? <span className="ask-option-preview">{option.preview}</span> : null}
+                      </span>
+                    </Radio.Root>
+                  );
+                })}
+              </RadioGroup>
+            )}
+            <label htmlFor={`${askId}-${boundedActiveQuestionIndex}-custom`}>Custom answer</label>
+            <Textarea
+              id={`${askId}-${boundedActiveQuestionIndex}-custom`}
+              className="ask-textarea"
+              value={answers[boundedActiveQuestionIndex]?.customInput ?? ""}
+              onChange={(event) => {
+                onActivity();
+                updateAnswer(boundedActiveQuestionIndex, (current) => ({
+                  ...current,
+                  selectedOptions: activeQuestion.multi ? current.selectedOptions : [],
+                  customInput: event.target.value,
+                }));
+              }}
+              disabled={sending || connection !== "connected"}
+              rows={2}
+            />
+            <label htmlFor={`${askId}-${boundedActiveQuestionIndex}-note`}>Note (optional)</label>
+            <Textarea
+              id={`${askId}-${boundedActiveQuestionIndex}-note`}
+              className="ask-textarea"
+              value={answers[boundedActiveQuestionIndex]?.note ?? ""}
+              onChange={(event) => {
+                onActivity();
+                updateAnswer(boundedActiveQuestionIndex, (current) => ({
+                  ...current,
+                  note: event.target.value,
+                }));
+              }}
+              disabled={sending || connection !== "connected"}
+              rows={2}
+            />
+          </fieldset>
+        ) : null}
       </div>
       <footer className="ask-actions ask-rich-actions">
         <Button
@@ -1985,13 +2017,33 @@ function RichAskToolCall({ request, connection, onRespond, onActivity }: AskTool
         >
           Chat about this
         </Button>
-        <Button
-          type="button"
-          disabled={sending || connection !== "connected" || !complete}
-          onClick={() => void submit()}
-        >
-          Submit answers
-        </Button>
+        {questionCount > 1 ? (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={boundedActiveQuestionIndex === 0 || sending || connection !== "connected"}
+            onClick={() => setActiveQuestionIndex((current) => Math.max(current - 1, 0))}
+          >
+            Previous
+          </Button>
+        ) : null}
+        {boundedActiveQuestionIndex < lastQuestionIndex ? (
+          <Button
+            type="button"
+            disabled={sending || connection !== "connected"}
+            onClick={() => setActiveQuestionIndex((current) => Math.min(current + 1, lastQuestionIndex))}
+          >
+            Next
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            disabled={sending || connection !== "connected" || !complete}
+            onClick={() => void submit()}
+          >
+            Submit answers
+          </Button>
+        )}
       </footer>
       {error ? (
         <p className="form-error" role="alert">

@@ -2946,26 +2946,38 @@ describe("AskToolCall", () => {
     });
   });
 
-  it("uses Base UI radios for single-select questions and toggle buttons for multi-select", () => {
-    const output = renderAskToolCall(MULTIPLE_RICH_ASK);
-    const fieldsets = findElements(output, (element) => element.type === "fieldset");
-    const legends = findElements(output, (element) => element.type === "legend");
-    const radioGroups = findElements(output, (element) => element.type === RadioGroup);
-    const radios = findElements(output, (element) => element.type === Radio.Root);
-    const multiGroup = fieldsets[1];
-    const toggleButtons = findElements(
-      multiGroup,
-      (element) => element.props.className === "ask-option ask-rich-option",
-    );
+  it("shows one accessible question at a time with Base UI radios and progressive navigation", () => {
+    let output = renderAskToolCall(MULTIPLE_RICH_ASK);
+    let fieldsets = findElements(output, (element) => element.type === "fieldset");
+    let legends = findElements(output, (element) => element.type === "legend");
+    let radioGroups = findElements(output, (element) => element.type === RadioGroup);
+    let radios = findElements(output, (element) => element.type === Radio.Root);
 
     expect(textContent(output)).toContain("2 questions");
-    expect(fieldsets).toHaveLength(2);
+    expect(textContent(output)).toContain("Question 1 of 2");
+    expect(fieldsets).toHaveLength(1);
     expect(radioGroups).toHaveLength(1);
     expect(radios).toHaveLength(2);
     expect(radioGroups[0]?.props["aria-labelledby"]).toBe(legends[0]?.props.id);
     expect(radioGroups[0]?.props.disabled).toBe(false);
-    expect(toggleButtons.map((button) => button.props["aria-pressed"])).toEqual([false, false]);
     expect(textContent(radios[0])).toContain("preview.example.test");
+    const previous = findElements(output, (element) => textContent(element) === "Previous")[0];
+    expect(previous?.props.disabled).toBe(true);
+
+    const next = findElements(output, (element) => textContent(element) === "Next")[0];
+    expect(next?.props.disabled).toBe(false);
+    (next?.props.onClick as (() => void) | undefined)?.();
+    output = renderAskToolCall(MULTIPLE_RICH_ASK, {}, true);
+    fieldsets = findElements(output, (element) => element.type === "fieldset");
+    const toggleButtons = findElements(
+      fieldsets[0],
+      (element) => element.props.className === "ask-option ask-rich-option",
+    );
+
+    expect(textContent(output)).toContain("Question 2 of 2");
+    expect(fieldsets).toHaveLength(1);
+    expect(findElements(output, (element) => element.type === RadioGroup)).toHaveLength(0);
+    expect(toggleButtons.map((button) => button.props["aria-pressed"])).toEqual([false, false]);
 
     const disconnected = renderAskToolCall(MULTIPLE_RICH_ASK, { connection: "disconnected" });
     expect(findElements(disconnected, (element) => element.type === RadioGroup)[0]?.props.disabled).toBe(
@@ -2980,18 +2992,35 @@ describe("AskToolCall", () => {
     ).toBe(true);
   });
 
-  it("requires every rich question and emits activity for each option and input change", () => {
+  it("allows unanswered review, preserves indexed answers, gates final submit, and emits activity", async () => {
     const onActivity = vi.fn();
-    let output = renderAskToolCall(MULTIPLE_RICH_ASK, { onActivity });
-    expect(
-      findElements(
-        output,
-        (element) => typeof element.props.onClick === "function" && textContent(element) === "Submit answers",
-      )[0]?.props.disabled,
-    ).toBe(true);
-    const radioGroup = findElements(output, (element) => element.type === RadioGroup)[0];
-    (radioGroup?.props.onValueChange as ((value: string) => void) | undefined)?.("Preview");
-    output = renderAskToolCall(MULTIPLE_RICH_ASK, { onActivity }, true);
+    const onRespond = vi.fn().mockResolvedValue(undefined);
+    let output = renderAskToolCall(MULTIPLE_RICH_ASK, { onActivity, onRespond });
+    const firstRadioGroup = findElements(output, (element) => element.type === RadioGroup)[0];
+    (firstRadioGroup?.props.onValueChange as ((value: string) => void) | undefined)?.("Preview");
+    output = renderAskToolCall(MULTIPLE_RICH_ASK, { onActivity, onRespond }, true);
+
+    const firstCustom = findElements(
+      output,
+      (element) => element.props.id === "ask-answer-session-1-ask-multiple-rich-0-custom",
+    )[0];
+    const firstNote = findElements(
+      output,
+      (element) => element.props.id === "ask-answer-session-1-ask-multiple-rich-0-note",
+    )[0];
+    (firstCustom?.props.onChange as ((event: { target: { value: string } }) => void) | undefined)?.({
+      target: { value: "Preview mirror" },
+    });
+    (firstNote?.props.onChange as ((event: { target: { value: string } }) => void) | undefined)?.({
+      target: { value: "Keep rollout private" },
+    });
+    output = renderAskToolCall(MULTIPLE_RICH_ASK, { onActivity, onRespond }, true);
+
+    const next = findElements(output, (element) => textContent(element) === "Next")[0];
+    (next?.props.onClick as (() => void) | undefined)?.();
+    output = renderAskToolCall(MULTIPLE_RICH_ASK, { onActivity, onRespond }, true);
+    expect(textContent(output)).toContain("Question 2 of 2");
+    expect(findElements(output, (element) => textContent(element) === "Submit answers")).toHaveLength(1);
     expect(
       findElements(
         output,
@@ -2999,41 +3028,111 @@ describe("AskToolCall", () => {
       )[0]?.props.disabled,
     ).toBe(true);
 
-    const multiOption = findElements(
+    const secondOption = findElements(
       output,
       (element) =>
         element.props.className === "ask-option ask-rich-option" && element.props["aria-pressed"] === false,
-    ).at(-1);
-    (multiOption?.props.onClick as (() => void) | undefined)?.();
-    output = renderAskToolCall(MULTIPLE_RICH_ASK, { onActivity }, true);
-    expect(
-      findElements(
-        output,
-        (element) => typeof element.props.onClick === "function" && textContent(element) === "Submit answers",
-      )[0]?.props.disabled,
-    ).toBe(false);
-
-    const custom = findElements(
+    )[0];
+    (secondOption?.props.onClick as (() => void) | undefined)?.();
+    output = renderAskToolCall(MULTIPLE_RICH_ASK, { onActivity, onRespond }, true);
+    const secondCustom = findElements(
       output,
       (element) => element.props.id === "ask-answer-session-1-ask-multiple-rich-1-custom",
     )[0];
-    const note = findElements(
+    const secondNote = findElements(
       output,
       (element) => element.props.id === "ask-answer-session-1-ask-multiple-rich-1-note",
     )[0];
-    (custom?.props.onChange as ((event: { target: { value: string } }) => void) | undefined)?.({
-      target: { value: "Canary check" },
+    (secondCustom?.props.onChange as ((event: { target: { value: string } }) => void) | undefined)?.({
+      target: { value: "Run canary checks" },
     });
-    (note?.props.onChange as ((event: { target: { value: string } }) => void) | undefined)?.({
-      target: { value: "Run before promotion" },
+    (secondNote?.props.onChange as ((event: { target: { value: string } }) => void) | undefined)?.({
+      target: { value: "Before promotion" },
     });
-    expect(onActivity).toHaveBeenCalledTimes(4);
+    output = renderAskToolCall(MULTIPLE_RICH_ASK, { onActivity, onRespond }, true);
+    const submit = findElements(
+      output,
+      (element) => typeof element.props.onClick === "function" && textContent(element) === "Submit answers",
+    )[0];
+    expect(submit?.props.disabled).toBe(false);
+
+    const previous = findElements(output, (element) => textContent(element) === "Previous")[0];
+    (previous?.props.onClick as (() => void) | undefined)?.();
+    output = renderAskToolCall(MULTIPLE_RICH_ASK, { onActivity, onRespond }, true);
+    expect(textContent(output)).toContain("Question 1 of 2");
+    expect(findElements(output, (element) => element.type === RadioGroup)[0]?.props.value).toBe("");
+    expect(
+      findElements(
+        output,
+        (element) => element.props.id === "ask-answer-session-1-ask-multiple-rich-0-custom",
+      )[0]?.props.value,
+    ).toBe("Preview mirror");
+    expect(
+      findElements(
+        output,
+        (element) => element.props.id === "ask-answer-session-1-ask-multiple-rich-0-note",
+      )[0]?.props.value,
+    ).toBe("Keep rollout private");
+
+    (findElements(output, (element) => textContent(element) === "Next")[0]?.props.onClick as () => void)?.();
+    output = renderAskToolCall(MULTIPLE_RICH_ASK, { onActivity, onRespond }, true);
+    const finalSubmit = findElements(
+      output,
+      (element) => typeof element.props.onClick === "function" && textContent(element) === "Submit answers",
+    )[0];
+    (finalSubmit?.props.onClick as (() => void) | undefined)?.();
+    await Promise.resolve();
+
+    expect(onRespond).toHaveBeenCalledWith({
+      kind: "submit",
+      results: [
+        {
+          id: "target",
+          question: "Which deployment target?",
+          options: ["Preview", "Production"],
+          multi: false,
+          selectedOptions: [],
+          customInput: "Preview mirror",
+          note: "Keep rollout private",
+        },
+        {
+          id: "checks",
+          question: "Which checks should run?",
+          options: ["Smoke tests", "Full suite"],
+          multi: true,
+          selectedOptions: ["Smoke tests"],
+          customInput: "Run canary checks",
+          note: "Before promotion",
+        },
+      ],
+    });
+    expect(onActivity).toHaveBeenCalledTimes(6);
+  });
+  it("focuses the newly visible question heading after navigation", () => {
+    let output = renderAskToolCall(MULTIPLE_RICH_ASK);
+    const legend = findElements(output, (element) => element.type === "legend")[0];
+    const focus = vi.fn();
+    const headingRef = legend?.props.ref as { current: { focus(): void } | null } | undefined;
+    if (headingRef) headingRef.current = { focus };
+
+    const next = findElements(output, (element) => textContent(element) === "Next")[0];
+    (next?.props.onClick as (() => void) | undefined)?.();
+    output = renderAskToolCall(MULTIPLE_RICH_ASK, {}, true);
+
+    expect(textContent(output)).toContain("Question 2 of 2");
+    expect(focus).toHaveBeenCalledOnce();
+    expect(findElements(output, (element) => element.type === "legend")[0]?.props.tabIndex).toBe(-1);
   });
 
   it("keeps single-select options and custom answers mutually exclusive in both directions", async () => {
     const onRespond = vi.fn().mockResolvedValue(undefined);
     const onActivity = vi.fn();
     let output = renderAskToolCall(SINGLE_RICH_ASK, { onRespond, onActivity });
+    expect(findElements(output, (element) => element.props.className === "ask-progress")).toHaveLength(0);
+    expect(findElements(output, (element) => textContent(element) === "Previous")).toHaveLength(0);
+    expect(findElements(output, (element) => textContent(element) === "Next")).toHaveLength(0);
+    expect(findElements(output, (element) => textContent(element) === "Submit answers")).toHaveLength(1);
+
     let radioGroup = findElements(output, (element) => element.type === RadioGroup)[0];
     (radioGroup?.props.onValueChange as ((value: string) => void) | undefined)?.("Preview");
     output = renderAskToolCall(SINGLE_RICH_ASK, { onRespond, onActivity }, true);
