@@ -10,15 +10,16 @@
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && esbuild src/extension.ts --bundle --format=esm --platform=node --external:node:* --outfile=dist/extension.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run src --passWithNoTests",
+    "test": "pnpm run build && vitest run src --passWithNoTests",
     "install:user": "node dist/install.js"
   },
   "devDependencies": {
     "@omp-remote/protocol": "workspace:*",
     "@oh-my-pi/pi-coding-agent": "catalog:",
     "@types/node": "catalog:",
+    "esbuild": "0.28.1",
     "typescript": "catalog:",
     "vitest": "catalog:",
     "zod": "catalog:"
