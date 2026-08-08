@@ -2597,9 +2597,7 @@ function RichAskToolCall({ request, connection, onRespond, onActivity }: AskTool
                             "ui-button-size-default",
                             "ask-option ask-rich-option",
                           )}
-                        >
-                          <span className="sr-only">{option.label}</span>
-                        </button>
+                        />
                       }
                       key={optionKey}
                     >
