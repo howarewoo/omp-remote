@@ -26,6 +26,7 @@ import {
 import { SessionBranchSelector } from "./session-branch-selector.js";
 import { formatSessionFileChangesMetadata, SessionFileChangesViewer } from "./session-file-changes-viewer.js";
 import { SubagentSessionViewer } from "./subagent-session-viewer.js";
+import { SessionCostMetadata, SessionCostViewer } from "./session-cost-viewer.js";
 import { Badge } from "./ui/badge.js";
 import { Button } from "./ui/button.js";
 import { Dialog } from "./ui/dialog.js";
@@ -2796,6 +2797,7 @@ function DashboardContent({
   const [abortOpen, setAbortOpen] = useState(false);
   const [killOpen, setKillOpen] = useState(false);
   const [todoOpenSessionId, setTodoOpenSessionId] = useState<string | null>(null);
+  const [costDrawerOpen, setCostDrawerOpen] = useState(false);
   const [configurationDrawer, setConfigurationDrawer] = useState<"model" | "effort" | null>(null);
   const [modelQuery, setModelQuery] = useState("");
   const [configurationPending, setConfigurationPending] = useState<string | null>(null);
@@ -3052,6 +3054,9 @@ function DashboardContent({
 
   useEffect(() => {
     setViewedSubagent(null);
+  }, [selectedSession?.id]);
+  useLayoutEffect(() => {
+    setCostDrawerOpen(false);
   }, [selectedSession?.id]);
 
   useLayoutEffect(() => {
@@ -3835,6 +3840,15 @@ function DashboardContent({
                   </time>
                 </dd>
               </div>
+              <div className="session-cost-metadata">
+                <dt>Cost</dt>
+                <dd>
+                  <SessionCostMetadata
+                    summary={selectedSession.costSummary}
+                    onOpen={() => setCostDrawerOpen(true)}
+                  />
+                </dd>
+              </div>
               {currentTodo && currentTodoPresentation ? (
                 <div className="todo-tracker-metadata">
                   <dt>Todo</dt>
@@ -4055,6 +4069,12 @@ function DashboardContent({
         loading={visibleSessionFileChangesLoading}
         error={visibleSessionFileChangesError}
         onOpenChange={handleFileChangesOpenChange}
+      />
+      <SessionCostViewer
+        session={selectedSession}
+        mobile={isMobile}
+        open={costDrawerOpen}
+        onOpenChange={setCostDrawerOpen}
       />
       <SessionBranchSelector
         open={branchSelectorOpen && Boolean(selectedSession?.branch)}
