@@ -19,14 +19,16 @@
     "test": "vitest run src"
   },
   "dependencies": {
+    "@base-ui/react": "catalog:",
     "@omp-remote/protocol": "workspace:*",
     "@omp-remote/ui": "workspace:*",
-    "@base-ui/react": "catalog:",
     "@shadcn/react": "catalog:",
     "react": "catalog:"
   },
   "devDependencies": {
     "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "react-dom": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }
