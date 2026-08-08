@@ -25,6 +25,44 @@ import {
 const DEFAULT_EXTENSION_URL = "ws://127.0.0.1:4387/extension";
 const RECONNECT_DELAY_MS = 2_000;
 const HEARTBEAT_INTERVAL_MS = 10_000;
+const MODEL_ROLE_ORDER = [
+  "default",
+  "smol",
+  "slow",
+  "vision",
+  "plan",
+  "designer",
+  "commit",
+  "tiny",
+  "task",
+  "advisor",
+];
+
+type ModelRoleResolver = (role: string) => { provider: string; id: string } | undefined;
+
+function sortConfiguredRoleModels(
+  models: readonly ModelSummary[],
+  resolveRole?: ModelRoleResolver,
+): ModelSummary[] {
+  if (!resolveRole) return [...models];
+
+  const roleRankByModel = new Map<string, number>();
+  for (const [rank, role] of MODEL_ROLE_ORDER.entries()) {
+    const model = resolveRole(role);
+    if (!model) continue;
+    const key = `${model.provider}/${model.id}`;
+    if (!roleRankByModel.has(key)) roleRankByModel.set(key, rank);
+  }
+
+  return models
+    .map((model, index) => ({
+      model,
+      index,
+      rank: roleRankByModel.get(`${model.provider}/${model.id}`) ?? MODEL_ROLE_ORDER.length,
+    }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map(({ model }) => model);
+}
 
 type ExtensionTranscriptMessage = TranscriptMessage;
 
@@ -61,8 +99,8 @@ type ModelSummary = {
   thinking?: { efforts: readonly Exclude<EffortName, "off">[]; requiresEffort?: boolean };
 };
 
-export function getSessionModelOptions(models: readonly ModelSummary[]) {
-  return models.map((model) => ({
+export function getSessionModelOptions(models: readonly ModelSummary[], resolveRole?: ModelRoleResolver) {
+  return sortConfiguredRoleModels(models, resolveRole).map((model) => ({
     provider: model.provider,
     id: model.id,
     name: model.name,
@@ -865,7 +903,15 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
       connected: true,
       model: model ? `${model.provider}/${model.id}` : null,
       effort: pi.getThinkingLevel() ?? null,
-      availableModels: getSessionModelOptions(ctx.models.list()),
+      availableModels: getSessionModelOptions(
+        ctx.models.list(),
+        typeof ctx.models.resolve === "function"
+          ? (role) => {
+              const roleModel = ctx.models.resolve(role.startsWith("@") ? role : `@${role}`);
+              return roleModel ? { provider: roleModel.provider, id: roleModel.id } : undefined;
+            }
+          : undefined,
+      ),
       contextPercent: normalizeContextPercent(ctx),
       createdAt,
       lastActivity: now,
@@ -1003,17 +1049,26 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
     installAskRelay(ctx);
     connect();
     ctx.setInterval(() => {
-      if (!context) return;
-      const model = context.models.current();
+      const currentContext = context;
+      if (!currentContext) return;
+      const model = currentContext.models.current();
       send({
         type: "heartbeat",
-        sessionId: context.sessionManager.getSessionId(),
-        name: context.sessionManager.getSessionName() ?? null,
+        sessionId: currentContext.sessionManager.getSessionId(),
+        name: currentContext.sessionManager.getSessionName() ?? null,
         model: model ? `${model.provider}/${model.id}` : null,
-        contextPercent: normalizeContextPercent(context),
+        contextPercent: normalizeContextPercent(currentContext),
         effort: pi.getThinkingLevel() ?? null,
-        availableModels: getSessionModelOptions(context.models.list()),
-        idle: context.isIdle(),
+        availableModels: getSessionModelOptions(
+          currentContext.models.list(),
+          typeof currentContext.models.resolve === "function"
+            ? (role) => {
+                const roleModel = currentContext.models.resolve(role.startsWith("@") ? role : `@${role}`);
+                return roleModel ? { provider: roleModel.provider, id: roleModel.id } : undefined;
+              }
+            : undefined,
+        ),
+        idle: currentContext.isIdle(),
         skillCommands: getSkillCommands(pi.getCommands()),
       });
     }, HEARTBEAT_INTERVAL_MS);

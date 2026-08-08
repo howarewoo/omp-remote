@@ -123,6 +123,26 @@ describe("ompRemoteExtension", () => {
     ]);
   });
 
+  it("places models assigned to configured roles before the remaining catalog", () => {
+    const models = [
+      { provider: "google", id: "gemini-3-pro", name: "Gemini 3 Pro" },
+      { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" },
+      { provider: "anthropic", id: "claude-opus-4.7", name: "Claude Opus 4.7" },
+    ];
+    const assignments = {
+      default: { provider: "openai", id: "gpt-5.6" },
+      slow: { provider: "anthropic", id: "claude-opus-4.7" },
+    };
+
+    expect(
+      getSessionModelOptions(models, (role) => assignments[role as keyof typeof assignments]),
+    ).toMatchObject([
+      { provider: "openai", id: "gpt-5.6" },
+      { provider: "anthropic", id: "claude-opus-4.7" },
+      { provider: "google", id: "gemini-3-pro" },
+    ]);
+  });
+
   it.each([
     { mode: "text", nested: false },
     { mode: "rpc-ui", nested: true },
