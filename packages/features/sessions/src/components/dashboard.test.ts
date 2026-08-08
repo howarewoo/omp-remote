@@ -4618,16 +4618,17 @@ const CONFIGURABLE_SESSION: Session = {
   effort: "medium",
   availableModels: [
     {
-      provider: "openai",
-      id: "gpt-5.6",
-      name: "GPT-5.6",
-      efforts: ["low", "medium", "high", "xhigh"],
-    },
-    {
       provider: "anthropic",
       id: "claude-opus-4.7",
       name: "Claude Opus 4.7",
       efforts: ["low", "medium", "high", "max"],
+    },
+    {
+      provider: "openai",
+      id: "gpt-5.6",
+      name: "GPT-5.6",
+      efforts: ["low", "medium", "high", "xhigh"],
+      roles: ["default"],
     },
   ],
 };
@@ -4689,7 +4690,18 @@ describe("session model and effort selectors", () => {
     expect(drawer?.props.open).toBe(true);
     expect(drawer?.props).toMatchObject({ showSwipeHandle: false, swipeDirection: "right" });
     expect(textContent(drawer?.props.children as ReactNode)).toContain("GPT-5.6");
+    expect(textContent(drawer?.props.children as ReactNode)).toContain("Configured roles: default");
     expect(textContent(drawer?.props.children as ReactNode)).toContain("Claude Opus 4.7");
+    const modelButtons = findElements(
+      drawer?.props.children as ReactNode,
+      (element) =>
+        typeof element.props.className === "string" &&
+        element.props.className.split(/\s+/).includes("model-option"),
+    );
+    expect(modelButtons.map((button) => textContent(button))).toEqual([
+      "GPT-5.6Configured roles: defaultopenai/gpt-5.6",
+      "Claude Opus 4.7anthropic/claude-opus-4.7",
+    ]);
     expect(textContent(drawer?.props.children as ReactNode)).not.toContain("Effort");
   });
 

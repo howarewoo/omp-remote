@@ -40,25 +40,32 @@ const MODEL_ROLE_ORDER = [
 
 type ModelRoleResolver = (role: string) => { provider: string; id: string } | undefined;
 
-function sortConfiguredRoleModels(
-  models: readonly ModelSummary[],
-  resolveRole?: ModelRoleResolver,
-): ModelSummary[] {
-  if (!resolveRole) return [...models];
+function getConfiguredRoles(resolveRole?: ModelRoleResolver): Map<string, string[]> {
+  const rolesByModel = new Map<string, string[]>();
+  if (!resolveRole) return rolesByModel;
 
-  const roleRankByModel = new Map<string, number>();
-  for (const [rank, role] of MODEL_ROLE_ORDER.entries()) {
+  for (const role of MODEL_ROLE_ORDER) {
     const model = resolveRole(role);
     if (!model) continue;
     const key = `${model.provider}/${model.id}`;
-    if (!roleRankByModel.has(key)) roleRankByModel.set(key, rank);
+    const roles = rolesByModel.get(key);
+    if (roles) roles.push(role);
+    else rolesByModel.set(key, [role]);
   }
+  return rolesByModel;
+}
 
+function sortConfiguredRoleModels(
+  models: readonly ModelSummary[],
+  rolesByModel: ReadonlyMap<string, readonly string[]>,
+): ModelSummary[] {
   return models
     .map((model, index) => ({
       model,
       index,
-      rank: roleRankByModel.get(`${model.provider}/${model.id}`) ?? MODEL_ROLE_ORDER.length,
+      rank: rolesByModel.has(`${model.provider}/${model.id}`)
+        ? MODEL_ROLE_ORDER.indexOf(rolesByModel.get(`${model.provider}/${model.id}`)?.[0] ?? "")
+        : MODEL_ROLE_ORDER.length,
     }))
     .sort((a, b) => a.rank - b.rank || a.index - b.index)
     .map(({ model }) => model);
@@ -98,16 +105,20 @@ type ModelSummary = {
   name: string;
   thinking?: { efforts: readonly Exclude<EffortName, "off">[]; requiresEffort?: boolean };
 };
-
 export function getSessionModelOptions(models: readonly ModelSummary[], resolveRole?: ModelRoleResolver) {
-  return sortConfiguredRoleModels(models, resolveRole).map((model) => ({
-    provider: model.provider,
-    id: model.id,
-    name: model.name,
-    efforts: model.thinking
-      ? [...(model.thinking.requiresEffort ? [] : (["off"] as const)), ...model.thinking.efforts]
-      : [],
-  }));
+  const rolesByModel = getConfiguredRoles(resolveRole);
+  return sortConfiguredRoleModels(models, rolesByModel).map((model) => {
+    const roles = rolesByModel.get(`${model.provider}/${model.id}`);
+    return {
+      provider: model.provider,
+      id: model.id,
+      name: model.name,
+      efforts: model.thinking
+        ? [...(model.thinking.requiresEffort ? [] : (["off"] as const)), ...model.thinking.efforts]
+        : [],
+      ...(roles?.length ? { roles } : {}),
+    };
+  });
 }
 
 export function getSkillCommands(commands: readonly AvailableCommand[]): ExtensionSkillCommand[] {

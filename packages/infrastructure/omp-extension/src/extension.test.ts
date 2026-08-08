@@ -137,8 +137,8 @@ describe("ompRemoteExtension", () => {
     expect(
       getSessionModelOptions(models, (role) => assignments[role as keyof typeof assignments]),
     ).toMatchObject([
-      { provider: "openai", id: "gpt-5.6" },
-      { provider: "anthropic", id: "claude-opus-4.7" },
+      { provider: "openai", id: "gpt-5.6", roles: ["default"] },
+      { provider: "anthropic", id: "claude-opus-4.7", roles: ["slow"] },
       { provider: "google", id: "gemini-3-pro" },
     ]);
   });

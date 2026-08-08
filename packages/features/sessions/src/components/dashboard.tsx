@@ -3003,10 +3003,21 @@ function DashboardContent({
   );
   const filteredModels = useMemo(() => {
     const query = modelQuery.trim().toLocaleLowerCase();
-    if (!query) return availableModels;
-    return availableModels.filter((model) =>
-      [model.name, model.provider, model.id].some((value) => value.toLocaleLowerCase().includes(query)),
-    );
+    const matchingModels = query
+      ? availableModels.filter((model) =>
+          [model.name, model.provider, model.id, ...(model.roles ?? [])].some((value) =>
+            value.toLocaleLowerCase().includes(query),
+          ),
+        )
+      : availableModels;
+    return matchingModels
+      .map((model, index) => ({ model, index }))
+      .sort(
+        (a, b) =>
+          Number((b.model.roles?.length ?? 0) > 0) - Number((a.model.roles?.length ?? 0) > 0) ||
+          a.index - b.index,
+      )
+      .map(({ model }) => model);
   }, [availableModels, modelQuery]);
   const availableEfforts = currentModelOption?.efforts ?? [];
   const sessionFileChangesMatchesSelection =
@@ -4142,6 +4153,7 @@ function DashboardContent({
                   <div className="model-option-list">
                     {filteredModels.map((model) => {
                       const value = `${model.provider}/${model.id}`;
+                      const roles = model.roles ?? [];
                       const selected = value === selectedSession.model;
                       return (
                         <Button
@@ -4155,6 +4167,11 @@ function DashboardContent({
                         >
                           <span>
                             <strong>{model.name}</strong>
+                            {roles.length > 0 ? (
+                              <small className="model-option-roles">
+                                Configured roles: {roles.join(" · ")}
+                              </small>
+                            ) : null}
                             <small>{value}</small>
                           </span>
                           <span className="selection-indicator" aria-hidden="true" />
