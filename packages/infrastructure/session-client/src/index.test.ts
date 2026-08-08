@@ -4,7 +4,9 @@ import {
   createCatalogLoadCoordinator,
   commandResultValue,
   loadSessionBranchTopology,
+  loadSessionCost,
   loadSessionFileChanges,
+  overlaySessionCosts,
   patchSession,
   removeAskRequest,
   sessionSourcesReady,
@@ -295,10 +297,61 @@ describe("patchSession", () => {
     });
   });
 
+  it("propagates live cost summary updates", () => {
+    const costSummary = {
+      totalUsd: 1.75,
+      partial: true,
+      agents: [
+        {
+          sessionId: "session-1",
+          name: "Stream test",
+          parentSessionId: null,
+          totalUsd: 1.75,
+          available: true,
+        },
+      ],
+    };
+    const sessions = patchSession([SESSION], "session-1", { costSummary });
+    expect(sessions[0]?.costSummary).toEqual(costSummary);
+  });
+
   it("returns the original array when the session ID is absent", () => {
     const sessions = [SESSION];
 
     expect(patchSession(sessions, "missing-session", { status: "idle" })).toBe(sessions);
+  });
+});
+
+describe("overlaySessionCosts", () => {
+  it("restores the selected exact summary after a metadata-only source replacement", () => {
+    const costSummary = {
+      totalUsd: 2.5,
+      partial: false,
+      agents: [
+        {
+          sessionId: SESSION.id,
+          name: SESSION.name ?? SESSION.id,
+          parentSessionId: null,
+          totalUsd: 2.5,
+          available: true,
+        },
+      ],
+    };
+    const replacement = { ...SESSION };
+    const overlaid = overlaySessionCosts([replacement], new Map([[SESSION.id, costSummary]]));
+
+    expect(overlaid[0]).toEqual({ ...replacement, costSummary });
+    expect(overlaid[0]).not.toBe(replacement);
+  });
+
+  it("removes a stale summary only when the selected response is explicitly unavailable", () => {
+    const withCost = {
+      ...SESSION,
+      costSummary: { totalUsd: 1, partial: false, agents: [] },
+    };
+    expect(overlaySessionCosts([withCost], new Map([[SESSION.id, null]]))[0]?.costSummary).toBeUndefined();
+    const unchanged = [SESSION];
+    expect(overlaySessionCosts(unchanged, new Map())).toBe(unchanged);
   });
 });
 
@@ -331,6 +384,63 @@ describe("remote ask request state", () => {
 
     expect(removeAskRequest([newerRequest], "session-1", "ask-1")).toEqual([newerRequest]);
     expect(removeAskRequest([newerRequest], "session-1", "ask-2")).toEqual([]);
+  });
+});
+
+describe("loadSessionCost", () => {
+  it("requests only the encoded selected session and validates the exact summary", async () => {
+    const costSummary = {
+      totalUsd: 1.25,
+      partial: false,
+      agents: [
+        {
+          sessionId: "session/a",
+          name: "Selected",
+          parentSessionId: null,
+          totalUsd: 1.25,
+          available: true,
+        },
+      ],
+    };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ sessionId: "session/a", costSummary }), { status: 200 }),
+      );
+
+    await expect(loadSessionCost("session/a", undefined, fetcher)).resolves.toEqual({
+      sessionId: "session/a",
+      costSummary,
+    });
+    expect(fetcher).toHaveBeenCalledWith("/api/sessions/session%2Fa/cost", {});
+  });
+
+  it("preserves an explicit unavailable summary and reports request failures", async () => {
+    const unavailableFetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ sessionId: "session-1", costSummary: null }), { status: 200 }),
+      );
+    await expect(loadSessionCost("session-1", undefined, unavailableFetcher)).resolves.toEqual({
+      sessionId: "session-1",
+      costSummary: null,
+    });
+
+    const failedFetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 500 }));
+    await expect(loadSessionCost("session-1", undefined, failedFetcher)).rejects.toThrow(
+      "Session cost request failed (500)",
+    );
+  });
+
+  it("rejects a response for a different session", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ sessionId: "session-2", costSummary: null }), { status: 200 }),
+      );
+    await expect(loadSessionCost("session-1", undefined, fetcher)).rejects.toThrow(
+      "Session cost response did not match the request",
+    );
   });
 });
 

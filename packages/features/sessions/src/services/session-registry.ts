@@ -127,6 +127,14 @@ function cloneSession(session: Session): Session {
         }
       : {}),
     messages: session.messages.map(cloneTranscriptMessage),
+    ...(session.costSummary
+      ? {
+          costSummary: {
+            ...session.costSummary,
+            agents: session.costSummary.agents.map((agent) => ({ ...agent })),
+          },
+        }
+      : {}),
     activeSubagents: session.activeSubagents.map((subagent) => ({ ...subagent })),
     skillCommands: session.skillCommands.map((command) => ({ ...command })),
   };
@@ -166,6 +174,12 @@ function cloneSessionPatch(patch: SessionPatch): Partial<Omit<Session, "id" | "m
   }
   if (patch.skillCommands !== undefined) {
     clone.skillCommands = patch.skillCommands.map((command) => ({ ...command }));
+  }
+  if (patch.costSummary !== undefined) {
+    clone.costSummary = {
+      ...patch.costSummary,
+      agents: patch.costSummary.agents.map((agent) => ({ ...agent })),
+    };
   }
   return clone;
 }

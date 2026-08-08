@@ -16,6 +16,8 @@ import {
   compareSessionsByCreation,
   getTranscriptImageByteLength,
   type Session,
+  type SessionCostAgent,
+  type SessionCostSummary,
   TRANSCRIPT_IMAGE_MAX_BYTES,
   TRANSCRIPT_IMAGE_SESSION_MAX_BYTES,
   type TranscriptImage,
@@ -29,6 +31,7 @@ import { materializeReadImages, normalizeRawMessage, ToolCallTracker } from "./m
 const METADATA_READ_BYTES = 16 * 1024;
 const MAX_TRANSCRIPT_MESSAGES = 200;
 const METADATA_READ_CONCURRENCY = 32;
+const COST_HYDRATION_CONCURRENCY = 4;
 const MAX_FILE_CHANGE_SOURCES = 256;
 
 export interface SessionFileChangeSourceDescriptor {
@@ -42,6 +45,11 @@ export interface SessionFileChangeSourceSelection {
   truncated: boolean;
 }
 
+interface SessionCostData {
+  totalUsd: number;
+  exact: boolean;
+}
+
 interface SessionMetadata {
   exited: boolean;
   session: Session;
@@ -52,6 +60,22 @@ interface CatalogEntry {
   path: string;
   session: Session;
   exited: boolean;
+}
+
+interface CostCacheEntry {
+  fingerprint: string;
+  cost: SessionCostData | null;
+}
+
+interface SessionCatalogOptions {
+  onDiff?: (diff: CatalogDiff) => void;
+  beforeCostRead?: () => Promise<void>;
+  beforeRefreshCommit?: () => Promise<void>;
+}
+
+interface CostLoad {
+  fingerprint: string;
+  promise: Promise<SessionCostData | null>;
 }
 
 export interface CatalogDiff {
@@ -90,111 +114,60 @@ export async function resolveSessionRoots(homeDirectory: string, agentDirectory?
 
 export class SessionCatalog {
   readonly #roots: string[];
+  #onDiff: ((diff: CatalogDiff) => void) | undefined;
+  #beforeCostRead: (() => Promise<void>) | undefined;
+  #beforeRefreshCommit: (() => Promise<void>) | undefined;
   #entriesByPath = new Map<string, CatalogEntry>();
   #entriesBySessionId = new Map<string, CatalogEntry>();
   #rootEntriesBySessionId = new Map<string, CatalogEntry>();
   #sortedSessions: Session[] = [];
+  #costCache = new Map<string, CostCacheEntry>();
+  #costLoads = new Map<string, CostLoad>();
 
-  constructor(roots: string[]) {
+  constructor(roots: string[], options: SessionCatalogOptions = {}) {
     this.#roots = [...new Set(roots)];
+    this.#onDiff = options.onDiff;
+    this.#beforeCostRead = options.beforeCostRead;
+    this.#beforeRefreshCommit = options.beforeRefreshCommit;
+  }
+
+  setDiffListener(listener: ((diff: CatalogDiff) => void) | undefined): void {
+    this.#onDiff = listener;
   }
 
   async refresh(): Promise<CatalogDiff> {
     const paths = await findSessionFiles(this.#roots);
-    const nextEntriesByPath = new Map<string, CatalogEntry>();
-    const uncachedPaths: Array<{ fingerprint: string; path: string }> = [];
-
+    const candidates: Array<{ fingerprint: string; path: string }> = [];
     for (const path of paths) {
       try {
         const fileStats = await stat(path);
-        const fingerprint = `${fileStats.size}:${fileStats.mtimeMs}`;
-        const cached = this.#entriesByPath.get(path);
-        if (cached?.fingerprint === fingerprint) nextEntriesByPath.set(path, cached);
-        else uncachedPaths.push({ fingerprint, path });
+        candidates.push({ path, fingerprint: `${fileStats.size}:${fileStats.mtimeMs}` });
       } catch (error) {
         if (!isMissingPathError(error)) throw error;
       }
     }
 
     const parsedEntries = await mapWithConcurrency(
-      uncachedPaths,
+      candidates,
       METADATA_READ_CONCURRENCY,
       async ({ fingerprint, path }) => {
+        const cached = this.#entriesByPath.get(path);
+        if (cached?.fingerprint === fingerprint) return cached;
         const metadata = await readSessionMetadata(path);
         return metadata ? { fingerprint, path, ...metadata } : null;
       },
     );
+    await this.#beforeRefreshCommit?.();
+    const nextEntriesByPath = new Map<string, CatalogEntry>();
     for (const entry of parsedEntries) {
       if (entry) nextEntriesByPath.set(entry.path, entry);
     }
 
-    const sessionPaths = new Set(nextEntriesByPath.keys());
-    const rootPaths = new Set<string>();
-    const activeSubagentsByRoot = new Map<string, Session["activeSubagents"]>();
-    for (const entry of nextEntriesByPath.values()) {
-      const rootPath = findRootSessionPath(entry.path, sessionPaths);
-      if (rootPath === entry.path) {
-        rootPaths.add(rootPath);
-      } else if (!entry.exited) {
-        const activeSubagents = activeSubagentsByRoot.get(rootPath) ?? [];
-        activeSubagents.push({
-          id: entry.session.id,
-          name: entry.session.name ?? basename(entry.path, extname(entry.path)),
-          lastActivity: entry.session.lastActivity,
-        });
-        activeSubagentsByRoot.set(rootPath, activeSubagents);
-      }
+    for (const path of this.#costCache.keys()) {
+      if (!nextEntriesByPath.has(path)) this.#costCache.delete(path);
     }
 
-    for (const rootPath of rootPaths) {
-      const entry = nextEntriesByPath.get(rootPath);
-      if (!entry) continue;
-      const activeSubagents = (activeSubagentsByRoot.get(rootPath) ?? []).sort((left, right) =>
-        right.lastActivity.localeCompare(left.lastActivity),
-      );
-      nextEntriesByPath.set(rootPath, {
-        ...entry,
-        session: { ...entry.session, activeSubagents },
-      });
-    }
-
-    const nextEntriesBySessionId = new Map<string, CatalogEntry>();
-    const nextRootEntriesBySessionId = new Map<string, CatalogEntry>();
-    for (const entry of nextEntriesByPath.values()) {
-      const existing = nextEntriesBySessionId.get(entry.session.id);
-      if (!existing || entry.session.lastActivity > existing.session.lastActivity) {
-        nextEntriesBySessionId.set(entry.session.id, entry);
-      }
-      if (!rootPaths.has(entry.path)) continue;
-      const existingRoot = nextRootEntriesBySessionId.get(entry.session.id);
-      if (!existingRoot || entry.session.lastActivity > existingRoot.session.lastActivity) {
-        nextRootEntriesBySessionId.set(entry.session.id, entry);
-      }
-    }
-
-    const upserted: Session[] = [];
-    for (const [sessionId, entry] of nextRootEntriesBySessionId) {
-      const previous = this.#rootEntriesBySessionId.get(sessionId);
-      if (
-        previous?.path !== entry.path ||
-        previous.fingerprint !== entry.fingerprint ||
-        !sessionsEqual(previous.session, entry.session)
-      ) {
-        upserted.push(cloneSession(entry.session));
-      }
-    }
-    const removed = [...this.#rootEntriesBySessionId.keys()].filter(
-      (sessionId) => !nextRootEntriesBySessionId.has(sessionId),
-    );
-
-    this.#entriesByPath = nextEntriesByPath;
-    this.#entriesBySessionId = nextEntriesBySessionId;
-    this.#rootEntriesBySessionId = nextRootEntriesBySessionId;
-    this.#sortedSessions = [...nextRootEntriesBySessionId.values()]
-      .map((entry) => entry.session)
-      .sort(compareSessionsByCreation);
-
-    return { upserted, removed };
+    return this.#commitEntries(nextEntriesByPath);
   }
 
   list({ offset, limit, query }: CatalogQuery): CatalogPage {
@@ -217,6 +190,41 @@ export class SessionCatalog {
     return readTranscript(entry.path, findOwningBlobDirectory(entry.path, this.#roots));
   }
 
+  async costSummary(sessionId: string): Promise<SessionCostSummary | undefined> {
+    const selectedRoot = this.#rootEntriesBySessionId.get(sessionId);
+    if (!selectedRoot) return undefined;
+    const entriesByPath = this.#entriesByPath;
+    const sessionPaths = new Set(entriesByPath.keys());
+    const matching = [...entriesByPath.values()].filter(
+      (entry) => findRootSessionPath(entry.path, sessionPaths) === selectedRoot.path,
+    );
+    const loaded = await mapWithConcurrency(matching, COST_HYDRATION_CONCURRENCY, async (entry) => ({
+      entry,
+      cost: await this.#loadCost(entry),
+    }));
+    const currentRoot = this.#rootEntriesBySessionId.get(sessionId);
+    if (currentRoot?.path !== selectedRoot.path || currentRoot.fingerprint !== selectedRoot.fingerprint) {
+      return undefined;
+    }
+    const currentEntriesByPath = this.#entriesByPath;
+    const currentSessionPaths = new Set(currentEntriesByPath.keys());
+    const currentMatching = [...currentEntriesByPath.values()].filter(
+      (entry) => findRootSessionPath(entry.path, currentSessionPaths) === currentRoot.path,
+    );
+    if (
+      currentMatching.length !== matching.length ||
+      currentMatching.some((entry) => entriesByPath.get(entry.path)?.fingerprint !== entry.fingerprint)
+    ) {
+      return undefined;
+    }
+    return buildCostSummary(
+      selectedRoot.path,
+      entriesByPath,
+      sessionPaths,
+      new Map(loaded.map(({ entry, cost }) => [entry.path, cost])),
+    );
+  }
+
   fileChangeSources(sessionId: string): SessionFileChangeSourceSelection | undefined {
     const selectedRoot = this.#rootEntriesBySessionId.get(sessionId);
     if (!selectedRoot) return undefined;
@@ -230,6 +238,113 @@ export class SessionCatalog {
       sessionPath: entry.path,
     }));
     return { sources, truncated: matching.length > sources.length };
+  }
+
+  #commitEntries(entriesByPath: Map<string, CatalogEntry>): CatalogDiff {
+    const sessionPaths = new Set(entriesByPath.keys());
+    const rootPaths = new Set<string>();
+    const activeSubagentsByRoot = new Map<string, Session["activeSubagents"]>();
+    for (const entry of entriesByPath.values()) {
+      const rootPath = findRootSessionPath(entry.path, sessionPaths);
+      if (rootPath === entry.path) {
+        rootPaths.add(rootPath);
+      } else if (!entry.exited) {
+        const activeSubagents = activeSubagentsByRoot.get(rootPath) ?? [];
+        activeSubagents.push({
+          id: entry.session.id,
+          name: entry.session.name ?? basename(entry.path, extname(entry.path)),
+          lastActivity: entry.session.lastActivity,
+        });
+        activeSubagentsByRoot.set(rootPath, activeSubagents);
+      }
+    }
+
+    for (const rootPath of rootPaths) {
+      const entry = entriesByPath.get(rootPath);
+      if (!entry) continue;
+      const activeSubagents = (activeSubagentsByRoot.get(rootPath) ?? []).sort((left, right) =>
+        right.lastActivity.localeCompare(left.lastActivity),
+      );
+      entriesByPath.set(rootPath, {
+        ...entry,
+        session: { ...entry.session, activeSubagents },
+      });
+    }
+
+    const nextEntriesBySessionId = new Map<string, CatalogEntry>();
+    const nextRootEntriesBySessionId = new Map<string, CatalogEntry>();
+    for (const entry of entriesByPath.values()) {
+      const existing = nextEntriesBySessionId.get(entry.session.id);
+      if (!existing || entry.session.lastActivity > existing.session.lastActivity) {
+        nextEntriesBySessionId.set(entry.session.id, entry);
+      }
+      if (!rootPaths.has(entry.path)) continue;
+      const existingRoot = nextRootEntriesBySessionId.get(entry.session.id);
+      if (!existingRoot || entry.session.lastActivity > existingRoot.session.lastActivity) {
+        nextRootEntriesBySessionId.set(entry.session.id, entry);
+      }
+    }
+
+    const upserted: Session[] = [];
+    for (const [sessionId, entry] of nextRootEntriesBySessionId) {
+      const previous = this.#rootEntriesBySessionId.get(sessionId);
+      if (
+        previous?.path !== entry.path ||
+        previous?.fingerprint !== entry.fingerprint ||
+        !sessionsEqual(previous.session, entry.session)
+      ) {
+        upserted.push(cloneSession(entry.session));
+      }
+    }
+    const removed = [...this.#rootEntriesBySessionId.keys()].filter(
+      (sessionId) => !nextRootEntriesBySessionId.has(sessionId),
+    );
+
+    this.#entriesByPath = entriesByPath;
+    this.#entriesBySessionId = nextEntriesBySessionId;
+    this.#rootEntriesBySessionId = nextRootEntriesBySessionId;
+    this.#sortedSessions = [...nextRootEntriesBySessionId.values()]
+      .map((entry) => entry.session)
+      .sort(compareSessionsByCreation);
+    const diff = { upserted, removed };
+    if (upserted.length || removed.length) {
+      try {
+        this.#onDiff?.(diff);
+      } catch {
+        // A listener failure must not poison future refreshes.
+      }
+    }
+    return diff;
+  }
+
+  async #loadCost(entry: CatalogEntry): Promise<SessionCostData | null> {
+    const cached = this.#costCache.get(entry.path);
+    if (cached?.fingerprint === entry.fingerprint) return cached.cost;
+    const existing = this.#costLoads.get(entry.path);
+    if (existing?.fingerprint === entry.fingerprint) return existing.promise;
+
+    const load: CostLoad = {
+      fingerprint: entry.fingerprint,
+      promise: (async () => {
+        await this.#beforeCostRead?.();
+        let cost: SessionCostData | null;
+        try {
+          cost = await readSessionCost(entry.path);
+        } catch {
+          cost = null;
+        }
+        if (this.#entriesByPath.get(entry.path)?.fingerprint === entry.fingerprint) {
+          this.#costCache.set(entry.path, { fingerprint: entry.fingerprint, cost });
+        }
+        return cost;
+      })(),
+    };
+    this.#costLoads.set(entry.path, load);
+    try {
+      return await load.promise;
+    } finally {
+      if (this.#costLoads.get(entry.path) === load) this.#costLoads.delete(entry.path);
+    }
   }
 }
 
@@ -316,6 +431,30 @@ async function readSessionMetadata(path: string): Promise<SessionMetadata | null
   } finally {
     await handle?.close();
   }
+}
+async function readSessionCost(path: string): Promise<SessionCostData> {
+  let totalUsd = 0;
+  let exact = true;
+  const lines = createInterface({ input: createReadStream(path), crlfDelay: Number.POSITIVE_INFINITY });
+  for await (const line of lines) {
+    const record = parseRecord(line);
+    if (record?.type !== "message" || !isRecord(record.message) || record.message.role !== "assistant")
+      continue;
+    const usage = isRecord(record.message.usage) ? record.message.usage : null;
+    const cost = usage && isRecord(usage.cost) ? usage.cost : null;
+    const value = cost?.total;
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      exact = false;
+      continue;
+    }
+    const nextTotal = totalUsd + value;
+    if (!Number.isFinite(nextTotal)) {
+      exact = false;
+      continue;
+    }
+    totalUsd = nextTotal;
+  }
+  return { totalUsd, exact };
 }
 
 async function readTranscript(path: string, blobDirectory?: string): Promise<TranscriptMessage[]> {
@@ -450,13 +589,70 @@ function fallbackSessionName(path: string, id: string, cwd: string, rawTimestamp
   return stem === generatedStem ? basename(cwd) || null : stem;
 }
 
-function findRootSessionPath(path: string, sessionPaths: Set<string>): string {
+function findRootSessionPath(path: string, sessionPaths: ReadonlySet<string>): string {
   let rootPath = path;
   while (true) {
     const parentPath = `${dirname(rootPath)}.jsonl`;
     if (!sessionPaths.has(parentPath)) return rootPath;
     rootPath = parentPath;
   }
+}
+function buildCostSummary(
+  rootPath: string,
+  entriesByPath: ReadonlyMap<string, CatalogEntry>,
+  sessionPaths: ReadonlySet<string>,
+  costsByPath: ReadonlyMap<string, SessionCostData | null>,
+): SessionCostSummary | undefined {
+  const children = new Map<string, string[]>();
+  const descendants = [...entriesByPath.values()].filter(
+    (entry) => findRootSessionPath(entry.path, sessionPaths) === rootPath,
+  );
+  for (const entry of descendants) {
+    if (entry.path === rootPath) continue;
+    const parentPath = findNearestParentSessionPath(entry.path, sessionPaths) ?? rootPath;
+    const siblings = children.get(parentPath) ?? [];
+    siblings.push(entry.path);
+    children.set(parentPath, siblings);
+  }
+  for (const paths of children.values()) paths.sort((left, right) => left.localeCompare(right));
+
+  const orderedPaths: string[] = [];
+  const append = (path: string): void => {
+    orderedPaths.push(path);
+    for (const child of children.get(path) ?? []) append(child);
+  };
+  append(rootPath);
+
+  let totalUsd = 0;
+  const agents: SessionCostAgent[] = [];
+  for (const path of orderedPaths) {
+    const entry = entriesByPath.get(path);
+    const cost = costsByPath.get(path);
+    if (!entry || !cost?.exact) return undefined;
+    const parentPath =
+      path === rootPath ? null : (findNearestParentSessionPath(path, sessionPaths) ?? rootPath);
+    const nextTotal = totalUsd + cost.totalUsd;
+    if (!Number.isFinite(nextTotal)) return undefined;
+    totalUsd = nextTotal;
+    agents.push({
+      sessionId: entry.session.id,
+      name: entry.session.name ?? basename(path, extname(path)),
+      parentSessionId: parentPath ? (entriesByPath.get(parentPath)?.session.id ?? null) : null,
+      totalUsd: cost.totalUsd,
+      available: true,
+    });
+  }
+  return { totalUsd, partial: false, agents };
+}
+
+function findNearestParentSessionPath(path: string, sessionPaths: ReadonlySet<string>): string | null {
+  let separatorIndex = path.lastIndexOf("/");
+  while (separatorIndex > 0) {
+    const parentPath = `${path.slice(0, separatorIndex)}.jsonl`;
+    if (sessionPaths.has(parentPath)) return parentPath;
+    separatorIndex = path.lastIndexOf("/", separatorIndex - 1);
+  }
+  return null;
 }
 
 function sessionsEqual(left: Session, right: Session): boolean {
@@ -523,16 +719,22 @@ function sessionHasEnded(records: Record<string, unknown>[]): boolean {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
 function isMissingPathError(error: unknown): boolean {
   return isRecord(error) && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
-
 function cloneSession(session: Session): Session {
   return {
     ...session,
     capabilities: [...session.capabilities],
     messages: [],
+    ...(session.costSummary
+      ? {
+          costSummary: {
+            ...session.costSummary,
+            agents: session.costSummary.agents.map((agent) => ({ ...agent })),
+          },
+        }
+      : {}),
     activeSubagents: session.activeSubagents.map((subagent) => ({ ...subagent })),
   };
 }

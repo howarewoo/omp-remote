@@ -10,6 +10,7 @@ import {
   ServerFrameSchema,
   SessionBranchTopologySchema,
   SessionCatalogPageSchema,
+  SessionCostResponseSchema,
   SessionFileChangesResponseSchema,
   SessionFileWriteOperationSchema,
   SessionPatchSchema,
@@ -526,7 +527,13 @@ describe("historical session schemas", () => {
     sessionPath: "/home/user/.omp/agent/sessions/project/session.jsonl",
     activeSubagents: [],
     skillCommands: [],
+    costSummary: { totalUsd: 0, partial: true, agents: [] },
   };
+  it("preserves legacy sessions without a cost summary", () => {
+    const { costSummary: ignoredCostSummary, ...legacy } = historicalSession;
+    void ignoredCostSummary;
+    expect(SessionSchema.parse(legacy).costSummary).toBeUndefined();
+  });
 
   it("accepts resumable historical sessions", () => {
     expect(SessionSchema.parse(historicalSession)).toEqual(historicalSession);
@@ -747,6 +754,27 @@ describe("historical session schemas", () => {
         ],
       }),
     ).toMatchObject({ sessionId: "session-history" });
+  });
+
+  it("validates exact and unavailable on-demand cost responses", () => {
+    const exact = SessionCostResponseSchema.parse({
+      sessionId: "session-history",
+      costSummary: historicalSession.costSummary,
+    });
+    expect(exact.costSummary?.totalUsd).toBe(0);
+    expect(
+      SessionCostResponseSchema.parse({
+        sessionId: "session-history",
+        costSummary: null,
+      }),
+    ).toEqual({ sessionId: "session-history", costSummary: null });
+    expect(() =>
+      SessionCostResponseSchema.parse({
+        sessionId: "session-history",
+        costSummary: null,
+        pending: true,
+      }),
+    ).toThrow();
   });
 });
 

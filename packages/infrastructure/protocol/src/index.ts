@@ -183,6 +183,23 @@ export const ActiveSubagentSchema = z.object({
   name: z.string().min(1),
   lastActivity: z.string(),
 });
+export const SessionCostAgentSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    name: z.string().min(1),
+    parentSessionId: z.string().min(1).nullable(),
+    totalUsd: z.number().finite().nonnegative(),
+    available: z.boolean(),
+  })
+  .strict();
+
+export const SessionCostSummarySchema = z
+  .object({
+    totalUsd: z.number().finite().nonnegative(),
+    partial: z.boolean(),
+    agents: z.array(SessionCostAgentSchema),
+  })
+  .strict();
 
 export const SkillCommandSchema = z.object({
   name: z.string().regex(/^skill:[^\s]+$/),
@@ -272,6 +289,7 @@ export const SessionSchema = z.object({
   capabilities: z.array(SessionCapabilitySchema),
   messages: z.array(TranscriptMessageSchema),
   sessionPath: z.string().min(1).nullable(),
+  costSummary: SessionCostSummarySchema.optional(),
   activeSubagents: z.array(ActiveSubagentSchema).default([]),
   skillCommands: z.array(SkillCommandSchema).default([]),
 });
@@ -295,6 +313,12 @@ export const SessionTranscriptResponseSchema = z.object({
   sessionId: z.string().min(1),
   messages: z.array(TranscriptMessageSchema),
 });
+export const SessionCostResponseSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    costSummary: SessionCostSummarySchema.nullable(),
+  })
+  .strict();
 export const SESSION_BRANCH_TOPOLOGY_MAX_BRANCHES = 10_000;
 export const SESSION_BRANCH_NAME_MAX_BYTES = 4_096;
 const utf8Encoder = new TextEncoder();
@@ -742,6 +766,7 @@ export type ExtensionCommand = z.infer<typeof ExtensionCommandSchema>;
 export type ExtensionFrame = z.infer<typeof ExtensionFrameSchema>;
 export type ServerFrame = z.infer<typeof ServerFrameSchema>;
 export type SessionCatalogPage = z.infer<typeof SessionCatalogPageSchema>;
+export type SessionCostResponse = z.infer<typeof SessionCostResponseSchema>;
 export type SessionTranscriptResponse = z.infer<typeof SessionTranscriptResponseSchema>;
 export type SessionChangedFile = z.infer<typeof SessionChangedFileSchema>;
 export type SessionFileChangeSource = z.infer<typeof SessionFileChangeSourceSchema>;
@@ -753,6 +778,8 @@ export type SessionPatch = z.infer<typeof SessionPatchSchema>;
 export type SessionCapability = z.infer<typeof SessionCapabilitySchema>;
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 export type SkillCommand = z.infer<typeof SkillCommandSchema>;
+export type SessionCostAgent = z.infer<typeof SessionCostAgentSchema>;
+export type SessionCostSummary = z.infer<typeof SessionCostSummarySchema>;
 export type TranscriptMessage = z.infer<typeof TranscriptMessageSchema>;
 
 export function compareSessionsByCreation(left: Session, right: Session): number {

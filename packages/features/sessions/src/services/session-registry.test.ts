@@ -29,6 +29,13 @@ const BASE_SESSION: Session = {
       lastActivity: "2026-07-28T17:01:00.000Z",
     },
   ],
+  costSummary: {
+    totalUsd: 0.25,
+    partial: false,
+    agents: [
+      { sessionId: "session-1", name: "Bootstrap", parentSessionId: null, totalUsd: 0.25, available: true },
+    ],
+  },
   skillCommands: [],
 };
 
@@ -447,10 +454,13 @@ describe("SessionRegistry", () => {
       streaming: false,
       presentation: "text",
     });
+    const costAgent = snapshot?.costSummary?.agents[0];
+    if (costAgent) costAgent.name = "mutated";
     const activeSubagent = snapshot?.activeSubagents[0];
     if (activeSubagent) activeSubagent.name = "mutated";
 
     expect(registry.get("session-1")?.messages).toHaveLength(0);
     expect(registry.get("session-1")?.activeSubagents[0]?.name).toBe("ResearchAgent");
+    expect(registry.get("session-1")?.costSummary?.agents[0]?.name).toBe("Bootstrap");
   });
 });

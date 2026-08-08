@@ -18,6 +18,7 @@ import {
   type SessionBranchTopology,
   SessionBranchTopologySchema,
   SessionCatalogPageSchema,
+  SessionCostResponseSchema,
   SessionFileChangesResponseSchema,
   type SessionModelOption,
   SessionTranscriptResponseSchema,
@@ -174,6 +175,9 @@ const sessionCatalog = new SessionCatalog(
 );
 const initialCatalogDiff = await sessionCatalog.refresh();
 const registry = new SessionRegistry();
+sessionCatalog.setDiffListener(({ upserted }) => {
+  for (const session of upserted) syncCatalogSession(session);
+});
 const browserSockets = new Set<WebSocket>();
 const rpcSessions = new Map<string, RpcSession>();
 const extensionSockets = new Map<string, WebSocket>();
@@ -265,6 +269,24 @@ app.get("/api/sessions/:sessionId/transcript", async (request, reply) => {
   } catch (error) {
     logger.error("Could not read OMP session transcript", error, { sessionId: params.data.sessionId });
     return reply.code(500).send({ error: "Session history could not be read" });
+  }
+});
+
+app.get("/api/sessions/:sessionId/cost", async (request, reply) => {
+  const params = SessionParamsSchema.safeParse(request.params);
+  if (!params.success) return reply.code(404).send({ error: "Session history was not found" });
+  if (!sessionCatalog.get(params.data.sessionId)) await requestCatalogReconciliation();
+  if (!sessionCatalog.get(params.data.sessionId)) {
+    return reply.code(404).send({ error: "Session history was not found" });
+  }
+  try {
+    return SessionCostResponseSchema.parse({
+      sessionId: params.data.sessionId,
+      costSummary: (await sessionCatalog.costSummary(params.data.sessionId)) ?? null,
+    });
+  } catch (error) {
+    logger.error("Could not read OMP session cost", error, { sessionId: params.data.sessionId });
+    return reply.code(500).send({ error: "Session cost could not be read" });
   }
 });
 
@@ -826,6 +848,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
   };
   rpcSessions.set(sessionId, rpc);
   registry.upsert(session);
+  void requestCatalogReconciliation();
 
   try {
     const messagesResponse = RpcMessagesResponseSchema.parse(await rpc.request({ type: "get_messages" }));
@@ -1079,7 +1102,8 @@ function syncCatalogSession(catalogSession: Session): void {
   if (!liveSession) return;
 
   const patch = getCatalogSessionMetadataPatch(liveSession, catalogSession);
-  if (patch) registry.update(catalogSession.id, patch);
+  if (!patch) return;
+  registry.update(catalogSession.id, patch);
 }
 
 function normalizePercent(percent: number | undefined): number | null {

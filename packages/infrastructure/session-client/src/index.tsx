@@ -10,6 +10,8 @@ import {
   SessionBranchTopologySchema,
   type SessionBranchTopology,
   SessionCatalogPageSchema,
+  SessionCostResponseSchema,
+  type SessionCostResponse,
   type SessionPatch,
   SessionTranscriptResponseSchema,
   type SessionFileChangesResponse,
@@ -54,6 +56,7 @@ export interface SessionClient {
   loadSessionFileChanges(sessionId: string, signal?: AbortSignal): Promise<SessionFileChangesResponse>;
   loadSessionBranchTopology(sessionId: string, signal?: AbortSignal): Promise<SessionBranchTopology>;
   switchBranch(sessionId: string, branch: string): Promise<void>;
+  loadCost(sessionId: string): Promise<void>;
   loadTranscript(sessionId: string): Promise<void>;
 }
 
@@ -94,8 +97,11 @@ export function useSessionClient(): SessionClient {
   const socketRef = useRef<WebSocket | null>(null);
   const pendingRef = useRef(new Map<string, PendingCommand>());
   const catalogRequestRef = useRef(0);
+  const costRequestRef = useRef(0);
   const catalogAbortRef = useRef<AbortController | null>(null);
   const transcriptAbortRef = useRef<AbortController | null>(null);
+  const costAbortRef = useRef<AbortController | null>(null);
+  const costSummaryBySessionRef = useRef(new Map<string, Session["costSummary"] | null>());
   const [liveSessions, setLiveSessions] = useState<Session[]>([]);
   const [askRequests, setAskRequests] = useState<AskRequest[]>([]);
   const [savedWorkingDirectories, setSavedWorkingDirectories] = useState<string[]>([]);
@@ -103,6 +109,7 @@ export function useSessionClient(): SessionClient {
   const [liveSessionsReady, setLiveSessionsReady] = useState(false);
   const [historySessionsReady, setHistorySessionsReady] = useState(false);
   const [historyQuery, setHistoryQuery] = useState("");
+  const [costRevision, setCostRevision] = useState(0);
   const [historyNextOffset, setHistoryNextOffset] = useState<number | null>(0);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -200,6 +207,7 @@ export function useSessionClient(): SessionClient {
   useEffect(
     () => () => {
       transcriptAbortRef.current?.abort();
+      costAbortRef.current?.abort();
     },
     [],
   );
@@ -287,6 +295,28 @@ export function useSessionClient(): SessionClient {
       throw error;
     } finally {
       if (transcriptAbortRef.current === abortController) transcriptAbortRef.current = null;
+    }
+  }, []);
+
+  const loadCost = useCallback(async (sessionId: string) => {
+    const requestNumber = ++costRequestRef.current;
+    costAbortRef.current?.abort();
+    const abortController = new AbortController();
+    costAbortRef.current = abortController;
+    setHistoryError(null);
+    try {
+      const result = await loadSessionCost(sessionId, abortController.signal);
+      if (requestNumber !== costRequestRef.current) return;
+      costSummaryBySessionRef.current.clear();
+      costSummaryBySessionRef.current.set(result.sessionId, result.costSummary);
+      setCostRevision((revision) => revision + 1);
+    } catch (error) {
+      if (abortController.signal.aborted || requestNumber !== costRequestRef.current) return;
+      const message = error instanceof Error ? error.message : "Session cost could not be loaded";
+      setHistoryError(message);
+      throw error;
+    } finally {
+      if (costAbortRef.current === abortController) costAbortRef.current = null;
     }
   }, []);
 
@@ -410,16 +440,15 @@ export function useSessionClient(): SessionClient {
     return Promise.resolve();
   }, []);
 
-  const sessions = useMemo(
-    () =>
-      mergeSessions(
-        historySessions,
-        historyQuery
-          ? liveSessions.filter((session) => sessionMatchesQuery(session, historyQuery))
-          : liveSessions,
-      ),
-    [historyQuery, historySessions, liveSessions],
-  );
+  const sessions = useMemo(() => {
+    const merged = mergeSessions(
+      historySessions,
+      historyQuery
+        ? liveSessions.filter((session) => sessionMatchesQuery(session, historyQuery))
+        : liveSessions,
+    );
+    return overlaySessionCosts(merged, costSummaryBySessionRef.current);
+  }, [costRevision, historyQuery, historySessions, liveSessions]);
 
   return {
     sessions,
@@ -443,10 +472,25 @@ export function useSessionClient(): SessionClient {
     searchHistory,
     loadMoreHistory,
     loadTranscript,
+    loadCost,
     loadSessionFileChanges: loadSessionFileChangesCallback,
     loadSessionBranchTopology: loadSessionBranchTopologyCallback,
     switchBranch,
   };
+}
+export async function loadSessionCost(
+  sessionId: string,
+  signal?: AbortSignal,
+  fetcher: typeof fetch = fetch,
+): Promise<SessionCostResponse> {
+  const response = await fetcher(
+    `/api/sessions/${encodeURIComponent(sessionId)}/cost`,
+    signal ? { signal } : {},
+  );
+  if (!response.ok) throw new Error(`Session cost request failed (${response.status})`);
+  const result = SessionCostResponseSchema.parse(await response.json());
+  if (result.sessionId !== sessionId) throw new Error("Session cost response did not match the request");
+  return result;
 }
 export async function loadSessionBranchTopology(
   sessionId: string,
@@ -550,6 +594,29 @@ function mergeSessions(base: Session[], overrides: Session[]): Session[] {
   return [...sessions.values()].sort(compareSessionsByCreation);
 }
 
+export function overlaySessionCosts(
+  sessions: Session[],
+  costs: ReadonlyMap<string, Session["costSummary"] | null>,
+): Session[] {
+  let updated: Session[] | undefined;
+  for (const [index, session] of sessions.entries()) {
+    const costSummary = costs.get(session.id);
+    if (costSummary === undefined || session.costSummary === costSummary) continue;
+    let nextSession: Session;
+    if (costSummary) {
+      nextSession = { ...session, costSummary };
+    } else {
+      if (session.costSummary === undefined) continue;
+      const { costSummary: _ignoredCostSummary, ...withoutCostSummary } = session;
+      void _ignoredCostSummary;
+      nextSession = withoutCostSummary;
+    }
+    updated ??= [...sessions];
+    updated[index] = nextSession;
+  }
+  return updated ?? sessions;
+}
+
 function sessionMatchesQuery(session: Session, query: string): boolean {
   const normalizedQuery = query.toLocaleLowerCase();
   return [session.id, session.name, session.cwd, session.sessionPath]
@@ -593,6 +660,7 @@ export function patchSession(sessions: Session[], sessionId: string, patch: Sess
   if (patch.sessionPath !== undefined) updated.sessionPath = patch.sessionPath;
   if (patch.activeSubagents !== undefined) updated.activeSubagents = patch.activeSubagents;
   if (patch.skillCommands !== undefined) updated.skillCommands = patch.skillCommands;
+  if (patch.costSummary !== undefined) updated.costSummary = patch.costSummary;
   const next = [...sessions];
   next[index] = updated;
   return next;
