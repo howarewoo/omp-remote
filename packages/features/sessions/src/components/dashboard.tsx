@@ -7,14 +7,15 @@ import {
   type Effort,
   filterMainSessions,
   type Session,
-  type SessionFileChangesResponse,
   type SessionBranchTopology,
+  type SessionFileChangesResponse,
   type TranscriptImage,
 } from "@omp-remote/protocol";
 import { SESSION_STATUS_LABEL, SESSION_STATUS_TONE } from "@omp-remote/ui";
 import {
   type FormEvent,
   memo,
+  type MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -161,7 +162,10 @@ export type SyntaxToken = {
   text: string;
 };
 
-const INLINE_MARKUP_PATTERN = /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\))/g;
+const INLINE_MARKUP_PATTERN =
+  /(`[^`\n]+`|\*\*[^*\n]+\*\*|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|https?:\/\/[^\s<>"'`\\]+)/g;
+const ABSOLUTE_HTTP_URL_PATTERN = /https?:\/\/[^\s<>"'`\\]+/gi;
+const URL_TRAILING_PUNCTUATION = /[.,;:!?]+$/;
 const CODE_IDENTIFIER_PATTERN = /[$A-Za-z_]/;
 const CODE_IDENTIFIER_CONTINUATION_PATTERN = /[$\w]/;
 const CODE_OPERATOR_PATTERN = /[=+\-*/%!?&|<>^~]/;
@@ -236,9 +240,86 @@ const CODE_KEYWORDS = new Set([
   "var",
   "void",
   "while",
-  "with",
   "yield",
 ]);
+function isSafeHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "http:" || url.protocol === "https:") && Boolean(url.hostname);
+  } catch {
+    return false;
+  }
+}
+function hasSafeUrlBoundary(text: string, start: number): boolean {
+  return start === 0 || /[\s("'`[{<]/.test(text[start - 1] ?? "");
+}
+
+function trimUrlCandidate(value: string): { href: string; trailing: string } {
+  let href = value;
+  let trailing = "";
+
+  const punctuation = href.match(URL_TRAILING_PUNCTUATION)?.[0] ?? "";
+  if (punctuation) {
+    href = href.slice(0, -punctuation.length);
+    trailing = punctuation + trailing;
+  }
+
+  for (const [opening, closing] of [
+    ["(", ")"],
+    ["[", "]"],
+    ["{", "}"],
+  ] as const) {
+    while (href.endsWith(closing)) {
+      const openingCount = [...href].filter((character) => character === opening).length;
+      const closingCount = [...href].filter((character) => character === closing).length;
+      if (closingCount <= openingCount) break;
+      href = href.slice(0, -1);
+      trailing = closing + trailing;
+    }
+  }
+
+  return { href, trailing };
+}
+
+function tokenizeSafeHttpUrls(text: string): InlineTranscriptToken[] {
+  const tokens: InlineTranscriptToken[] = [];
+  let cursor = 0;
+
+  for (const match of text.matchAll(ABSOLUTE_HTTP_URL_PATTERN)) {
+    const start = match.index;
+    const raw = match[0];
+    const { href, trailing } = trimUrlCandidate(raw);
+    if (!href || !isSafeHttpUrl(href) || !hasSafeUrlBoundary(text, start)) continue;
+    if (start < cursor) continue;
+    if (start > cursor) tokens.push({ kind: "text", text: text.slice(cursor, start) });
+    tokens.push({ kind: "link", text: href, href });
+    if (trailing) tokens.push({ kind: "text", text: trailing });
+    cursor = start + raw.length;
+  }
+
+  if (cursor < text.length) tokens.push({ kind: "text", text: text.slice(cursor) });
+  return tokens.length > 0 ? tokens : [{ kind: "text", text }];
+}
+
+function pushLiteralTextToken(tokens: InlineTranscriptToken[], text: string) {
+  if (!text) return;
+  const previous = tokens.at(-1);
+  if (previous?.kind === "text") {
+    previous.text += text;
+  } else {
+    tokens.push({ kind: "text", text });
+  }
+}
+
+function pushSafeHttpTokens(tokens: InlineTranscriptToken[], text: string) {
+  for (const token of tokenizeSafeHttpUrls(text)) {
+    if (token.kind === "text") {
+      pushLiteralTextToken(tokens, token.text);
+    } else {
+      tokens.push(token);
+    }
+  }
+}
 
 export function parseInlineTranscript(text: string): InlineTranscriptToken[] {
   const tokens: InlineTranscriptToken[] = [];
@@ -246,25 +327,34 @@ export function parseInlineTranscript(text: string): InlineTranscriptToken[] {
 
   for (const match of text.matchAll(INLINE_MARKUP_PATTERN)) {
     const start = match.index;
-    if (start > cursor) tokens.push({ kind: "text", text: text.slice(cursor, start) });
+    if (start < cursor) continue;
+    if (start > cursor) pushSafeHttpTokens(tokens, text.slice(cursor, start));
 
     const raw = match[0];
     if (raw.startsWith("`")) {
       tokens.push({ kind: "code", text: raw.slice(1, -1) });
     } else if (raw.startsWith("**")) {
       tokens.push({ kind: "strong", text: raw.slice(2, -2) });
-    } else {
+    } else if (raw.startsWith("[")) {
       const labelEnd = raw.indexOf("](");
       tokens.push({
         kind: "link",
         text: raw.slice(1, labelEnd),
         href: raw.slice(labelEnd + 2, -1),
       });
+    } else {
+      const { href, trailing } = trimUrlCandidate(raw);
+      if (!isSafeHttpUrl(href) || !hasSafeUrlBoundary(text, start)) {
+        pushLiteralTextToken(tokens, raw);
+      } else {
+        tokens.push({ kind: "link", text: href, href });
+        if (trailing) tokens.push({ kind: "text", text: trailing });
+      }
     }
     cursor = start + raw.length;
   }
 
-  if (cursor < text.length) tokens.push({ kind: "text", text: text.slice(cursor) });
+  if (cursor < text.length) pushSafeHttpTokens(tokens, text.slice(cursor));
   return tokens.length > 0 ? tokens : [{ kind: "text", text }];
 }
 
@@ -552,13 +642,78 @@ export function Dashboard(props: DashboardProps) {
   );
 }
 
+function renderSafeHttpText(
+  text: string,
+  keyPrefix: string,
+  onLinkClick?: (event: ReactMouseEvent<HTMLAnchorElement>) => void,
+) {
+  return tokenizeSafeHttpUrls(text).map((token, index) =>
+    token.kind === "link" ? (
+      <a
+        className="transcript-link"
+        href={token.href}
+        key={`${keyPrefix}:${index}:link`}
+        onClick={onLinkClick}
+        rel="noreferrer"
+        target="_blank"
+      >
+        {token.text}
+      </a>
+    ) : (
+      <span key={`${keyPrefix}:${index}:text`}>{token.text}</span>
+    ),
+  );
+}
+
+function renderSafeHttpTextWithoutLinks(text: string, keyPrefix: string) {
+  return tokenizeSafeHttpUrls(text).map((token, index) =>
+    token.kind === "text" ? <span key={`${keyPrefix}:${index}:text`}>{token.text}</span> : null,
+  );
+}
+
+function renderSafeHttpLinkSiblings(text: string, keyPrefix: string) {
+  return tokenizeSafeHttpUrls(text)
+    .filter((token): token is Extract<InlineTranscriptToken, { kind: "link" }> => token.kind === "link")
+    .map((token, index) => (
+      <a
+        className="transcript-link"
+        href={token.href}
+        key={`${keyPrefix}:${index}:link`}
+        onClick={(event) => event.stopPropagation()}
+        rel="noreferrer"
+        target="_blank"
+      >
+        {token.text}
+      </a>
+    ));
+}
+function renderPlainTextWithLinks(
+  text: string,
+  keyPrefix: string,
+  className = "transcript-disclosure-text",
+  onLinkClick?: (event: ReactMouseEvent<HTMLAnchorElement>) => void,
+  elementKey?: string,
+) {
+  return (
+    <pre className={className} key={elementKey}>
+      {renderSafeHttpText(text, keyPrefix, onLinkClick)}
+    </pre>
+  );
+}
+
 const InlineTranscript = memo(function InlineTranscript({ text }: { text: string }) {
   const tokens = useMemo(() => parseInlineTranscript(text), [text]);
 
   return tokens.map((token, index) => {
     if (token.kind === "link") {
       return (
-        <a href={token.href} key={`${index}:link`} rel="noreferrer" target="_blank">
+        <a
+          className="transcript-link"
+          href={token.href}
+          key={`${index}:link`}
+          rel="noreferrer"
+          target="_blank"
+        >
           {token.text}
         </a>
       );
@@ -567,7 +722,7 @@ const InlineTranscript = memo(function InlineTranscript({ text }: { text: string
       return <code key={`${index}:code`}>{token.text}</code>;
     }
     if (token.kind === "strong") {
-      return <strong key={`${index}:strong`}>{token.text}</strong>;
+      return <strong key={`${index}:strong`}>{renderSafeHttpText(token.text, `${index}:strong`)}</strong>;
     }
     return <span key={`${index}:text`}>{token.text}</span>;
   });
@@ -1075,8 +1230,16 @@ export function parseDisclosureImages(text: string): DisclosureTranscriptSegment
   return segments;
 }
 
-function renderDisclosureTranscriptText(text: string) {
-  return <pre className="transcript-disclosure-text">{text}</pre>;
+function renderDisclosureTranscriptText(
+  text: string,
+  linkify = true,
+  onLinkClick?: (event: ReactMouseEvent<HTMLAnchorElement>) => void,
+) {
+  return linkify ? (
+    renderPlainTextWithLinks(text, "disclosure", undefined, onLinkClick)
+  ) : (
+    <pre className="transcript-disclosure-text">{text}</pre>
+  );
 }
 
 function DisclosureImage({
@@ -1194,7 +1357,9 @@ function renderDisclosureTranscriptContent(props: DisclosureTranscriptContentPro
     <div className="transcript-disclosure-content" data-variant={variant}>
       {variant === "thumbnail" ? (
         <>
-          {props.preview || images.length === 0 ? renderDisclosureTranscriptText(props.preview) : null}
+          {props.preview || images.length === 0
+            ? renderDisclosureTranscriptText(props.preview, true, (event) => event.stopPropagation())
+            : null}
           {images.map((image, index) => (
             <DisclosureImage
               alt={image.alt}
@@ -1208,9 +1373,13 @@ function renderDisclosureTranscriptContent(props: DisclosureTranscriptContentPro
       ) : (
         segments.map((segment, index) =>
           segment.kind === "text" ? (
-            <pre className="transcript-disclosure-text" key={`${index}:text`}>
-              {segment.text}
-            </pre>
+            renderPlainTextWithLinks(
+              segment.text,
+              `disclosure:${index}`,
+              "transcript-disclosure-text",
+              (event) => event.stopPropagation(),
+              `${index}:text`,
+            )
           ) : (
             <DisclosureImage
               alt={segment.alt}
@@ -1337,20 +1506,19 @@ function TodoProgressSummary({ todo }: { todo: TodoResult }) {
         <span aria-hidden="true" className="todo-state-marker" data-state={activeState} />
         <span>
           <span className="sr-only">{activeTask ? `${TODO_STATE_LABEL[activeTask.state]}: ` : ""}</span>
-          {activeLabel}
+          {renderSafeHttpText(activeLabel, "todo-active")}
         </span>
       </div>
     </div>
   );
 }
-
 function TodoPhaseList({ todo }: { todo: TodoResult }) {
   return (
     <div className="todo-phase-list">
       {todo.phases.map((phase, phaseIndex) => (
         <section className="todo-phase" key={`${phaseIndex}:${phase.name}`}>
           <header>
-            <h3>{phase.name}</h3>
+            <h3>{renderSafeHttpText(phase.name, `todo-phase-${phaseIndex}`)}</h3>
             <Badge className={`todo-state-badge todo-state-${phase.state}`}>
               {TODO_STATE_LABEL[phase.state]}
             </Badge>
@@ -1361,11 +1529,11 @@ function TodoPhaseList({ todo }: { todo: TodoResult }) {
                 <span aria-hidden="true" className="todo-state-marker" data-state={task.state} />
                 <span className="todo-task-label">
                   <span className="sr-only">{TODO_STATE_LABEL[task.state]}: </span>
-                  {task.label}
+                  {renderSafeHttpText(task.label, `todo-task-${phaseIndex}`)}
                   {task.reason ? (
                     <span className="todo-task-reason">
                       <span className="sr-only">Blocked reason: </span>
-                      {task.reason}
+                      {renderSafeHttpText(task.reason, `todo-reason-${phaseIndex}`)}
                     </span>
                   ) : null}
                 </span>
@@ -1608,7 +1776,7 @@ export function ToolTranscriptText({ entry }: { entry: Session["messages"][numbe
       {entry.presentation === "diff" ? (
         <TranscriptEntryContent entry={entry} />
       ) : isWrite ? (
-        renderDisclosureTranscriptText(formatToolTextFull(entry.text))
+        renderDisclosureTranscriptText(formatToolTextFull(entry.text), false)
       ) : (
         renderDisclosureTranscriptContent({
           segments: disclosureSegments ?? [],
@@ -1652,6 +1820,54 @@ export function AskToolCall(props: AskToolCallProps) {
   return props.request.kind === "rich" ? <RichAskToolCall {...props} /> : <LegacyAskToolCall {...props} />;
 }
 
+function askOptionHasLinks(texts: readonly (string | undefined)[]): boolean {
+  return texts.some((text) => text && tokenizeSafeHttpUrls(text).some((token) => token.kind === "link"));
+}
+
+function renderAskOptionControlCopy({
+  description,
+  label,
+  preview,
+  keyPrefix,
+  recommended,
+}: {
+  description?: string;
+  label: string;
+  preview?: string;
+  keyPrefix: string;
+  recommended?: boolean;
+}) {
+  return (
+    <span className="ask-option-copy">
+      <span className="sr-only">{label}</span>
+      <span aria-hidden="true">
+        {renderSafeHttpTextWithoutLinks(label, `${keyPrefix}:label`)}
+        {recommended ? <Badge>Recommended</Badge> : null}
+      </span>
+      {description ? (
+        <span className="ask-option-description">
+          {renderSafeHttpTextWithoutLinks(description, `${keyPrefix}:description`)}
+        </span>
+      ) : null}
+      {preview ? (
+        <span className="ask-option-preview">
+          {renderSafeHttpTextWithoutLinks(preview, `${keyPrefix}:preview`)}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function renderAskOptionLinkContainer(texts: readonly (string | undefined)[], keyPrefix: string) {
+  return (
+    <span className="ask-option-links">
+      {texts.flatMap((text, textIndex) =>
+        text ? renderSafeHttpLinkSiblings(text, `${keyPrefix}:${textIndex}`) : [],
+      )}
+    </span>
+  );
+}
+
 function LegacyAskToolCall({ request, connection, onRespond }: AskToolCallProps) {
   if (request.kind === "rich") return null;
   const [draft, setDraft] = useState(request.initialValue ?? "");
@@ -1691,23 +1907,44 @@ function LegacyAskToolCall({ request, connection, onRespond }: AskToolCallProps)
         <span className="ask-status">{sending ? "Sending response…" : "Waiting for your response"}</span>
       </header>
       <strong className="ask-title" id={`${answerId}-title`}>
-        {request.title}
+        {renderSafeHttpText(request.title, "ask-legacy-title")}
       </strong>
       {request.kind === "select" ? (
         <>
           <div className="ask-options">
-            {request.options.map((option, index) => (
-              <Button
-                type="button"
-                variant="outline"
-                className="ask-option"
-                disabled={sending || connection !== "connected"}
-                onClick={() => void respond({ value: option })}
-                key={`${option}-${index}`}
-              >
-                {option}
-              </Button>
-            ))}
+            {request.options.map((option, index) => {
+              const optionKey = `${option}-${index}`;
+              const respondToOption = () => void respond({ value: option });
+              return askOptionHasLinks([option]) ? (
+                <div className="ask-option-row" key={optionKey}>
+                  <Button
+                    aria-label={option}
+                    className="ask-option"
+                    disabled={sending || connection !== "connected"}
+                    onClick={respondToOption}
+                    type="button"
+                    variant="outline"
+                  >
+                    {renderAskOptionControlCopy({
+                      keyPrefix: `ask-legacy-option-${index}`,
+                      label: option,
+                    })}
+                  </Button>
+                  {renderAskOptionLinkContainer([option], `ask-legacy-option-${index}`)}
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="ask-option"
+                  disabled={sending || connection !== "connected"}
+                  onClick={respondToOption}
+                  key={optionKey}
+                >
+                  {renderSafeHttpText(option, `ask-legacy-option-${index}`)}
+                </Button>
+              );
+            })}
           </div>
           <footer className="ask-actions">
             <Button
@@ -1870,9 +2107,11 @@ function RichAskToolCall({ request, connection, onRespond, onActivity }: AskTool
               tabIndex={-1}
             >
               {activeQuestion.header ? (
-                <span className="ask-question-header">{activeQuestion.header}</span>
+                <span className="ask-question-header">
+                  {renderSafeHttpText(activeQuestion.header, "ask-rich-header")}
+                </span>
               ) : null}
-              <span>{activeQuestion.question}</span>
+              <span>{renderSafeHttpText(activeQuestion.question, "ask-rich-question")}</span>
             </legend>
             {activeQuestion.multi ? (
               <div className="ask-options">
@@ -1883,33 +2122,71 @@ function RichAskToolCall({ request, connection, onRespond, onActivity }: AskTool
                     note: "",
                   };
                   const selected = answer.selectedOptions.includes(option.label);
-                  return (
+                  const toggleOption = () => {
+                    onActivity();
+                    updateAnswer(boundedActiveQuestionIndex, (current) => ({
+                      ...current,
+                      selectedOptions: selected
+                        ? current.selectedOptions.filter((label) => label !== option.label)
+                        : [...current.selectedOptions, option.label],
+                    }));
+                  };
+                  const optionKey = `${option.label}-${optionIndex}`;
+                  return askOptionHasLinks([option.label, option.description, option.preview]) ? (
+                    <div className="ask-option-row" key={optionKey}>
+                      <Button
+                        aria-label={option.label}
+                        aria-pressed={selected}
+                        className="ask-option ask-rich-option"
+                        disabled={sending || connection !== "connected"}
+                        onClick={toggleOption}
+                        type="button"
+                        variant={selected ? "default" : "outline"}
+                      >
+                        {renderAskOptionControlCopy({
+                          ...(option.description === undefined ? {} : { description: option.description }),
+                          keyPrefix: `ask-rich-multi-option-${optionIndex}`,
+                          label: option.label,
+                          ...(option.preview === undefined ? {} : { preview: option.preview }),
+                          recommended: activeQuestion.recommended === optionIndex,
+                        })}
+                      </Button>
+                      {renderAskOptionLinkContainer(
+                        [option.label, option.description, option.preview],
+                        `ask-rich-multi-option-${optionIndex}`,
+                      )}
+                    </div>
+                  ) : (
                     <Button
+                      aria-pressed={selected}
+                      className="ask-option ask-rich-option"
+                      disabled={sending || connection !== "connected"}
+                      key={optionKey}
+                      onClick={toggleOption}
                       type="button"
                       variant={selected ? "default" : "outline"}
-                      className="ask-option ask-rich-option"
-                      aria-pressed={selected}
-                      disabled={sending || connection !== "connected"}
-                      onClick={() => {
-                        onActivity();
-                        updateAnswer(boundedActiveQuestionIndex, (current) => ({
-                          ...current,
-                          selectedOptions: selected
-                            ? current.selectedOptions.filter((label) => label !== option.label)
-                            : [...current.selectedOptions, option.label],
-                        }));
-                      }}
-                      key={`${option.label}-${optionIndex}`}
                     >
                       <span className="ask-option-copy">
                         <span>
-                          {option.label}
+                          {renderSafeHttpText(option.label, `ask-rich-multi-option-${optionIndex}:label`)}
                           {activeQuestion.recommended === optionIndex ? <Badge>Recommended</Badge> : null}
                         </span>
                         {option.description ? (
-                          <span className="ask-option-description">{option.description}</span>
+                          <span className="ask-option-description">
+                            {renderSafeHttpText(
+                              option.description,
+                              `ask-rich-multi-option-${optionIndex}:description`,
+                            )}
+                          </span>
                         ) : null}
-                        {option.preview ? <span className="ask-option-preview">{option.preview}</span> : null}
+                        {option.preview ? (
+                          <span className="ask-option-preview">
+                            {renderSafeHttpText(
+                              option.preview,
+                              `ask-rich-multi-option-${optionIndex}:preview`,
+                            )}
+                          </span>
+                        ) : null}
                       </span>
                     </Button>
                   );
@@ -1938,11 +2215,18 @@ function RichAskToolCall({ request, connection, onRespond, onActivity }: AskTool
                     note: "",
                   };
                   const selected = answer.selectedOptions.includes(option.label);
-                  return (
+                  const optionKey = `${option.label}-${optionIndex}`;
+                  const optionHasLinks = askOptionHasLinks([
+                    option.label,
+                    option.description,
+                    option.preview,
+                  ]);
+                  const radio = (
                     <Radio.Root
                       value={option.label}
                       render={
                         <button
+                          aria-label={option.label}
                           type="button"
                           data-slot="button"
                           className={cn(
@@ -1951,21 +2235,31 @@ function RichAskToolCall({ request, connection, onRespond, onActivity }: AskTool
                             "ui-button-size-default",
                             "ask-option ask-rich-option",
                           )}
-                        />
+                        >
+                          <span className="sr-only">{option.label}</span>
+                        </button>
                       }
-                      key={`${option.label}-${optionIndex}`}
+                      key={optionKey}
                     >
-                      <span className="ask-option-copy">
-                        <span>
-                          {option.label}
-                          {activeQuestion.recommended === optionIndex ? <Badge>Recommended</Badge> : null}
-                        </span>
-                        {option.description ? (
-                          <span className="ask-option-description">{option.description}</span>
-                        ) : null}
-                        {option.preview ? <span className="ask-option-preview">{option.preview}</span> : null}
-                      </span>
+                      {renderAskOptionControlCopy({
+                        ...(option.description === undefined ? {} : { description: option.description }),
+                        keyPrefix: `ask-rich-radio-option-${optionIndex}`,
+                        label: option.label,
+                        ...(option.preview === undefined ? {} : { preview: option.preview }),
+                        recommended: activeQuestion.recommended === optionIndex,
+                      })}
                     </Radio.Root>
+                  );
+                  return optionHasLinks ? (
+                    <div className="ask-option-row" key={optionKey}>
+                      {radio}
+                      {renderAskOptionLinkContainer(
+                        [option.label, option.description, option.preview],
+                        `ask-rich-radio-option-${optionIndex}`,
+                      )}
+                    </div>
+                  ) : (
+                    radio
                   );
                 })}
               </RadioGroup>
