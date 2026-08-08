@@ -2293,10 +2293,21 @@ textarea:disabled {
   font-size: clamp(0.9375rem, 0.9rem + 0.18vw, 1.0625rem);
 }
 
+.transcript-link,
 .transcript-prose a {
+  max-width: 100%;
   color: var(--omp-cyan);
+  overflow-wrap: anywhere;
+  text-decoration: underline;
   text-decoration-color: color-mix(in srgb, var(--omp-cyan) 55%, transparent);
   text-underline-offset: 0.16em;
+}
+
+.transcript-link:focus-visible,
+.transcript-prose a:focus-visible {
+  border-radius: 0.15rem;
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
 .transcript-prose code {
@@ -3420,7 +3431,6 @@ textarea:disabled {
 .ask-options {
   padding: 0.125rem;
 }
-
 .ask-option.ui-button {
   width: 100%;
   min-width: 0;
@@ -3432,6 +3442,28 @@ textarea:disabled {
   white-space: normal;
   overflow-wrap: anywhere;
   line-height: 1.4;
+}
+.ask-option-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  min-width: 0;
+  gap: 0.625rem;
+}
+
+.ask-option-row > .ask-option.ui-button {
+  width: auto;
+  min-width: 2.75rem;
+  padding-inline: 0.75rem;
+}
+
+.ask-option-links {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
 }
 
 .ask-answer-form label {

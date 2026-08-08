@@ -570,7 +570,10 @@ describe("ToolTranscriptText", () => {
       renderTranscriptNodes(preview).find((node) => node.className === "transcript-disclosure-text")?.text,
     ).toBe(formatToolTextPreview(text));
     expect(expandedNodes.find((node) => node.className === "transcript-disclosure-text")?.text).toBe(text);
-    expect(expandedNodes.some((node) => node.type === "strong" || node.type === "a")).toBe(false);
+    expect(expandedNodes.some((node) => node.type === "strong")).toBe(false);
+    expect(expandedNodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
+      "https://example.com",
+    ]);
   });
 
   it("renders every HTTPS image as an unlinked thumbnail and exact-source expanded link in order", () => {
@@ -851,7 +854,14 @@ describe("ToolTranscriptText", () => {
     expect(details?.open).toBe(false);
     expect(nodes.find((node) => node.className === "message-author")?.text).toContain(`Read ${readTarget}`);
     expect(rawTextNodes.map((node) => node.text)).toEqual([text, text]);
-    expect(nodes.some((node) => ["a", "strong", "code"].includes(node.type ?? ""))).toBe(false);
+    expect(nodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
+      "https://example.com",
+      "https://example.com",
+    ]);
+    expect(nodes.filter((node) => node.type === "a").some((node) => node.props?.href === readTarget)).toBe(
+      false,
+    );
+    expect(nodes.some((node) => ["strong", "code"].includes(node.type ?? ""))).toBe(false);
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
   });
 
@@ -1399,6 +1409,105 @@ describe("ToolTranscriptText", () => {
   });
 });
 
+describe("approved transcript URL surfaces", () => {
+  it("linkifies system, tool, Read, and Todo disclosure prose while keeping image syntax intact", () => {
+    const systemNodes = renderTranscriptNodes(
+      SystemTranscriptText({
+        entry: {
+          id: "system-url",
+          role: "system",
+          text: "System reference: https://system.example/docs.",
+          timestamp: "2026-07-29T12:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      }),
+    );
+    const toolNodes = renderTranscriptNodes(
+      ToolTranscriptText({
+        entry: {
+          id: "tool-url",
+          role: "tool",
+          toolName: "bash",
+          text: "Output: https://tool.example/result.",
+          timestamp: "2026-07-29T12:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      }),
+    );
+    const readNodes = renderTranscriptNodes(
+      ToolTranscriptText({
+        entry: {
+          id: "read-url",
+          role: "tool",
+          toolName: "read",
+          readTarget: "https://docs.example/guide",
+          text: "Read more at https://docs.example/guide.",
+          timestamp: "2026-07-29T12:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      }),
+    );
+    const todo = parseTodoResult(
+      TODO_RESULT_TEXT.replaceAll(
+        "Build custom todo tool interface",
+        "Build https://todo.example/task",
+      ).replace("format probe", "See https://todo.example/blocker"),
+    );
+    if (!todo) throw new Error("Expected Todo fixture");
+    const todoNodes = renderTranscriptNodes(
+      TodoToolTranscript({
+        entry: {
+          id: "todo-url",
+          role: "tool",
+          toolName: "todo",
+          text: TODO_RESULT_TEXT,
+          timestamp: "2026-07-29T12:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+        todo,
+      }),
+    );
+    const writeNodes = renderTranscriptNodes(
+      ToolTranscriptText({
+        entry: {
+          id: "write-url",
+          role: "tool",
+          toolName: "write",
+          toolTitle: "Write https://metadata.example/file",
+          text: "Snapshot https://content.example/file",
+          timestamp: "2026-07-29T12:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      }),
+    );
+
+    expect(systemNodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
+      "https://system.example/docs",
+      "https://system.example/docs",
+    ]);
+    expect(toolNodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
+      "https://tool.example/result",
+      "https://tool.example/result",
+    ]);
+    expect(readNodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
+      "https://docs.example/guide",
+      "https://docs.example/guide",
+    ]);
+    expect(todoNodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
+      "https://todo.example/task",
+      "https://todo.example/task",
+      "https://todo.example/blocker",
+    ]);
+    expect(writeNodes.filter((node) => node.type === "a")).toHaveLength(0);
+    expect(writeNodes.map((node) => node.text).join("")).toContain("Write https://metadata.example/file");
+  });
+});
+
 describe("SystemTranscriptText", () => {
   it("renders a truncated preview with a chevron in the closed system header", () => {
     const text = `${"x".repeat(180)}tail`;
@@ -1454,7 +1563,10 @@ describe("SystemTranscriptText", () => {
     expect(expanded.props.className).toBe(preview.props.className);
     expect(expanded.props["data-variant"]).toBe("expanded");
     expect(expandedNodes.find((node) => node.className === "transcript-disclosure-text")?.text).toBe(text);
-    expect(expandedNodes.some((node) => node.type === "strong" || node.type === "a")).toBe(false);
+    expect(expandedNodes.some((node) => node.type === "strong")).toBe(false);
+    expect(expandedNodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
+      "https://example.com",
+    ]);
   });
 
   it("renders supported system images in both disclosure states without changing surrounding text", () => {
@@ -1662,9 +1774,6 @@ function renderTranscriptNodes(node: ReactNode): RenderedNode[] {
     "type" in element.type &&
     typeof element.type.type === "function"
   ) {
-    if (element.type.type.name === "InlineTranscript") {
-      return [{ text: String(element.props.text ?? "") }];
-    }
     return renderTranscriptNodes(element.type.type(element.props) as ReactNode);
   }
   if (typeof element.type === "symbol") {
@@ -1764,6 +1873,32 @@ describe("structured transcript presentation", () => {
       ],
     });
   });
+  it("linkifies assistant and user prose without expanding other Markdown", () => {
+    const renderMessage = (role: "assistant" | "user") =>
+      renderTranscriptNodes(
+        TranscriptEntry({
+          entry: {
+            id: `${role}-url`,
+            role,
+            text: `See https://${role}.example/docs and **literal**.`,
+            timestamp: "2026-07-29T12:00:00.000Z",
+            streaming: false,
+            presentation: "text",
+          },
+        }),
+      );
+
+    expect(
+      renderMessage("assistant")
+        .filter((node) => node.type === "a")
+        .map((node) => node.props?.href),
+    ).toEqual(["https://assistant.example/docs"]);
+    expect(
+      renderMessage("user")
+        .filter((node) => node.type === "a")
+        .map((node) => node.props?.href),
+    ).toEqual(["https://user.example/docs"]);
+  });
 });
 
 describe("OMP-style transcript formatting", () => {
@@ -1776,6 +1911,37 @@ describe("OMP-style transcript formatting", () => {
       { kind: "text", text: ", and " },
       { kind: "link", text: "docs", href: "https://omp.sh" },
       { kind: "text", text: "." },
+    ]);
+  });
+  it("tokenizes absolute HTTP(S) URLs without sentence punctuation or unbalanced delimiters", () => {
+    expect(parseInlineTranscript("See https://example.com/path_(safe), then https://omp.sh/docs.")).toEqual([
+      { kind: "text", text: "See " },
+      { kind: "link", text: "https://example.com/path_(safe)", href: "https://example.com/path_(safe)" },
+      { kind: "text", text: ", then " },
+      { kind: "link", text: "https://omp.sh/docs", href: "https://omp.sh/docs" },
+      { kind: "text", text: "." },
+    ]);
+  });
+  it("keeps escaped backslashes outside URL anchors", () => {
+    expect(parseInlineTranscript("See https://example.com/project-url\\")).toEqual([
+      { kind: "text", text: "See " },
+      { kind: "link", text: "https://example.com/project-url", href: "https://example.com/project-url" },
+      { kind: "text", text: "\\" },
+    ]);
+  });
+
+  it("keeps code, bare www, and unsafe schemes literal", () => {
+    expect(
+      parseInlineTranscript(
+        "`https://code.example` www.example.com javascript:https://example.com foohttps://embedded.example https://safe.example",
+      ),
+    ).toEqual([
+      { kind: "code", text: "https://code.example" },
+      {
+        kind: "text",
+        text: " www.example.com javascript:https://example.com foohttps://embedded.example ",
+      },
+      { kind: "link", text: "https://safe.example", href: "https://safe.example" },
     ]);
   });
 
@@ -3305,6 +3471,91 @@ const SINGLE_RICH_ASK: AskRequest = {
 };
 
 describe("AskToolCall", () => {
+  it("keeps Ask links outside native controls while preserving option activation", () => {
+    const onActivity = vi.fn();
+    const onRespond = vi.fn().mockResolvedValue(undefined);
+    const legacy = renderAskToolCall(
+      {
+        ...SELECT_ASK,
+        title: "Review https://omp.sh/ask",
+        options: ["Open https://omp.sh/docs"],
+      },
+      { onActivity, onRespond },
+    );
+    const legacyOptionLinks = findElements(
+      legacy,
+      (element) => element.props.className === "ask-option-links",
+    )[0];
+    const legacyLink = findElements(legacyOptionLinks, (element) => element.type === "a")[0];
+    const legacyButton = findElements(legacy, (element) => element.props.className === "ask-option")[0];
+    expect(legacyLink?.props.href).toBe("https://omp.sh/docs");
+    expect(findElements(legacyButton, (element) => element.type === "a")).toHaveLength(0);
+    const stopPropagation = vi.fn();
+    (legacyLink?.props.onClick as ((event: { stopPropagation(): void }) => void) | undefined)?.({
+      stopPropagation,
+    });
+    expect(stopPropagation).toHaveBeenCalledOnce();
+    expect(onRespond).not.toHaveBeenCalled();
+    (legacyButton?.props.onClick as (() => void) | undefined)?.();
+
+    const richQuestion = RICH_ASK.questions[0];
+    if (!richQuestion) throw new Error("Expected rich question fixture");
+    const richMultiRequest: AskRequest = {
+      ...RICH_ASK,
+      questions: [
+        {
+          ...richQuestion,
+          options: [{ label: "Open https://omp.sh/multi", description: "Docs https://omp.sh/info" }],
+        },
+      ],
+    };
+    const richMulti = renderAskToolCall(richMultiRequest, { onActivity, onRespond });
+    const multiOptionLinks = findElements(
+      richMulti,
+      (element) => element.props.className === "ask-option-links",
+    )[0];
+    const multiLink = findElements(multiOptionLinks, (element) => element.type === "a")[0];
+    const multiButton = findElements(
+      richMulti,
+      (element) => element.props.className === "ask-option ask-rich-option",
+    )[0];
+    expect(multiLink?.props.href).toBe("https://omp.sh/multi");
+    expect(findElements(multiButton, (element) => element.type === "a")).toHaveLength(0);
+    (multiButton?.props.onClick as (() => void) | undefined)?.();
+    const richMultiSelected = renderAskToolCall(richMultiRequest, { onActivity, onRespond }, true);
+    expect(findElements(richMultiSelected, (element) => element.props["aria-pressed"] === true)).toHaveLength(
+      1,
+    );
+
+    const radioQuestion = MULTIPLE_RICH_ASK.questions[0];
+    if (!radioQuestion) throw new Error("Expected radio question fixture");
+    const richRadioRequest: AskRequest = {
+      ...MULTIPLE_RICH_ASK,
+      questions: [
+        {
+          ...radioQuestion,
+          options: [{ label: "Open https://omp.sh/radio", preview: "More https://omp.sh/preview" }],
+          multi: false,
+        },
+      ],
+    };
+    const richRadio = renderAskToolCall(richRadioRequest, { onActivity, onRespond });
+    const radioOptionLinks = findElements(
+      richRadio,
+      (element) => element.props.className === "ask-option-links",
+    )[0];
+    const radioLink = findElements(radioOptionLinks, (element) => element.type === "a")[0];
+    const radio = findElements(richRadio, (element) => element.type === Radio.Root)[0];
+    expect(radioLink?.props.href).toBe("https://omp.sh/radio");
+    expect(findElements(radio, (element) => element.type === "a")).toHaveLength(0);
+    const radioStopPropagation = vi.fn();
+    (radioLink?.props.onClick as ((event: { stopPropagation(): void }) => void) | undefined)?.({
+      stopPropagation: radioStopPropagation,
+    });
+    expect(radioStopPropagation).toHaveBeenCalledOnce();
+    expect(onActivity).toHaveBeenCalled();
+  });
+
   it("renders transcript-native select controls and sends the selected value", async () => {
     const onRespond = vi.fn().mockResolvedValue(undefined);
     const output = renderAskToolCall(SELECT_ASK, { onRespond });
