@@ -19,6 +19,7 @@ export const SessionModelOptionSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   efforts: z.array(EffortSchema),
+  roles: z.array(z.string().min(1)).optional(),
 });
 export const TranscriptPresentationSchema = z.enum(["text", "diff"]);
 
