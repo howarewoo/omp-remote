@@ -25,6 +25,18 @@ const reactHarness = vi.hoisted(() => ({
   stateValues: [] as unknown[],
 }));
 
+const messageScrollerHarness = vi.hoisted(() => ({
+  scrollToEnd: vi.fn(),
+}));
+
+vi.mock("./ui/message-scroller.js", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    useMessageScroller: () => ({ scrollToEnd: messageScrollerHarness.scrollToEnd }),
+  };
+});
+
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof ReactModule>();
   return {
@@ -108,6 +120,7 @@ beforeEach(() => {
   reactHarness.refValues = [];
   reactHarness.stateIndex = 0;
   reactHarness.stateValues = [];
+  messageScrollerHarness.scrollToEnd.mockReset();
 });
 
 import {
@@ -123,8 +136,8 @@ import {
   getComposerAction,
   getSkillSuggestions,
   groupSessionsForSidebar,
+  MessageScrollerScrollController,
   parseDisclosureImages,
-  tokenizeBashTitle,
   parseInlineTranscript,
   parseTodoResult,
   parseTranscriptBlocks,
@@ -134,6 +147,7 @@ import {
   ToolTranscriptText,
   TranscriptCodeBlock,
   TranscriptEntry,
+  tokenizeBashTitle,
   tokenizeCode,
   WorkingIndicator,
 } from "./dashboard.js";
@@ -3462,6 +3476,17 @@ describe("message scroller controls", () => {
   it("uses immediate jump controls so reduced-motion preferences are respected", () => {
     expect(MessageScrollerButton({}).props.behavior).toBe("auto");
   });
+
+  it("registers an immediate scroll-to-end handler for submitted messages", () => {
+    const onScrollToEnd = vi.fn();
+
+    MessageScrollerScrollController({ onScrollToEnd });
+
+    const handler = onScrollToEnd.mock.calls[0]?.[0] as (() => void) | undefined;
+    expect(handler).toBeTypeOf("function");
+    handler?.();
+    expect(messageScrollerHarness.scrollToEnd).toHaveBeenCalledWith({ behavior: "auto" });
+  });
 });
 
 function findComposerTextarea(output: ReactNode): ReactElement<Record<string, unknown>> {
@@ -3509,6 +3534,28 @@ describe("dashboard composer keyboard", () => {
 
     expect(preventDefault).toHaveBeenCalledOnce();
     expect(requestSubmit).toHaveBeenCalledOnce();
+  });
+
+  it("scrolls the transcript to the end after a message is submitted", async () => {
+    const onCommand = vi.fn().mockResolvedValue(undefined);
+    const props = { ...composerDashboardProps(), onCommand };
+    let output = renderControlledDashboard(props);
+
+    (findComposerTextarea(output).props.onChange as (event: { target: { value: string } }) => void)({
+      target: { value: "Show the latest output" },
+    });
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+
+    const scrollToEnd = vi.fn();
+    const controller = findElements(output, (element) => element.type === MessageScrollerScrollController)[0];
+    (controller?.props.onScrollToEnd as ((handler: () => void) => void) | undefined)?.(scrollToEnd);
+    const form = findElements(output, (element) => element.props.className === "composer")[0];
+    await (form?.props.onSubmit as ((event: { preventDefault(): void }) => Promise<void>) | undefined)?.({
+      preventDefault: vi.fn(),
+    });
+
+    expect(onCommand).toHaveBeenCalledWith("session-1", "steer", "Show the latest output");
+    expect(scrollToEnd).toHaveBeenCalledOnce();
   });
 
   it("leaves Shift+Enter untouched for the textarea's native newline behavior", () => {
