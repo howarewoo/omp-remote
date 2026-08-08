@@ -124,6 +124,7 @@ import {
   getSkillSuggestions,
   groupSessionsForSidebar,
   parseDisclosureImages,
+  tokenizeBashTitle,
   parseInlineTranscript,
   parseTodoResult,
   parseTranscriptBlocks,
@@ -508,6 +509,220 @@ describe("parseDisclosureImages", () => {
   });
 });
 
+describe("Bash title rendering", () => {
+  it("tokenizes chained commands losslessly with shell operators and quoted strings", () => {
+    const title = String.raw`pnpm test && printf '%s\n' "https://example.com/a?b=1" > out.txt`;
+    const tokens = tokenizeBashTitle(title);
+
+    expect(tokens.map((token) => token.text).join("")).toBe(title);
+    expect(tokens.filter((token) => token.kind === "operator").map((token) => token.text)).toEqual([
+      "&&",
+      ">",
+    ]);
+    expect(tokens.filter((token) => token.kind === "string").map((token) => token.text)).toEqual([
+      "'%s\\n'",
+      '"https://example.com/a?b=1"',
+    ]);
+    expect(tokens.filter((token) => token.kind === "word").map((token) => token.text)).toEqual([
+      "pnpm",
+      "test",
+      "printf",
+      "out.txt",
+    ]);
+  });
+
+  it("keeps complete option and format words neutral", () => {
+    const tokens = tokenizeBashTitle("grep -n +format --color=auto");
+
+    expect(tokens.filter((token) => token.kind === "option").map((token) => token.text)).toEqual([
+      "-n",
+      "+format",
+      "--color=auto",
+    ]);
+    expect(tokens.map((token) => token.text).join("")).toBe("grep -n +format --color=auto");
+  });
+
+  it("keeps escapes and URLs as lossless ordinary command text", () => {
+    const title = String.raw`echo https://example.com/a\?b=1`;
+    const tokens = tokenizeBashTitle(title);
+
+    expect(tokens.map((token) => token.text).join("")).toBe(title);
+    expect(tokens.filter((token) => token.kind === "string")).toHaveLength(0);
+    expect(tokens.filter((token) => token.kind === "word").map((token) => token.text)).toEqual([
+      "echo",
+      "https://example.com/a\\?b=1",
+    ]);
+  });
+
+  it("handles descriptor redirects and contextual bang tokens without false fallback", () => {
+    const title = "! exec 10>out 2>&1 && if ! false; then echo foo!bar !; else ! true; fi";
+    const tokens = tokenizeBashTitle(title);
+
+    expect(tokens.map((token) => token.text).join("")).toBe(title);
+    expect(tokens.filter((token) => token.kind === "operator").map((token) => token.text)).toEqual([
+      "!",
+      "10>",
+      "2>&1",
+      "&&",
+      "!",
+      ";",
+      ";",
+      "!",
+      ";",
+    ]);
+    expect(tokens.filter((token) => token.kind === "word").map((token) => token.text)).toEqual([
+      "exec",
+      "out",
+      "if",
+      "false",
+      "then",
+      "echo",
+      "foo!bar",
+      "!",
+      "else",
+      "true",
+      "fi",
+    ]);
+  });
+
+  it("balances grouping and command substitutions inside complete quoted strings", () => {
+    const title = 'echo "$(date)" `whoami` (printf ok)';
+    const tokens = tokenizeBashTitle(title);
+
+    expect(tokens.map((token) => token.text).join("")).toBe(title);
+    expect(tokens.filter((token) => token.kind === "string").map((token) => token.text)).toEqual([
+      '"$(date)"',
+      "`whoami`",
+    ]);
+    expect(tokens.filter((token) => token.kind === "operator").map((token) => token.text)).toEqual([
+      "(",
+      ")",
+    ]);
+  });
+
+  it.each([
+    'echo "unfinished',
+    "echo trailing\\",
+    "echo (",
+    "echo foo >&",
+    "echo $(date",
+    "echo foo | | cat",
+    "| cat",
+    "echo (date",
+    "echo foo)",
+    'echo "$(date"',
+    "echo `date",
+    "echo >>> out",
+  ])("falls back to a plain lossless title for incomplete shell text: %s", (title) => {
+    expect(tokenizeBashTitle(title)).toEqual([{ kind: "plain", text: title }]);
+  });
+
+  it("renders only exact Bash titles with command token spans and keeps output neutral", () => {
+    const title = 'Bash: echo "title" && cat --raw';
+    const nodes = renderTranscriptNodes(
+      ToolTranscriptText({
+        entry: {
+          id: "bash-title",
+          role: "tool",
+          toolName: "bash",
+          toolTitle: title,
+          text: "output remains neutral",
+          timestamp: "2026-07-29T12:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      }),
+    );
+    const commandTitle = nodes.find((node) => node.className === "transcript-command-title");
+    const commandSpans = nodes.filter((node) => node.className?.includes("transcript-command-token-"));
+    const output = nodes.find((node) => node.className === "transcript-disclosure-text");
+
+    expect(textContent(commandTitle?.props?.children as ReactNode)).toBe(title);
+    expect(commandSpans.map(({ className, text }) => ({ className, text }))).toEqual([
+      {
+        className: "transcript-command-token transcript-command-token-word",
+        text: "echo",
+      },
+      {
+        className: "transcript-command-token transcript-command-token-string",
+        text: '"title"',
+      },
+      {
+        className: "transcript-command-token transcript-command-token-operator",
+        text: "&&",
+      },
+      {
+        className: "transcript-command-token transcript-command-token-word",
+        text: "cat",
+      },
+      {
+        className: "transcript-command-token transcript-command-token-option",
+        text: "--raw",
+      },
+    ]);
+    expect(output?.text).toBe("output remains neutral");
+    expect(output?.className).not.toContain("transcript-command-token");
+  });
+
+  it("keeps non-Bash and missing titles plain", () => {
+    const nonBash = renderTranscriptNodes(
+      ToolTranscriptText({
+        entry: {
+          id: "non-bash-title",
+          role: "tool",
+          toolName: "write",
+          toolTitle: "Bash: echo should stay plain",
+          text: "result",
+          timestamp: "2026-07-29T12:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      }),
+    );
+    const missing = renderTranscriptNodes(
+      ToolTranscriptText({
+        entry: {
+          id: "missing-title",
+          role: "tool",
+          toolName: "bash",
+          text: "result",
+          timestamp: "2026-07-29T12:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      }),
+    );
+
+    expect(nonBash.some((node) => node.className?.includes("transcript-command-token-"))).toBe(false);
+    expect(missing.some((node) => node.className?.includes("transcript-command-token-"))).toBe(false);
+  });
+
+  it("updates a streaming Bash title without recoloring its output", () => {
+    let entry = {
+      id: "streaming-bash-title",
+      role: "tool" as const,
+      toolName: "bash",
+      toolTitle: "Bash: ec",
+      text: "partial output",
+      timestamp: "2026-07-29T12:00:00.000Z",
+      streaming: true,
+      presentation: "text" as const,
+    };
+
+    const first = renderToolTranscriptWithHooks(entry);
+    entry = { ...entry, toolTitle: "Bash: echo ready" };
+    const second = renderToolTranscriptWithHooks(entry, true);
+
+    const firstTitle = first.find((node) => node.className === "transcript-command-title");
+    const secondTitle = second.find((node) => node.className === "transcript-command-title");
+    expect(textContent(firstTitle?.props?.children as ReactNode)).toBe("Bash: ec");
+    expect(textContent(secondTitle?.props?.children as ReactNode)).toBe("Bash: echo ready");
+    expect(second.find((node) => node.className === "transcript-disclosure-text")?.text).toBe(
+      "partial output",
+    );
+  });
+});
+
 describe("ToolTranscriptText", () => {
   it("renders the last ten output lines in a closed disclosure", () => {
     const text = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n");
@@ -534,7 +749,8 @@ describe("ToolTranscriptText", () => {
       "tool-message-disclosure transcript-disclosure-frame tool-output-disclosure",
     );
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("Bash: pnpm test");
+    const commandTitle = nodes.find((node) => node.className === "transcript-command-title");
+    expect(textContent(commandTitle?.props?.children as ReactNode)).toBe("Bash: pnpm test");
     expect(nodes.findIndex((node) => node.className === "tool-output-divider")).toBeLessThan(
       nodes.findIndex((node) => node.className === "transcript-disclosure-text"),
     );
