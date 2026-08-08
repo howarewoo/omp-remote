@@ -1518,7 +1518,8 @@ const MemoizedBashTitle = memo(function BashTitle({ title }: { title: string }) 
 
   return (
     <span className="transcript-command-title">
-      {BASH_TITLE_PREFIX}
+      <span className="transcript-tool-name transcript-tool-name-bash">Bash</span>
+      <span className="transcript-tool-title-detail">: </span>
       {tokens.map((token, index) =>
         token.kind === "plain" ? (
           token.text
@@ -1535,12 +1536,45 @@ const MemoizedBashTitle = memo(function BashTitle({ title }: { title: string }) 
   );
 });
 
+const TOOL_NAME_COLOR_CLASS: Record<string, string> = {
+  bash: "transcript-tool-name-bash",
+  edit: "transcript-tool-name-edit",
+  grep: "transcript-tool-name-grep",
+  hub: "transcript-tool-name-hub",
+  read: "transcript-tool-name-read",
+  task: "transcript-tool-name-task",
+  todo: "transcript-tool-name-todo",
+  write: "transcript-tool-name-write",
+  yield: "transcript-tool-name-yield",
+};
+
+const TOOL_TITLE_LABEL: Record<string, string> = {
+  edit: "Edit",
+  grep: "Grep",
+  read: "Read",
+  write: "Write",
+};
+
 function renderToolTitle(entry: Session["messages"][number], fallbackLabel: string) {
   const title = entry.toolTitle;
-  return entry.toolName === "bash" && title?.startsWith(BASH_TITLE_PREFIX) ? (
-    <MemoizedBashTitle title={title} />
-  ) : (
-    fallbackLabel
+  const toolName = entry.toolName;
+  const displayedTitle = title ?? fallbackLabel;
+  const titleLabel = toolName ? TOOL_TITLE_LABEL[toolName] : undefined;
+  if (toolName && titleLabel && displayedTitle.startsWith(`${titleLabel}:`)) {
+    return (
+      <>
+        <span className={cn("transcript-tool-name", TOOL_NAME_COLOR_CLASS[toolName])}>{titleLabel}</span>
+        <span className="transcript-tool-title-detail">{displayedTitle.slice(titleLabel.length)}</span>
+      </>
+    );
+  }
+  if (toolName === "bash" && title?.startsWith(BASH_TITLE_PREFIX)) {
+    return <MemoizedBashTitle title={title} />;
+  }
+  return (
+    <span className={cn("transcript-tool-name", toolName && TOOL_NAME_COLOR_CLASS[toolName])}>
+      {fallbackLabel}
+    </span>
   );
 }
 

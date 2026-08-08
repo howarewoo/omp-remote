@@ -2259,6 +2259,39 @@ textarea:disabled {
 .transcript-tool .message-author i {
   color: var(--transcript-muted);
 }
+.transcript-tool-name {
+  color: var(--transcript-muted);
+}
+.transcript-tool-title-detail {
+  color: var(--transcript-muted);
+}
+
+.transcript-tool-name-bash {
+  color: var(--transcript-yellow);
+}
+
+.transcript-tool-name-edit,
+.transcript-tool-name-task {
+  color: var(--transcript-blue);
+}
+
+.transcript-tool-name-grep,
+.transcript-tool-name-read {
+  color: var(--transcript-cyan);
+}
+
+.transcript-tool-name-hub,
+.transcript-tool-name-todo {
+  color: var(--primary);
+}
+
+.transcript-tool-name-write {
+  color: var(--transcript-code-string);
+}
+
+.transcript-tool-name-yield {
+  color: var(--transcript-green);
+}
 
 .transcript-system .message-author i {
   color: var(--transcript-blue);

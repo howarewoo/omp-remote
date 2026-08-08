@@ -648,6 +648,9 @@ describe("Bash title rendering", () => {
       }),
     );
     const commandTitle = nodes.find((node) => node.className === "transcript-command-title");
+    const toolName = nodes.find(
+      (node) => node.className === "transcript-tool-name transcript-tool-name-bash",
+    );
     const commandSpans = nodes.filter((node) => node.className?.includes("transcript-command-token-"));
     const output = nodes.find((node) => node.className === "transcript-disclosure-text");
 
@@ -963,7 +966,10 @@ describe("ToolTranscriptText", () => {
     });
 
     expect(
-      renderTranscriptNodes(disclosure).find((node) => node.className === "message-author")?.text,
+      textContent(
+        renderTranscriptNodes(disclosure).find((node) => node.className === "message-author")?.props
+          ?.children as ReactNode,
+      ),
     ).toContain(title);
   });
 
@@ -987,8 +993,9 @@ describe("ToolTranscriptText", () => {
     });
     const nodes = renderTranscriptNodes(disclosure);
 
-    expect(disclosure.type).toBe("div");
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("Read: dashboard.tsx");
+    expect(
+      textContent(nodes.find((node) => node.className === "message-author")?.props?.children as ReactNode),
+    ).toContain("Read: dashboard.tsx");
     expect(nodes.some((node) => node.className === "tool-message-preview")).toBe(false);
     expect(nodes.some((node) => node.className === "tool-output-divider")).toBe(false);
     expect(nodes.some((node) => node.text.includes("1091:  return <details />;"))).toBe(false);
@@ -1039,7 +1046,9 @@ describe("ToolTranscriptText", () => {
     const nodes = renderTranscriptNodes(disclosure);
 
     expect(disclosure.type).toBe("div");
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("Read: index.ts");
+    expect(
+      textContent(nodes.find((node) => node.className === "message-author")?.props?.children as ReactNode),
+    ).toContain("Read: index.ts");
     expect(nodes.some((node) => node.text.includes("canonical read result"))).toBe(false);
   });
 
@@ -1385,9 +1394,9 @@ describe("ToolTranscriptText", () => {
       "tool-message-disclosure transcript-disclosure-frame tool-output-disclosure",
     );
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain(
-      "Edit: 🟦 src/dashboard.tsx ⟦+1⟧ ⟦−1⟧",
-    );
+    expect(
+      textContent(nodes.find((node) => node.className === "message-author")?.props?.children as ReactNode),
+    ).toContain("Edit: 🟦 src/dashboard.tsx ⟦+1⟧ ⟦−1⟧");
   });
 
   it("renders write output in the shared open frame with a labeled divider and full result", () => {
@@ -1412,9 +1421,9 @@ describe("ToolTranscriptText", () => {
       "tool-message-disclosure transcript-disclosure-frame tool-output-disclosure",
     );
     expect(disclosure.props.children[0].type).toBe("summary");
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain(
-      "Write: packages/features/sessions/src/components/dashboard.tsx",
-    );
+    expect(
+      textContent(nodes.find((node) => node.className === "message-author")?.props?.children as ReactNode),
+    ).toContain("Write: packages/features/sessions/src/components/dashboard.tsx");
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
     expect(disclosure.props.children[1].props.children).toBe(text);
   });
@@ -3163,9 +3172,11 @@ describe("dashboard Read transcript", () => {
       "dashboard-read-b",
       "dashboard-assistant",
     ]);
-    expect(nodes.filter((node) => node.className === "message-author").map((node) => node.text)).toEqual(
-      expect.arrayContaining([expect.stringContaining("Read: a.ts"), expect.stringContaining("Read: b.ts")]),
-    );
+    expect(
+      nodes
+        .filter((node) => node.className === "message-author")
+        .map((node) => textContent(node.props?.children as ReactNode)),
+    ).toEqual(expect.arrayContaining(["·Read: a.ts", "·Read: b.ts"]));
     expect(nodes.some((node) => node.text.includes("alpha dashboard contents"))).toBe(false);
     expect(nodes.some((node) => node.text.includes("beta dashboard contents"))).toBe(false);
   });
