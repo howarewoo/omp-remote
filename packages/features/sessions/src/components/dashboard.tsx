@@ -941,6 +941,7 @@ export interface DashboardProps {
   onSearchHistory(query: string): Promise<void>;
   onLoadMoreHistory(): Promise<void>;
   onLoadTranscript(sessionId: string): Promise<void>;
+  onLoadCost(sessionId: string): Promise<void>;
   onLoadSessionFileChanges(sessionId: string, signal?: AbortSignal): Promise<SessionFileChangesResponse>;
   onLoadSessionBranchTopology(sessionId: string, signal?: AbortSignal): Promise<SessionBranchTopology>;
   onSwitchBranch(sessionId: string, branch: string): Promise<void>;
@@ -2772,6 +2773,7 @@ function DashboardContent({
   onSearchHistory,
   onLoadMoreHistory,
   onLoadTranscript,
+  onLoadCost,
   onLoadSessionFileChanges,
   onLoadSessionBranchTopology,
   onSwitchBranch,
@@ -3146,6 +3148,12 @@ function DashboardContent({
     },
     [clearSessionFileChangesRefreshTimer],
   );
+
+  const selectedCostSessionId = selectedSession?.id ?? null;
+  useEffect(() => {
+    if (!selectedCostSessionId) return;
+    void onLoadCost(selectedCostSessionId).catch(() => undefined);
+  }, [onLoadCost, selectedCostSessionId]);
 
   useEffect(() => {
     if (selectedSession?.source !== "history" || loadedTranscriptIdRef.current === selectedSession.id) return;

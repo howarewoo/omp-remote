@@ -104,13 +104,6 @@ describe("getCatalogSessionMetadataPatch", () => {
   it("avoids a patch when reconciled metadata is unchanged", () => {
     expect(getCatalogSessionMetadataPatch(ROOT_SESSION, { ...ROOT_SESSION })).toBeNull();
   });
-  it("publishes an exact catalog cost replacement without inventing a pending summary", () => {
-    const costSummary = { totalUsd: 1.5, partial: false, agents: [] };
-    expect(getCatalogSessionMetadataPatch(ROOT_SESSION, { ...ROOT_SESSION, costSummary })).toEqual({
-      costSummary,
-    });
-    expect(getCatalogSessionMetadataPatch({ ...ROOT_SESSION, costSummary }, ROOT_SESSION)).toBeNull();
-  });
 });
 
 describe("createCatalogReconciler", () => {

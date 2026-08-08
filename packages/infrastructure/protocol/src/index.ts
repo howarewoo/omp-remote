@@ -313,6 +313,12 @@ export const SessionTranscriptResponseSchema = z.object({
   sessionId: z.string().min(1),
   messages: z.array(TranscriptMessageSchema),
 });
+export const SessionCostResponseSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    costSummary: SessionCostSummarySchema.nullable(),
+  })
+  .strict();
 export const SESSION_BRANCH_TOPOLOGY_MAX_BRANCHES = 10_000;
 export const SESSION_BRANCH_NAME_MAX_BYTES = 4_096;
 const utf8Encoder = new TextEncoder();
@@ -760,6 +766,7 @@ export type ExtensionCommand = z.infer<typeof ExtensionCommandSchema>;
 export type ExtensionFrame = z.infer<typeof ExtensionFrameSchema>;
 export type ServerFrame = z.infer<typeof ServerFrameSchema>;
 export type SessionCatalogPage = z.infer<typeof SessionCatalogPageSchema>;
+export type SessionCostResponse = z.infer<typeof SessionCostResponseSchema>;
 export type SessionTranscriptResponse = z.infer<typeof SessionTranscriptResponseSchema>;
 export type SessionChangedFile = z.infer<typeof SessionChangedFileSchema>;
 export type SessionFileChangeSource = z.infer<typeof SessionFileChangeSourceSchema>;

@@ -10,6 +10,7 @@ import {
   ServerFrameSchema,
   SessionBranchTopologySchema,
   SessionCatalogPageSchema,
+  SessionCostResponseSchema,
   SessionFileChangesResponseSchema,
   SessionFileWriteOperationSchema,
   SessionPatchSchema,
@@ -753,6 +754,27 @@ describe("historical session schemas", () => {
         ],
       }),
     ).toMatchObject({ sessionId: "session-history" });
+  });
+
+  it("validates exact and unavailable on-demand cost responses", () => {
+    const exact = SessionCostResponseSchema.parse({
+      sessionId: "session-history",
+      costSummary: historicalSession.costSummary,
+    });
+    expect(exact.costSummary?.totalUsd).toBe(0);
+    expect(
+      SessionCostResponseSchema.parse({
+        sessionId: "session-history",
+        costSummary: null,
+      }),
+    ).toEqual({ sessionId: "session-history", costSummary: null });
+    expect(() =>
+      SessionCostResponseSchema.parse({
+        sessionId: "session-history",
+        costSummary: null,
+        pending: true,
+      }),
+    ).toThrow();
   });
 });
 

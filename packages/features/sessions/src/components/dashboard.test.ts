@@ -2231,6 +2231,7 @@ const DASHBOARD_DEFAULTS = {
   onSearchHistory: vi.fn().mockResolvedValue(undefined),
   onLoadMoreHistory: vi.fn().mockResolvedValue(undefined),
   onLoadTranscript: vi.fn().mockResolvedValue(undefined),
+  onLoadCost: vi.fn().mockResolvedValue(undefined),
   onLoadSessionBranchTopology: vi.fn().mockResolvedValue({
     sessionId: "session-1",
     currentBranch: "feature/session-header",
@@ -4463,6 +4464,20 @@ describe("controlled dashboard selection", () => {
 
     expect(findHostText(output, "h1")).toBe("Bootstrap");
     expect(onSelectedSessionChange).toHaveBeenCalledWith("session-1");
+  });
+
+  it("loads cost for the viewed session as selection changes", () => {
+    const onLoadCost = vi.fn().mockResolvedValue(undefined);
+    const secondSession = { ...BASE_SESSION, id: "session-2", name: "Second session" };
+    const props = {
+      ...composerDashboardProps(),
+      sessions: [BASE_SESSION, secondSession],
+      onLoadCost,
+    };
+
+    renderControlledDashboard(props);
+    renderControlledDashboard({ ...props, selectedSessionId: secondSession.id }, { preserveState: true });
+    expect(onLoadCost.mock.calls).toEqual([[BASE_SESSION.id], [secondSession.id]]);
   });
 });
 

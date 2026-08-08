@@ -121,11 +121,12 @@ describe("SessionCatalog", () => {
     });
   });
 
-  it("hydrates exact persisted usage after a non-blocking metadata refresh", async () => {
+  it("loads exact persisted usage only for the requested root and descendants", async () => {
     const root = await makeTemporaryDirectory();
     const rootPath = join(root, "project", "root.jsonl");
     const childPath = join(root, "project", "root", "child.jsonl");
     const grandchildPath = join(root, "project", "root", "child", "grandchild.jsonl");
+    const unrelatedPath = join(root, "other-project", "unrelated.jsonl");
     await writeSession(
       rootPath,
       { id: "root", title: "Root", cwd: "/workspace/root", timestamp: "2026-08-01T10:00:00.000Z" },
@@ -146,21 +147,28 @@ describe("SessionCatalog", () => {
       },
       [assistantUsage(0.2), { type: "custom", customType: "session_exit" }],
     );
-
-    let hydrationStarts = 0;
-    const catalog = new SessionCatalog([root], {
-      beforeHydration: async () => {
-        hydrationStarts += 1;
+    await writeSession(
+      unrelatedPath,
+      {
+        id: "unrelated",
+        title: "Unrelated",
+        cwd: "/workspace/unrelated",
+        timestamp: "2026-08-01T10:03:00.000Z",
       },
-      startHydrationImmediately: false,
+      [assistantUsage(9)],
+    );
+
+    let costReads = 0;
+    const catalog = new SessionCatalog([root], {
+      beforeCostRead: async () => {
+        costReads += 1;
+      },
     });
     const initial = await catalog.refresh();
     expect(initial.upserted[0]?.costSummary).toBeUndefined();
     expect(catalog.get("root")?.costSummary).toBeUndefined();
-    expect(hydrationStarts).toBe(0);
-    catalog.startHydration();
-    await catalog.waitForHydration();
-    expect(catalog.get("root")?.costSummary).toEqual({
+    expect(costReads).toBe(0);
+    await expect(catalog.costSummary("root")).resolves.toEqual({
       totalUsd: 1.95,
       partial: false,
       agents: [
@@ -175,16 +183,17 @@ describe("SessionCatalog", () => {
         },
       ],
     });
+    expect(costReads).toBe(3);
 
     await writeFile(rootPath, `${JSON.stringify(assistantUsage(0.05))}\n`, { flag: "a" });
     await setModifiedTime(rootPath, "2026-08-01T11:00:00.000Z");
     const updated = await catalog.refresh();
     expect(updated.upserted[0]?.costSummary).toBeUndefined();
     expect(catalog.get("root")?.costSummary).toBeUndefined();
-    await catalog.waitForHydration();
-    expect(catalog.get("root")?.costSummary?.totalUsd).toBe(2);
+    await expect(catalog.costSummary("root")).resolves.toMatchObject({ totalUsd: 2 });
+    expect(costReads).toBe(4);
   });
-  it("isolates failed roots and keeps exact summaries for healthy roots", async () => {
+  it("isolates failed requested roots and keeps exact summaries for healthy roots", async () => {
     const history = await makeTemporaryDirectory();
     const healthyPath = join(history, "healthy", "session.jsonl");
     const failedPath = join(history, "failed", "session.jsonl");
@@ -211,93 +220,11 @@ describe("SessionCatalog", () => {
 
     const catalog = new SessionCatalog([history]);
     await catalog.refresh();
-    expect(catalog.get("healthy")?.costSummary).toBeUndefined();
-    expect(catalog.get("failed")?.costSummary).toBeUndefined();
-    await catalog.waitForHydration();
-    expect(catalog.get("healthy")?.costSummary?.totalUsd).toBe(0.75);
-    expect(catalog.get("failed")?.costSummary).toBeUndefined();
+    await expect(catalog.costSummary("healthy")).resolves.toMatchObject({ totalUsd: 0.75 });
+    await expect(catalog.costSummary("failed")).resolves.toBeUndefined();
   });
 
-  it("deduplicates concurrent hydration and replaces invalidated summaries", async () => {
-    const history = await makeTemporaryDirectory();
-    const sessionPath = join(history, "project", "session.jsonl");
-    await writeSession(
-      sessionPath,
-      {
-        id: "session-fingerprint",
-        title: "Fingerprint",
-        cwd: "/workspace/project",
-        timestamp: "2026-08-01T10:00:00.000Z",
-      },
-      [assistantUsage(1)],
-    );
-    const hydrated: number[] = [];
-    const catalog = new SessionCatalog([history], {
-      onDiff: ({ upserted }) => {
-        for (const session of upserted) {
-          if (session.costSummary) hydrated.push(session.costSummary.totalUsd);
-        }
-      },
-    });
-    await Promise.all([catalog.refresh(), catalog.refresh()]);
-    await catalog.waitForHydration();
-    expect(hydrated).toEqual([1]);
-
-    await writeSession(
-      sessionPath,
-      {
-        id: "session-fingerprint",
-        title: "Fingerprint",
-        cwd: "/workspace/project",
-        timestamp: "2026-08-01T10:00:00.000Z",
-      },
-      [assistantUsage(2)],
-    );
-    await setModifiedTime(sessionPath, "2026-08-01T11:00:00.000Z");
-    const invalidated = await catalog.refresh();
-    expect(invalidated.upserted[0]?.costSummary).toBeUndefined();
-    expect(catalog.get("session-fingerprint")?.costSummary).toBeUndefined();
-    await catalog.waitForHydration();
-    expect(catalog.get("session-fingerprint")?.costSummary?.totalUsd).toBe(2);
-    expect(hydrated).toEqual([1, 2]);
-  });
-  it("does not overwrite an exact summary with a stale refresh snapshot", async () => {
-    const history = await makeTemporaryDirectory();
-    const sessionPath = join(history, "project", "session.jsonl");
-    await writeSession(
-      sessionPath,
-      {
-        id: "session-overlay",
-        title: "Overlay",
-        cwd: "/workspace/project",
-        timestamp: "2026-08-01T10:00:00.000Z",
-      },
-      [assistantUsage(1)],
-    );
-    const hydrationGate = deferred<void>();
-    let blockRefreshCommit = false;
-    const refreshCommitReached = deferred<void>();
-    const refreshCommitGate = deferred<void>();
-    const catalog = new SessionCatalog([history], {
-      beforeHydration: () => hydrationGate.promise,
-      beforeRefreshCommit: async () => {
-        if (!blockRefreshCommit) return;
-        refreshCommitReached.resolve();
-        await refreshCommitGate.promise;
-      },
-    });
-    await catalog.refresh();
-    blockRefreshCommit = true;
-    const staleRefresh = catalog.refresh();
-    await refreshCommitReached.promise;
-    hydrationGate.resolve();
-    await catalog.waitForHydration();
-    refreshCommitGate.resolve();
-    await staleRefresh;
-    expect(catalog.get("session-overlay")?.costSummary?.totalUsd).toBe(1);
-  });
-
-  it("queues a changed fingerprint behind an active path hydration", async () => {
+  it("deduplicates concurrent cost reads for the selected session", async () => {
     const history = await makeTemporaryDirectory();
     const sessionPath = join(history, "project", "session.jsonl");
     await writeSession(
@@ -310,27 +237,124 @@ describe("SessionCatalog", () => {
       },
       [assistantUsage(1)],
     );
-    const hydrationGate = deferred<void>();
+    const costReadGate = deferred<void>();
+    let costReads = 0;
     const catalog = new SessionCatalog([history], {
-      beforeHydration: () => hydrationGate.promise,
+      beforeCostRead: async () => {
+        costReads += 1;
+        await costReadGate.promise;
+      },
     });
     await catalog.refresh();
+    const first = catalog.costSummary("session-single-flight");
+    const second = catalog.costSummary("session-single-flight");
+    await Promise.resolve();
+    expect(costReads).toBe(1);
+    costReadGate.resolve();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      {
+        totalUsd: 1,
+        partial: false,
+        agents: [
+          {
+            sessionId: "session-single-flight",
+            name: "Single flight",
+            parentSessionId: null,
+            totalUsd: 1,
+            available: true,
+          },
+        ],
+      },
+      {
+        totalUsd: 1,
+        partial: false,
+        agents: [
+          {
+            sessionId: "session-single-flight",
+            name: "Single flight",
+            parentSessionId: null,
+            totalUsd: 1,
+            available: true,
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("does not return a cost summary for a stale fingerprint", async () => {
+    const history = await makeTemporaryDirectory();
+    const sessionPath = join(history, "project", "session.jsonl");
     await writeSession(
       sessionPath,
       {
-        id: "session-single-flight",
-        title: "Single flight",
+        id: "session-stale-cost",
+        title: "Stale cost",
+        cwd: "/workspace/project",
+        timestamp: "2026-08-01T10:00:00.000Z",
+      },
+      [assistantUsage(1)],
+    );
+    const costReadGate = deferred<void>();
+    const catalog = new SessionCatalog([history], {
+      beforeCostRead: () => costReadGate.promise,
+    });
+    await catalog.refresh();
+    const staleCost = catalog.costSummary("session-stale-cost");
+    await writeSession(
+      sessionPath,
+      {
+        id: "session-stale-cost",
+        title: "Stale cost",
         cwd: "/workspace/project",
         timestamp: "2026-08-01T10:00:00.000Z",
       },
       [assistantUsage(2)],
     );
     await setModifiedTime(sessionPath, "2026-08-01T11:00:00.000Z");
-    const replacement = catalog.refresh();
-    hydrationGate.resolve();
-    await replacement;
-    await catalog.waitForHydration();
-    expect(catalog.get("session-single-flight")?.costSummary?.totalUsd).toBe(2);
+    await catalog.refresh();
+    costReadGate.resolve();
+    await expect(staleCost).resolves.toBeUndefined();
+    await expect(catalog.costSummary("session-stale-cost")).resolves.toMatchObject({ totalUsd: 2 });
+  });
+
+  it("does not mark a summary exact when a descendant appears during loading", async () => {
+    const history = await makeTemporaryDirectory();
+    const rootPath = join(history, "project", "root.jsonl");
+    const childPath = join(history, "project", "root", "child.jsonl");
+    await writeSession(
+      rootPath,
+      {
+        id: "root-growing-tree",
+        title: "Growing tree",
+        cwd: "/workspace/project",
+        timestamp: "2026-08-01T10:00:00.000Z",
+      },
+      [assistantUsage(1)],
+    );
+    const costReadGate = deferred<void>();
+    const catalog = new SessionCatalog([history], {
+      beforeCostRead: () => costReadGate.promise,
+    });
+    await catalog.refresh();
+    const staleCost = catalog.costSummary("root-growing-tree");
+    await writeSession(
+      childPath,
+      {
+        id: "new-child",
+        title: "New child",
+        cwd: "/workspace/project",
+        timestamp: "2026-08-01T10:01:00.000Z",
+      },
+      [assistantUsage(0.5)],
+    );
+    await catalog.refresh();
+    costReadGate.resolve();
+
+    await expect(staleCost).resolves.toBeUndefined();
+    await expect(catalog.costSummary("root-growing-tree")).resolves.toMatchObject({
+      totalUsd: 1.5,
+      partial: false,
+    });
   });
 
   it("lists sessions by creation time instead of file activity", async () => {

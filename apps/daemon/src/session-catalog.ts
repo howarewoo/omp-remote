@@ -60,7 +60,6 @@ interface CatalogEntry {
   path: string;
   session: Session;
   exited: boolean;
-  cost?: SessionCostData;
 }
 
 interface CostCacheEntry {
@@ -70,14 +69,13 @@ interface CostCacheEntry {
 
 interface SessionCatalogOptions {
   onDiff?: (diff: CatalogDiff) => void;
-  beforeHydration?: () => Promise<void>;
-  startHydrationImmediately?: boolean;
+  beforeCostRead?: () => Promise<void>;
   beforeRefreshCommit?: () => Promise<void>;
 }
 
-interface HydrationTask {
-  path: string;
+interface CostLoad {
   fingerprint: string;
+  promise: Promise<SessionCostData | null>;
 }
 
 export interface CatalogDiff {
@@ -117,24 +115,19 @@ export async function resolveSessionRoots(homeDirectory: string, agentDirectory?
 export class SessionCatalog {
   readonly #roots: string[];
   #onDiff: ((diff: CatalogDiff) => void) | undefined;
-  #beforeHydration: (() => Promise<void>) | undefined;
+  #beforeCostRead: (() => Promise<void>) | undefined;
   #beforeRefreshCommit: (() => Promise<void>) | undefined;
   #entriesByPath = new Map<string, CatalogEntry>();
   #entriesBySessionId = new Map<string, CatalogEntry>();
   #rootEntriesBySessionId = new Map<string, CatalogEntry>();
   #sortedSessions: Session[] = [];
   #costCache = new Map<string, CostCacheEntry>();
-  #hydrationQueue = new Map<string, HydrationTask>();
-  #hydrating = new Map<string, string>();
-  #activeHydrations = 0;
-  #hydrationStarted: boolean;
-  #hydrationWaiters: Array<() => void> = [];
+  #costLoads = new Map<string, CostLoad>();
 
   constructor(roots: string[], options: SessionCatalogOptions = {}) {
     this.#roots = [...new Set(roots)];
     this.#onDiff = options.onDiff;
-    this.#beforeHydration = options.beforeHydration;
-    this.#hydrationStarted = options.startHydrationImmediately ?? true;
+    this.#beforeCostRead = options.beforeCostRead;
     this.#beforeRefreshCommit = options.beforeRefreshCommit;
   }
 
@@ -158,51 +151,23 @@ export class SessionCatalog {
       candidates,
       METADATA_READ_CONCURRENCY,
       async ({ fingerprint, path }) => {
-        const costCache = this.#costCache.get(path);
-        const cost = costCache?.fingerprint === fingerprint ? (costCache.cost ?? undefined) : undefined;
         const cached = this.#entriesByPath.get(path);
-        const withCost = cost ? { cost } : {};
-        if (cached?.fingerprint === fingerprint) return { ...cached, ...withCost };
+        if (cached?.fingerprint === fingerprint) return cached;
         const metadata = await readSessionMetadata(path);
-        return metadata ? { fingerprint, path, ...metadata, ...withCost } : null;
+        return metadata ? { fingerprint, path, ...metadata } : null;
       },
     );
     await this.#beforeRefreshCommit?.();
     const nextEntriesByPath = new Map<string, CatalogEntry>();
-    const hydrationPaths: HydrationTask[] = [];
     for (const entry of parsedEntries) {
-      if (!entry) continue;
-      const cached = this.#costCache.get(entry.path);
-      const latestCost = cached?.fingerprint === entry.fingerprint ? (cached.cost ?? undefined) : undefined;
-      if (latestCost) {
-        nextEntriesByPath.set(entry.path, { ...entry, cost: latestCost });
-      } else {
-        const { cost: _ignoredCost, ...withoutCost } = entry;
-        void _ignoredCost;
-        nextEntriesByPath.set(entry.path, withoutCost);
-      }
-      if (cached?.fingerprint !== entry.fingerprint) {
-        hydrationPaths.push({ path: entry.path, fingerprint: entry.fingerprint });
-      }
+      if (entry) nextEntriesByPath.set(entry.path, entry);
     }
 
     for (const path of this.#costCache.keys()) {
       if (!nextEntriesByPath.has(path)) this.#costCache.delete(path);
     }
 
-    const diff = this.#commitEntries(nextEntriesByPath);
-    for (const task of hydrationPaths) this.#scheduleHydration(task);
-    return diff;
-  }
-  startHydration(): void {
-    if (this.#hydrationStarted) return;
-    this.#hydrationStarted = true;
-    this.#pumpHydrationQueue();
-  }
-
-  async waitForHydration(): Promise<void> {
-    if (this.#activeHydrations === 0 && this.#hydrationQueue.size === 0) return;
-    await new Promise<void>((resolve) => this.#hydrationWaiters.push(resolve));
+    return this.#commitEntries(nextEntriesByPath);
   }
 
   list({ offset, limit, query }: CatalogQuery): CatalogPage {
@@ -223,6 +188,41 @@ export class SessionCatalog {
     const entry = this.#entriesBySessionId.get(sessionId);
     if (!entry) throw new Error("Session history was not found");
     return readTranscript(entry.path, findOwningBlobDirectory(entry.path, this.#roots));
+  }
+
+  async costSummary(sessionId: string): Promise<SessionCostSummary | undefined> {
+    const selectedRoot = this.#rootEntriesBySessionId.get(sessionId);
+    if (!selectedRoot) return undefined;
+    const entriesByPath = this.#entriesByPath;
+    const sessionPaths = new Set(entriesByPath.keys());
+    const matching = [...entriesByPath.values()].filter(
+      (entry) => findRootSessionPath(entry.path, sessionPaths) === selectedRoot.path,
+    );
+    const loaded = await mapWithConcurrency(matching, COST_HYDRATION_CONCURRENCY, async (entry) => ({
+      entry,
+      cost: await this.#loadCost(entry),
+    }));
+    const currentRoot = this.#rootEntriesBySessionId.get(sessionId);
+    if (currentRoot?.path !== selectedRoot.path || currentRoot.fingerprint !== selectedRoot.fingerprint) {
+      return undefined;
+    }
+    const currentEntriesByPath = this.#entriesByPath;
+    const currentSessionPaths = new Set(currentEntriesByPath.keys());
+    const currentMatching = [...currentEntriesByPath.values()].filter(
+      (entry) => findRootSessionPath(entry.path, currentSessionPaths) === currentRoot.path,
+    );
+    if (
+      currentMatching.length !== matching.length ||
+      currentMatching.some((entry) => entriesByPath.get(entry.path)?.fingerprint !== entry.fingerprint)
+    ) {
+      return undefined;
+    }
+    return buildCostSummary(
+      selectedRoot.path,
+      entriesByPath,
+      sessionPaths,
+      new Map(loaded.map(({ entry, cost }) => [entry.path, cost])),
+    );
   }
 
   fileChangeSources(sessionId: string): SessionFileChangeSourceSelection | undefined {
@@ -265,15 +265,10 @@ export class SessionCatalog {
       const activeSubagents = (activeSubagentsByRoot.get(rootPath) ?? []).sort((left, right) =>
         right.lastActivity.localeCompare(left.lastActivity),
       );
-      const session = { ...entry.session, activeSubagents };
-      const costSummary = buildCostSummary(rootPath, entriesByPath, sessionPaths);
-      if (costSummary) {
-        entriesByPath.set(rootPath, { ...entry, session: { ...session, costSummary } });
-      } else {
-        const { costSummary: _ignoredCostSummary, ...withoutCostSummary } = session;
-        void _ignoredCostSummary;
-        entriesByPath.set(rootPath, { ...entry, session: withoutCostSummary });
-      }
+      entriesByPath.set(rootPath, {
+        ...entry,
+        session: { ...entry.session, activeSubagents },
+      });
     }
 
     const nextEntriesBySessionId = new Map<string, CatalogEntry>();
@@ -316,63 +311,40 @@ export class SessionCatalog {
       try {
         this.#onDiff?.(diff);
       } catch {
-        // A listener failure must not poison hydration or future refreshes.
+        // A listener failure must not poison future refreshes.
       }
     }
     return diff;
   }
 
-  #scheduleHydration(task: HydrationTask): void {
-    if (this.#hydrating.get(task.path) === task.fingerprint) return;
-    if (this.#hydrationQueue.get(task.path)?.fingerprint === task.fingerprint) return;
-    this.#hydrationQueue.set(task.path, task);
-    if (this.#hydrationStarted) this.#pumpHydrationQueue();
-  }
+  async #loadCost(entry: CatalogEntry): Promise<SessionCostData | null> {
+    const cached = this.#costCache.get(entry.path);
+    if (cached?.fingerprint === entry.fingerprint) return cached.cost;
+    const existing = this.#costLoads.get(entry.path);
+    if (existing?.fingerprint === entry.fingerprint) return existing.promise;
 
-  #pumpHydrationQueue(): void {
-    while (this.#activeHydrations < COST_HYDRATION_CONCURRENCY && this.#hydrationQueue.size) {
-      const nextTask = [...this.#hydrationQueue.values()].find(
-        (candidate) => !this.#hydrating.has(candidate.path),
-      );
-      if (!nextTask) return;
-      this.#hydrationQueue.delete(nextTask.path);
-      this.#activeHydrations += 1;
-      this.#hydrating.set(nextTask.path, nextTask.fingerprint);
-      void this.#hydrate(nextTask).finally(() => {
-        this.#activeHydrations -= 1;
-        if (this.#hydrating.get(nextTask.path) === nextTask.fingerprint) {
-          this.#hydrating.delete(nextTask.path);
+    const load: CostLoad = {
+      fingerprint: entry.fingerprint,
+      promise: (async () => {
+        await this.#beforeCostRead?.();
+        let cost: SessionCostData | null;
+        try {
+          cost = await readSessionCost(entry.path);
+        } catch {
+          cost = null;
         }
-        this.#pumpHydrationQueue();
-        if (this.#activeHydrations === 0 && this.#hydrationQueue.size === 0) {
-          const waiters = this.#hydrationWaiters.splice(0);
-          for (const resolve of waiters) resolve();
+        if (this.#entriesByPath.get(entry.path)?.fingerprint === entry.fingerprint) {
+          this.#costCache.set(entry.path, { fingerprint: entry.fingerprint, cost });
         }
-      });
-    }
-  }
-
-  async #hydrate(task: HydrationTask): Promise<void> {
-    let cost: SessionCostData | null;
-    await this.#beforeHydration?.();
+        return cost;
+      })(),
+    };
+    this.#costLoads.set(entry.path, load);
     try {
-      cost = await readSessionCost(task.path);
-    } catch (error) {
-      if (isMissingPathError(error)) return;
-      cost = null;
+      return await load.promise;
+    } finally {
+      if (this.#costLoads.get(entry.path) === load) this.#costLoads.delete(entry.path);
     }
-    const current = this.#entriesByPath.get(task.path);
-    if (!current || current.fingerprint !== task.fingerprint) return;
-    this.#costCache.set(task.path, { fingerprint: task.fingerprint, cost });
-    const nextEntries = new Map(this.#entriesByPath);
-    if (cost) {
-      nextEntries.set(task.path, { ...current, cost });
-    } else {
-      const { cost: _ignoredCost, ...withoutCost } = current;
-      void _ignoredCost;
-      nextEntries.set(task.path, withoutCost);
-    }
-    this.#commitEntries(nextEntries);
   }
 }
 
@@ -629,6 +601,7 @@ function buildCostSummary(
   rootPath: string,
   entriesByPath: ReadonlyMap<string, CatalogEntry>,
   sessionPaths: ReadonlySet<string>,
+  costsByPath: ReadonlyMap<string, SessionCostData | null>,
 ): SessionCostSummary | undefined {
   const children = new Map<string, string[]>();
   const descendants = [...entriesByPath.values()].filter(
@@ -654,17 +627,18 @@ function buildCostSummary(
   const agents: SessionCostAgent[] = [];
   for (const path of orderedPaths) {
     const entry = entriesByPath.get(path);
-    if (!entry?.cost?.exact) return undefined;
+    const cost = costsByPath.get(path);
+    if (!entry || !cost?.exact) return undefined;
     const parentPath =
       path === rootPath ? null : (findNearestParentSessionPath(path, sessionPaths) ?? rootPath);
-    const nextTotal = totalUsd + entry.cost.totalUsd;
+    const nextTotal = totalUsd + cost.totalUsd;
     if (!Number.isFinite(nextTotal)) return undefined;
     totalUsd = nextTotal;
     agents.push({
       sessionId: entry.session.id,
       name: entry.session.name ?? basename(path, extname(path)),
       parentSessionId: parentPath ? (entriesByPath.get(parentPath)?.session.id ?? null) : null,
-      totalUsd: entry.cost.totalUsd,
+      totalUsd: cost.totalUsd,
       available: true,
     });
   }
@@ -682,26 +656,6 @@ function findNearestParentSessionPath(path: string, sessionPaths: ReadonlySet<st
 }
 
 function sessionsEqual(left: Session, right: Session): boolean {
-  if ((left.costSummary === undefined) !== (right.costSummary === undefined)) return false;
-  if (left.costSummary && right.costSummary) {
-    if (
-      left.costSummary.totalUsd !== right.costSummary.totalUsd ||
-      left.costSummary.partial !== right.costSummary.partial ||
-      left.costSummary.agents.length !== right.costSummary.agents.length ||
-      !left.costSummary.agents.every((agent, index) => {
-        const other = right.costSummary?.agents[index];
-        return (
-          agent.sessionId === other?.sessionId &&
-          agent.name === other.name &&
-          agent.parentSessionId === other.parentSessionId &&
-          agent.totalUsd === other.totalUsd &&
-          agent.available === other.available
-        );
-      })
-    ) {
-      return false;
-    }
-  }
   return (
     left.activeSubagents.length === right.activeSubagents.length &&
     left.activeSubagents.every((subagent, index) => {

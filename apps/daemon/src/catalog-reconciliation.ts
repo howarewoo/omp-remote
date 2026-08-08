@@ -12,9 +12,7 @@ interface ReconciledSessionRegistrarOptions {
   requestCatalogReconciliation(): Promise<void>;
 }
 
-export type CatalogSessionMetadataPatch = Partial<
-  Pick<Session, "name" | "createdAt" | "activeSubagents" | "costSummary">
->;
+export type CatalogSessionMetadataPatch = Partial<Pick<Session, "name" | "createdAt" | "activeSubagents">>;
 
 export function getCatalogSessionMetadataPatch(
   liveSession: Session,
@@ -34,12 +32,6 @@ export function getCatalogSessionMetadataPatch(
     patch.activeSubagents = catalogSession.activeSubagents;
     changed = true;
   }
-  if (!costSummariesEqual(liveSession.costSummary, catalogSession.costSummary)) {
-    if (catalogSession.costSummary !== undefined) {
-      patch.costSummary = catalogSession.costSummary;
-      changed = true;
-    }
-  }
   return changed ? patch : null;
 }
 
@@ -52,27 +44,6 @@ function activeSubagentsEqual(left: Session["activeSubagents"], right: Session["
         subagent.id === other?.id &&
         subagent.name === other.name &&
         subagent.lastActivity === other.lastActivity
-      );
-    })
-  );
-}
-function costSummariesEqual(
-  left: Session["costSummary"] | undefined,
-  right: Session["costSummary"] | undefined,
-): boolean {
-  if (left === undefined || right === undefined) return left === right;
-  return (
-    left.totalUsd === right.totalUsd &&
-    left.partial === right.partial &&
-    left.agents.length === right.agents.length &&
-    left.agents.every((agent, index) => {
-      const other = right.agents[index];
-      return (
-        agent.sessionId === other?.sessionId &&
-        agent.name === other.name &&
-        agent.parentSessionId === other.parentSessionId &&
-        agent.totalUsd === other.totalUsd &&
-        agent.available === other.available
       );
     })
   );

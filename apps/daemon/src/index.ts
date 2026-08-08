@@ -18,6 +18,7 @@ import {
   type SessionBranchTopology,
   SessionBranchTopologySchema,
   SessionCatalogPageSchema,
+  SessionCostResponseSchema,
   SessionFileChangesResponseSchema,
   type SessionModelOption,
   SessionTranscriptResponseSchema,
@@ -171,7 +172,6 @@ const environment = EnvironmentSchema.parse(process.env);
 const savedWorkingDirectories = await SavedWorkingDirectoryStore.load();
 const sessionCatalog = new SessionCatalog(
   await resolveSessionRoots(homedir(), process.env.PI_CODING_AGENT_DIR),
-  { startHydrationImmediately: false },
 );
 const initialCatalogDiff = await sessionCatalog.refresh();
 const registry = new SessionRegistry();
@@ -269,6 +269,24 @@ app.get("/api/sessions/:sessionId/transcript", async (request, reply) => {
   } catch (error) {
     logger.error("Could not read OMP session transcript", error, { sessionId: params.data.sessionId });
     return reply.code(500).send({ error: "Session history could not be read" });
+  }
+});
+
+app.get("/api/sessions/:sessionId/cost", async (request, reply) => {
+  const params = SessionParamsSchema.safeParse(request.params);
+  if (!params.success) return reply.code(404).send({ error: "Session history was not found" });
+  if (!sessionCatalog.get(params.data.sessionId)) await requestCatalogReconciliation();
+  if (!sessionCatalog.get(params.data.sessionId)) {
+    return reply.code(404).send({ error: "Session history was not found" });
+  }
+  try {
+    return SessionCostResponseSchema.parse({
+      sessionId: params.data.sessionId,
+      costSummary: (await sessionCatalog.costSummary(params.data.sessionId)) ?? null,
+    });
+  } catch (error) {
+    logger.error("Could not read OMP session cost", error, { sessionId: params.data.sessionId });
+    return reply.code(500).send({ error: "Session cost could not be read" });
   }
 });
 
@@ -618,7 +636,6 @@ app.get("/extension", { websocket: true }, (socket, request) => {
           ...sanitizeExtensionSession(frame.session),
           createdAt: catalogSession?.createdAt ?? frame.session.createdAt ?? frame.session.lastActivity,
           activeSubagents: catalogSession?.activeSubagents ?? [],
-          ...(catalogSession?.costSummary ? { costSummary: catalogSession.costSummary } : {}),
         }),
       );
       refreshSessionBranch(frame.session.id, frame.session.cwd);
@@ -721,7 +738,6 @@ if (existsSync(webDist)) {
 
 registry.subscribe((event) => broadcast(event));
 await app.listen({ host: environment.OMP_REMOTE_HOST, port: environment.OMP_REMOTE_PORT });
-sessionCatalog.startHydration();
 logger.info("OMP Remote daemon listening", {
   host: environment.OMP_REMOTE_HOST,
   port: environment.OMP_REMOTE_PORT,
@@ -827,12 +843,12 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
     capabilities: ["prompt", "steer", "follow_up", "abort", "kill", "resume", "model", "effort"],
     messages: [],
     sessionPath: stateResponse.data.sessionFile ?? null,
-    ...(catalogSession?.costSummary ? { costSummary: catalogSession.costSummary } : {}),
     activeSubagents: catalogSession?.activeSubagents ?? [],
     skillCommands,
   };
   rpcSessions.set(sessionId, rpc);
   registry.upsert(session);
+  void requestCatalogReconciliation();
 
   try {
     const messagesResponse = RpcMessagesResponseSchema.parse(await rpc.request({ type: "get_messages" }));
@@ -1085,18 +1101,8 @@ function syncCatalogSession(catalogSession: Session): void {
   const liveSession = registry.get(catalogSession.id);
   if (!liveSession) return;
 
-  if (catalogSession.costSummary === undefined && liveSession.costSummary !== undefined) {
-    const { costSummary: _ignoredCostSummary, ...withoutCostSummary } = liveSession;
-    void _ignoredCostSummary;
-    registry.upsert(withoutCostSummary);
-    return;
-  }
   const patch = getCatalogSessionMetadataPatch(liveSession, catalogSession);
   if (!patch) return;
-  if (catalogSession.costSummary !== undefined) {
-    registry.upsert({ ...liveSession, ...patch, costSummary: catalogSession.costSummary });
-    return;
-  }
   registry.update(catalogSession.id, patch);
 }
 
