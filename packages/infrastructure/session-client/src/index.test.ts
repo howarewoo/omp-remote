@@ -295,6 +295,24 @@ describe("patchSession", () => {
     });
   });
 
+  it("propagates live cost summary updates", () => {
+    const costSummary = {
+      totalUsd: 1.75,
+      partial: true,
+      agents: [
+        {
+          sessionId: "session-1",
+          name: "Stream test",
+          parentSessionId: null,
+          totalUsd: 1.75,
+          available: true,
+        },
+      ],
+    };
+    const sessions = patchSession([SESSION], "session-1", { costSummary });
+    expect(sessions[0]?.costSummary).toEqual(costSummary);
+  });
+
   it("returns the original array when the session ID is absent", () => {
     const sessions = [SESSION];
 

@@ -16,6 +16,8 @@ import {
   compareSessionsByCreation,
   getTranscriptImageByteLength,
   type Session,
+  type SessionCostAgent,
+  type SessionCostSummary,
   TRANSCRIPT_IMAGE_MAX_BYTES,
   TRANSCRIPT_IMAGE_SESSION_MAX_BYTES,
   type TranscriptImage,
@@ -29,6 +31,7 @@ import { materializeReadImages, normalizeRawMessage, ToolCallTracker } from "./m
 const METADATA_READ_BYTES = 16 * 1024;
 const MAX_TRANSCRIPT_MESSAGES = 200;
 const METADATA_READ_CONCURRENCY = 32;
+const COST_HYDRATION_CONCURRENCY = 4;
 const MAX_FILE_CHANGE_SOURCES = 256;
 
 export interface SessionFileChangeSourceDescriptor {
@@ -42,6 +45,11 @@ export interface SessionFileChangeSourceSelection {
   truncated: boolean;
 }
 
+interface SessionCostData {
+  totalUsd: number;
+  exact: boolean;
+}
+
 interface SessionMetadata {
   exited: boolean;
   session: Session;
@@ -52,6 +60,24 @@ interface CatalogEntry {
   path: string;
   session: Session;
   exited: boolean;
+  cost?: SessionCostData;
+}
+
+interface CostCacheEntry {
+  fingerprint: string;
+  cost: SessionCostData | null;
+}
+
+interface SessionCatalogOptions {
+  onDiff?: (diff: CatalogDiff) => void;
+  beforeHydration?: () => Promise<void>;
+  startHydrationImmediately?: boolean;
+  beforeRefreshCommit?: () => Promise<void>;
+}
+
+interface HydrationTask {
+  path: string;
+  fingerprint: string;
 }
 
 export interface CatalogDiff {
@@ -90,111 +116,93 @@ export async function resolveSessionRoots(homeDirectory: string, agentDirectory?
 
 export class SessionCatalog {
   readonly #roots: string[];
+  #onDiff: ((diff: CatalogDiff) => void) | undefined;
+  #beforeHydration: (() => Promise<void>) | undefined;
+  #beforeRefreshCommit: (() => Promise<void>) | undefined;
   #entriesByPath = new Map<string, CatalogEntry>();
   #entriesBySessionId = new Map<string, CatalogEntry>();
   #rootEntriesBySessionId = new Map<string, CatalogEntry>();
   #sortedSessions: Session[] = [];
+  #costCache = new Map<string, CostCacheEntry>();
+  #hydrationQueue = new Map<string, HydrationTask>();
+  #hydrating = new Map<string, string>();
+  #activeHydrations = 0;
+  #hydrationStarted: boolean;
+  #hydrationWaiters: Array<() => void> = [];
 
-  constructor(roots: string[]) {
+  constructor(roots: string[], options: SessionCatalogOptions = {}) {
     this.#roots = [...new Set(roots)];
+    this.#onDiff = options.onDiff;
+    this.#beforeHydration = options.beforeHydration;
+    this.#hydrationStarted = options.startHydrationImmediately ?? true;
+    this.#beforeRefreshCommit = options.beforeRefreshCommit;
+  }
+
+  setDiffListener(listener: ((diff: CatalogDiff) => void) | undefined): void {
+    this.#onDiff = listener;
   }
 
   async refresh(): Promise<CatalogDiff> {
     const paths = await findSessionFiles(this.#roots);
-    const nextEntriesByPath = new Map<string, CatalogEntry>();
-    const uncachedPaths: Array<{ fingerprint: string; path: string }> = [];
-
+    const candidates: Array<{ fingerprint: string; path: string }> = [];
     for (const path of paths) {
       try {
         const fileStats = await stat(path);
-        const fingerprint = `${fileStats.size}:${fileStats.mtimeMs}`;
-        const cached = this.#entriesByPath.get(path);
-        if (cached?.fingerprint === fingerprint) nextEntriesByPath.set(path, cached);
-        else uncachedPaths.push({ fingerprint, path });
+        candidates.push({ path, fingerprint: `${fileStats.size}:${fileStats.mtimeMs}` });
       } catch (error) {
         if (!isMissingPathError(error)) throw error;
       }
     }
 
     const parsedEntries = await mapWithConcurrency(
-      uncachedPaths,
+      candidates,
       METADATA_READ_CONCURRENCY,
       async ({ fingerprint, path }) => {
+        const costCache = this.#costCache.get(path);
+        const cost = costCache?.fingerprint === fingerprint ? (costCache.cost ?? undefined) : undefined;
+        const cached = this.#entriesByPath.get(path);
+        const withCost = cost ? { cost } : {};
+        if (cached?.fingerprint === fingerprint) return { ...cached, ...withCost };
         const metadata = await readSessionMetadata(path);
-        return metadata ? { fingerprint, path, ...metadata } : null;
+        return metadata ? { fingerprint, path, ...metadata, ...withCost } : null;
       },
     );
+    await this.#beforeRefreshCommit?.();
+    const nextEntriesByPath = new Map<string, CatalogEntry>();
+    const hydrationPaths: HydrationTask[] = [];
     for (const entry of parsedEntries) {
-      if (entry) nextEntriesByPath.set(entry.path, entry);
-    }
-
-    const sessionPaths = new Set(nextEntriesByPath.keys());
-    const rootPaths = new Set<string>();
-    const activeSubagentsByRoot = new Map<string, Session["activeSubagents"]>();
-    for (const entry of nextEntriesByPath.values()) {
-      const rootPath = findRootSessionPath(entry.path, sessionPaths);
-      if (rootPath === entry.path) {
-        rootPaths.add(rootPath);
-      } else if (!entry.exited) {
-        const activeSubagents = activeSubagentsByRoot.get(rootPath) ?? [];
-        activeSubagents.push({
-          id: entry.session.id,
-          name: entry.session.name ?? basename(entry.path, extname(entry.path)),
-          lastActivity: entry.session.lastActivity,
-        });
-        activeSubagentsByRoot.set(rootPath, activeSubagents);
-      }
-    }
-
-    for (const rootPath of rootPaths) {
-      const entry = nextEntriesByPath.get(rootPath);
       if (!entry) continue;
-      const activeSubagents = (activeSubagentsByRoot.get(rootPath) ?? []).sort((left, right) =>
-        right.lastActivity.localeCompare(left.lastActivity),
-      );
-      nextEntriesByPath.set(rootPath, {
-        ...entry,
-        session: { ...entry.session, activeSubagents },
-      });
-    }
-
-    const nextEntriesBySessionId = new Map<string, CatalogEntry>();
-    const nextRootEntriesBySessionId = new Map<string, CatalogEntry>();
-    for (const entry of nextEntriesByPath.values()) {
-      const existing = nextEntriesBySessionId.get(entry.session.id);
-      if (!existing || entry.session.lastActivity > existing.session.lastActivity) {
-        nextEntriesBySessionId.set(entry.session.id, entry);
+      const cached = this.#costCache.get(entry.path);
+      const latestCost = cached?.fingerprint === entry.fingerprint ? (cached.cost ?? undefined) : undefined;
+      if (latestCost) {
+        nextEntriesByPath.set(entry.path, { ...entry, cost: latestCost });
+      } else {
+        const { cost: _ignoredCost, ...withoutCost } = entry;
+        void _ignoredCost;
+        nextEntriesByPath.set(entry.path, withoutCost);
       }
-      if (!rootPaths.has(entry.path)) continue;
-      const existingRoot = nextRootEntriesBySessionId.get(entry.session.id);
-      if (!existingRoot || entry.session.lastActivity > existingRoot.session.lastActivity) {
-        nextRootEntriesBySessionId.set(entry.session.id, entry);
+      if (cached?.fingerprint !== entry.fingerprint) {
+        hydrationPaths.push({ path: entry.path, fingerprint: entry.fingerprint });
       }
     }
 
-    const upserted: Session[] = [];
-    for (const [sessionId, entry] of nextRootEntriesBySessionId) {
-      const previous = this.#rootEntriesBySessionId.get(sessionId);
-      if (
-        previous?.path !== entry.path ||
-        previous.fingerprint !== entry.fingerprint ||
-        !sessionsEqual(previous.session, entry.session)
-      ) {
-        upserted.push(cloneSession(entry.session));
-      }
+    for (const path of this.#costCache.keys()) {
+      if (!nextEntriesByPath.has(path)) this.#costCache.delete(path);
     }
-    const removed = [...this.#rootEntriesBySessionId.keys()].filter(
-      (sessionId) => !nextRootEntriesBySessionId.has(sessionId),
-    );
 
-    this.#entriesByPath = nextEntriesByPath;
-    this.#entriesBySessionId = nextEntriesBySessionId;
-    this.#rootEntriesBySessionId = nextRootEntriesBySessionId;
-    this.#sortedSessions = [...nextRootEntriesBySessionId.values()]
-      .map((entry) => entry.session)
-      .sort(compareSessionsByCreation);
+    const diff = this.#commitEntries(nextEntriesByPath);
+    for (const task of hydrationPaths) this.#scheduleHydration(task);
+    return diff;
+  }
+  startHydration(): void {
+    if (this.#hydrationStarted) return;
+    this.#hydrationStarted = true;
+    this.#pumpHydrationQueue();
+  }
 
-    return { upserted, removed };
+  async waitForHydration(): Promise<void> {
+    if (this.#activeHydrations === 0 && this.#hydrationQueue.size === 0) return;
+    await new Promise<void>((resolve) => this.#hydrationWaiters.push(resolve));
   }
 
   list({ offset, limit, query }: CatalogQuery): CatalogPage {
@@ -230,6 +238,141 @@ export class SessionCatalog {
       sessionPath: entry.path,
     }));
     return { sources, truncated: matching.length > sources.length };
+  }
+
+  #commitEntries(entriesByPath: Map<string, CatalogEntry>): CatalogDiff {
+    const sessionPaths = new Set(entriesByPath.keys());
+    const rootPaths = new Set<string>();
+    const activeSubagentsByRoot = new Map<string, Session["activeSubagents"]>();
+    for (const entry of entriesByPath.values()) {
+      const rootPath = findRootSessionPath(entry.path, sessionPaths);
+      if (rootPath === entry.path) {
+        rootPaths.add(rootPath);
+      } else if (!entry.exited) {
+        const activeSubagents = activeSubagentsByRoot.get(rootPath) ?? [];
+        activeSubagents.push({
+          id: entry.session.id,
+          name: entry.session.name ?? basename(entry.path, extname(entry.path)),
+          lastActivity: entry.session.lastActivity,
+        });
+        activeSubagentsByRoot.set(rootPath, activeSubagents);
+      }
+    }
+
+    for (const rootPath of rootPaths) {
+      const entry = entriesByPath.get(rootPath);
+      if (!entry) continue;
+      const activeSubagents = (activeSubagentsByRoot.get(rootPath) ?? []).sort((left, right) =>
+        right.lastActivity.localeCompare(left.lastActivity),
+      );
+      const session = { ...entry.session, activeSubagents };
+      const costSummary = buildCostSummary(rootPath, entriesByPath, sessionPaths);
+      if (costSummary) {
+        entriesByPath.set(rootPath, { ...entry, session: { ...session, costSummary } });
+      } else {
+        const { costSummary: _ignoredCostSummary, ...withoutCostSummary } = session;
+        void _ignoredCostSummary;
+        entriesByPath.set(rootPath, { ...entry, session: withoutCostSummary });
+      }
+    }
+
+    const nextEntriesBySessionId = new Map<string, CatalogEntry>();
+    const nextRootEntriesBySessionId = new Map<string, CatalogEntry>();
+    for (const entry of entriesByPath.values()) {
+      const existing = nextEntriesBySessionId.get(entry.session.id);
+      if (!existing || entry.session.lastActivity > existing.session.lastActivity) {
+        nextEntriesBySessionId.set(entry.session.id, entry);
+      }
+      if (!rootPaths.has(entry.path)) continue;
+      const existingRoot = nextRootEntriesBySessionId.get(entry.session.id);
+      if (!existingRoot || entry.session.lastActivity > existingRoot.session.lastActivity) {
+        nextRootEntriesBySessionId.set(entry.session.id, entry);
+      }
+    }
+
+    const upserted: Session[] = [];
+    for (const [sessionId, entry] of nextRootEntriesBySessionId) {
+      const previous = this.#rootEntriesBySessionId.get(sessionId);
+      if (
+        previous?.path !== entry.path ||
+        previous?.fingerprint !== entry.fingerprint ||
+        !sessionsEqual(previous.session, entry.session)
+      ) {
+        upserted.push(cloneSession(entry.session));
+      }
+    }
+    const removed = [...this.#rootEntriesBySessionId.keys()].filter(
+      (sessionId) => !nextRootEntriesBySessionId.has(sessionId),
+    );
+
+    this.#entriesByPath = entriesByPath;
+    this.#entriesBySessionId = nextEntriesBySessionId;
+    this.#rootEntriesBySessionId = nextRootEntriesBySessionId;
+    this.#sortedSessions = [...nextRootEntriesBySessionId.values()]
+      .map((entry) => entry.session)
+      .sort(compareSessionsByCreation);
+    const diff = { upserted, removed };
+    if (upserted.length || removed.length) {
+      try {
+        this.#onDiff?.(diff);
+      } catch {
+        // A listener failure must not poison hydration or future refreshes.
+      }
+    }
+    return diff;
+  }
+
+  #scheduleHydration(task: HydrationTask): void {
+    if (this.#hydrating.get(task.path) === task.fingerprint) return;
+    if (this.#hydrationQueue.get(task.path)?.fingerprint === task.fingerprint) return;
+    this.#hydrationQueue.set(task.path, task);
+    if (this.#hydrationStarted) this.#pumpHydrationQueue();
+  }
+
+  #pumpHydrationQueue(): void {
+    while (this.#activeHydrations < COST_HYDRATION_CONCURRENCY && this.#hydrationQueue.size) {
+      const nextTask = [...this.#hydrationQueue.values()].find(
+        (candidate) => !this.#hydrating.has(candidate.path),
+      );
+      if (!nextTask) return;
+      this.#hydrationQueue.delete(nextTask.path);
+      this.#activeHydrations += 1;
+      this.#hydrating.set(nextTask.path, nextTask.fingerprint);
+      void this.#hydrate(nextTask).finally(() => {
+        this.#activeHydrations -= 1;
+        if (this.#hydrating.get(nextTask.path) === nextTask.fingerprint) {
+          this.#hydrating.delete(nextTask.path);
+        }
+        this.#pumpHydrationQueue();
+        if (this.#activeHydrations === 0 && this.#hydrationQueue.size === 0) {
+          const waiters = this.#hydrationWaiters.splice(0);
+          for (const resolve of waiters) resolve();
+        }
+      });
+    }
+  }
+
+  async #hydrate(task: HydrationTask): Promise<void> {
+    let cost: SessionCostData | null;
+    await this.#beforeHydration?.();
+    try {
+      cost = await readSessionCost(task.path);
+    } catch (error) {
+      if (isMissingPathError(error)) return;
+      cost = null;
+    }
+    const current = this.#entriesByPath.get(task.path);
+    if (!current || current.fingerprint !== task.fingerprint) return;
+    this.#costCache.set(task.path, { fingerprint: task.fingerprint, cost });
+    const nextEntries = new Map(this.#entriesByPath);
+    if (cost) {
+      nextEntries.set(task.path, { ...current, cost });
+    } else {
+      const { cost: _ignoredCost, ...withoutCost } = current;
+      void _ignoredCost;
+      nextEntries.set(task.path, withoutCost);
+    }
+    this.#commitEntries(nextEntries);
   }
 }
 
@@ -316,6 +459,30 @@ async function readSessionMetadata(path: string): Promise<SessionMetadata | null
   } finally {
     await handle?.close();
   }
+}
+async function readSessionCost(path: string): Promise<SessionCostData> {
+  let totalUsd = 0;
+  let exact = true;
+  const lines = createInterface({ input: createReadStream(path), crlfDelay: Number.POSITIVE_INFINITY });
+  for await (const line of lines) {
+    const record = parseRecord(line);
+    if (record?.type !== "message" || !isRecord(record.message) || record.message.role !== "assistant")
+      continue;
+    const usage = isRecord(record.message.usage) ? record.message.usage : null;
+    const cost = usage && isRecord(usage.cost) ? usage.cost : null;
+    const value = cost?.total;
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      exact = false;
+      continue;
+    }
+    const nextTotal = totalUsd + value;
+    if (!Number.isFinite(nextTotal)) {
+      exact = false;
+      continue;
+    }
+    totalUsd = nextTotal;
+  }
+  return { totalUsd, exact };
 }
 
 async function readTranscript(path: string, blobDirectory?: string): Promise<TranscriptMessage[]> {
@@ -450,7 +617,7 @@ function fallbackSessionName(path: string, id: string, cwd: string, rawTimestamp
   return stem === generatedStem ? basename(cwd) || null : stem;
 }
 
-function findRootSessionPath(path: string, sessionPaths: Set<string>): string {
+function findRootSessionPath(path: string, sessionPaths: ReadonlySet<string>): string {
   let rootPath = path;
   while (true) {
     const parentPath = `${dirname(rootPath)}.jsonl`;
@@ -458,8 +625,83 @@ function findRootSessionPath(path: string, sessionPaths: Set<string>): string {
     rootPath = parentPath;
   }
 }
+function buildCostSummary(
+  rootPath: string,
+  entriesByPath: ReadonlyMap<string, CatalogEntry>,
+  sessionPaths: ReadonlySet<string>,
+): SessionCostSummary | undefined {
+  const children = new Map<string, string[]>();
+  const descendants = [...entriesByPath.values()].filter(
+    (entry) => findRootSessionPath(entry.path, sessionPaths) === rootPath,
+  );
+  for (const entry of descendants) {
+    if (entry.path === rootPath) continue;
+    const parentPath = findNearestParentSessionPath(entry.path, sessionPaths) ?? rootPath;
+    const siblings = children.get(parentPath) ?? [];
+    siblings.push(entry.path);
+    children.set(parentPath, siblings);
+  }
+  for (const paths of children.values()) paths.sort((left, right) => left.localeCompare(right));
+
+  const orderedPaths: string[] = [];
+  const append = (path: string): void => {
+    orderedPaths.push(path);
+    for (const child of children.get(path) ?? []) append(child);
+  };
+  append(rootPath);
+
+  let totalUsd = 0;
+  const agents: SessionCostAgent[] = [];
+  for (const path of orderedPaths) {
+    const entry = entriesByPath.get(path);
+    if (!entry?.cost?.exact) return undefined;
+    const parentPath =
+      path === rootPath ? null : (findNearestParentSessionPath(path, sessionPaths) ?? rootPath);
+    const nextTotal = totalUsd + entry.cost.totalUsd;
+    if (!Number.isFinite(nextTotal)) return undefined;
+    totalUsd = nextTotal;
+    agents.push({
+      sessionId: entry.session.id,
+      name: entry.session.name ?? basename(path, extname(path)),
+      parentSessionId: parentPath ? (entriesByPath.get(parentPath)?.session.id ?? null) : null,
+      totalUsd: entry.cost.totalUsd,
+      available: true,
+    });
+  }
+  return { totalUsd, partial: false, agents };
+}
+
+function findNearestParentSessionPath(path: string, sessionPaths: ReadonlySet<string>): string | null {
+  let separatorIndex = path.lastIndexOf("/");
+  while (separatorIndex > 0) {
+    const parentPath = `${path.slice(0, separatorIndex)}.jsonl`;
+    if (sessionPaths.has(parentPath)) return parentPath;
+    separatorIndex = path.lastIndexOf("/", separatorIndex - 1);
+  }
+  return null;
+}
 
 function sessionsEqual(left: Session, right: Session): boolean {
+  if ((left.costSummary === undefined) !== (right.costSummary === undefined)) return false;
+  if (left.costSummary && right.costSummary) {
+    if (
+      left.costSummary.totalUsd !== right.costSummary.totalUsd ||
+      left.costSummary.partial !== right.costSummary.partial ||
+      left.costSummary.agents.length !== right.costSummary.agents.length ||
+      !left.costSummary.agents.every((agent, index) => {
+        const other = right.costSummary?.agents[index];
+        return (
+          agent.sessionId === other?.sessionId &&
+          agent.name === other.name &&
+          agent.parentSessionId === other.parentSessionId &&
+          agent.totalUsd === other.totalUsd &&
+          agent.available === other.available
+        );
+      })
+    ) {
+      return false;
+    }
+  }
   return (
     left.activeSubagents.length === right.activeSubagents.length &&
     left.activeSubagents.every((subagent, index) => {
@@ -523,16 +765,22 @@ function sessionHasEnded(records: Record<string, unknown>[]): boolean {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
 function isMissingPathError(error: unknown): boolean {
   return isRecord(error) && (error.code === "ENOENT" || error.code === "ENOTDIR");
 }
-
 function cloneSession(session: Session): Session {
   return {
     ...session,
     capabilities: [...session.capabilities],
     messages: [],
+    ...(session.costSummary
+      ? {
+          costSummary: {
+            ...session.costSummary,
+            agents: session.costSummary.agents.map((agent) => ({ ...agent })),
+          },
+        }
+      : {}),
     activeSubagents: session.activeSubagents.map((subagent) => ({ ...subagent })),
   };
 }

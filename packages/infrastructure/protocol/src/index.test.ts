@@ -526,7 +526,13 @@ describe("historical session schemas", () => {
     sessionPath: "/home/user/.omp/agent/sessions/project/session.jsonl",
     activeSubagents: [],
     skillCommands: [],
+    costSummary: { totalUsd: 0, partial: true, agents: [] },
   };
+  it("preserves legacy sessions without a cost summary", () => {
+    const { costSummary: ignoredCostSummary, ...legacy } = historicalSession;
+    void ignoredCostSummary;
+    expect(SessionSchema.parse(legacy).costSummary).toBeUndefined();
+  });
 
   it("accepts resumable historical sessions", () => {
     expect(SessionSchema.parse(historicalSession)).toEqual(historicalSession);

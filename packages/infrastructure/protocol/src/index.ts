@@ -183,6 +183,23 @@ export const ActiveSubagentSchema = z.object({
   name: z.string().min(1),
   lastActivity: z.string(),
 });
+export const SessionCostAgentSchema = z
+  .object({
+    sessionId: z.string().min(1),
+    name: z.string().min(1),
+    parentSessionId: z.string().min(1).nullable(),
+    totalUsd: z.number().finite().nonnegative(),
+    available: z.boolean(),
+  })
+  .strict();
+
+export const SessionCostSummarySchema = z
+  .object({
+    totalUsd: z.number().finite().nonnegative(),
+    partial: z.boolean(),
+    agents: z.array(SessionCostAgentSchema),
+  })
+  .strict();
 
 export const SkillCommandSchema = z.object({
   name: z.string().regex(/^skill:[^\s]+$/),
@@ -272,6 +289,7 @@ export const SessionSchema = z.object({
   capabilities: z.array(SessionCapabilitySchema),
   messages: z.array(TranscriptMessageSchema),
   sessionPath: z.string().min(1).nullable(),
+  costSummary: SessionCostSummarySchema.optional(),
   activeSubagents: z.array(ActiveSubagentSchema).default([]),
   skillCommands: z.array(SkillCommandSchema).default([]),
 });
@@ -753,6 +771,8 @@ export type SessionPatch = z.infer<typeof SessionPatchSchema>;
 export type SessionCapability = z.infer<typeof SessionCapabilitySchema>;
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
 export type SkillCommand = z.infer<typeof SkillCommandSchema>;
+export type SessionCostAgent = z.infer<typeof SessionCostAgentSchema>;
+export type SessionCostSummary = z.infer<typeof SessionCostSummarySchema>;
 export type TranscriptMessage = z.infer<typeof TranscriptMessageSchema>;
 
 export function compareSessionsByCreation(left: Session, right: Session): number {

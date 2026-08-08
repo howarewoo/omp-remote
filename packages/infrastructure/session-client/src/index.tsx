@@ -593,6 +593,7 @@ export function patchSession(sessions: Session[], sessionId: string, patch: Sess
   if (patch.sessionPath !== undefined) updated.sessionPath = patch.sessionPath;
   if (patch.activeSubagents !== undefined) updated.activeSubagents = patch.activeSubagents;
   if (patch.skillCommands !== undefined) updated.skillCommands = patch.skillCommands;
+  if (patch.costSummary !== undefined) updated.costSummary = patch.costSummary;
   const next = [...sessions];
   next[index] = updated;
   return next;

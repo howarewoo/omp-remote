@@ -171,9 +171,13 @@ const environment = EnvironmentSchema.parse(process.env);
 const savedWorkingDirectories = await SavedWorkingDirectoryStore.load();
 const sessionCatalog = new SessionCatalog(
   await resolveSessionRoots(homedir(), process.env.PI_CODING_AGENT_DIR),
+  { startHydrationImmediately: false },
 );
 const initialCatalogDiff = await sessionCatalog.refresh();
 const registry = new SessionRegistry();
+sessionCatalog.setDiffListener(({ upserted }) => {
+  for (const session of upserted) syncCatalogSession(session);
+});
 const browserSockets = new Set<WebSocket>();
 const rpcSessions = new Map<string, RpcSession>();
 const extensionSockets = new Map<string, WebSocket>();
@@ -614,6 +618,7 @@ app.get("/extension", { websocket: true }, (socket, request) => {
           ...sanitizeExtensionSession(frame.session),
           createdAt: catalogSession?.createdAt ?? frame.session.createdAt ?? frame.session.lastActivity,
           activeSubagents: catalogSession?.activeSubagents ?? [],
+          ...(catalogSession?.costSummary ? { costSummary: catalogSession.costSummary } : {}),
         }),
       );
       refreshSessionBranch(frame.session.id, frame.session.cwd);
@@ -716,6 +721,7 @@ if (existsSync(webDist)) {
 
 registry.subscribe((event) => broadcast(event));
 await app.listen({ host: environment.OMP_REMOTE_HOST, port: environment.OMP_REMOTE_PORT });
+sessionCatalog.startHydration();
 logger.info("OMP Remote daemon listening", {
   host: environment.OMP_REMOTE_HOST,
   port: environment.OMP_REMOTE_PORT,
@@ -821,6 +827,7 @@ async function launchRpcSession(cwd: string, resume: string | null): Promise<Ses
     capabilities: ["prompt", "steer", "follow_up", "abort", "kill", "resume", "model", "effort"],
     messages: [],
     sessionPath: stateResponse.data.sessionFile ?? null,
+    ...(catalogSession?.costSummary ? { costSummary: catalogSession.costSummary } : {}),
     activeSubagents: catalogSession?.activeSubagents ?? [],
     skillCommands,
   };
@@ -1078,8 +1085,19 @@ function syncCatalogSession(catalogSession: Session): void {
   const liveSession = registry.get(catalogSession.id);
   if (!liveSession) return;
 
+  if (catalogSession.costSummary === undefined && liveSession.costSummary !== undefined) {
+    const { costSummary: _ignoredCostSummary, ...withoutCostSummary } = liveSession;
+    void _ignoredCostSummary;
+    registry.upsert(withoutCostSummary);
+    return;
+  }
   const patch = getCatalogSessionMetadataPatch(liveSession, catalogSession);
-  if (patch) registry.update(catalogSession.id, patch);
+  if (!patch) return;
+  if (catalogSession.costSummary !== undefined) {
+    registry.upsert({ ...liveSession, ...patch, costSummary: catalogSession.costSummary });
+    return;
+  }
+  registry.update(catalogSession.id, patch);
 }
 
 function normalizePercent(percent: number | undefined): number | null {
