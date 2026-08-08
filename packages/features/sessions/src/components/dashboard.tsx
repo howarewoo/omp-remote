@@ -3832,14 +3832,6 @@ function DashboardContent({
                   </Button>
                 </dd>
               </div>
-              <div>
-                <dt>Updated</dt>
-                <dd>
-                  <time dateTime={selectedSession.lastActivity}>
-                    {formatTime(selectedSession.lastActivity)}
-                  </time>
-                </dd>
-              </div>
               <div className="session-cost-metadata">
                 <dt>Cost</dt>
                 <dd>

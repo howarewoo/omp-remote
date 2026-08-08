@@ -3513,7 +3513,7 @@ describe("dashboard current Todo tracker", () => {
     ).toHaveLength(0);
     expect(
       findElements(output, (element) => element.type === "dt").map((element) => textContent(element)),
-    ).toEqual(["Branch", "Model", "Effort", "Context", "Changes", "Updated", "Cost"]);
+    ).toEqual(["Branch", "Model", "Effort", "Context", "Changes", "Cost"]);
   });
 });
 
@@ -4807,7 +4807,7 @@ describe("session model and effort selectors", () => {
     expect(findConfigurationTrigger(output, "effort")?.props.disabled).not.toBe(true);
     expect(
       findElements(output, (element) => element.type === "dt").map((element) => textContent(element)),
-    ).toEqual(["Branch", "Model", "Effort", "Context", "Changes", "Updated", "Cost"]);
+    ).toEqual(["Branch", "Model", "Effort", "Context", "Changes", "Cost"]);
   });
 
   it("opens a populated model-only drawer", () => {
