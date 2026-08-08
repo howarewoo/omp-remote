@@ -996,6 +996,50 @@ textarea:disabled {
   font-family: var(--font-mono);
   font-size: 0.6875rem;
 }
+.session-cost-metadata dd {
+  max-width: none;
+  margin-top: 0.2rem;
+}
+
+.session-cost-trigger.ui-button {
+  width: 100%;
+  min-height: 2.5rem;
+  justify-content: flex-start;
+  padding-inline: 0.4rem;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+}
+
+.session-cost-trigger.ui-button:hover {
+  color: var(--foreground);
+}
+
+.session-metadata:has(> .session-cost-metadata) {
+  grid-template-columns:
+    minmax(10rem, 1.5fr) minmax(7rem, 1fr) minmax(4.5rem, auto) minmax(11rem, auto)
+    minmax(5rem, auto) minmax(8rem, auto);
+}
+
+.session-metadata:has(> .session-branch-metadata):has(> .session-cost-metadata) {
+  grid-template-columns:
+    minmax(9rem, 1.25fr) minmax(10rem, 1.5fr) minmax(7rem, 1fr) minmax(4.5rem, auto)
+    minmax(11rem, auto) minmax(5rem, auto) minmax(8rem, auto);
+}
+
+.session-metadata:has(> .todo-tracker-metadata):has(> .session-cost-metadata) {
+  grid-template-columns:
+    minmax(10rem, 1.5fr) minmax(7rem, 1fr) minmax(4.5rem, auto) minmax(11rem, auto)
+    minmax(5rem, auto) minmax(8rem, auto) minmax(14rem, 1.5fr);
+}
+
+.session-metadata:has(> .session-branch-metadata):has(> .todo-tracker-metadata):has(
+  > .session-cost-metadata
+) {
+  grid-template-columns:
+    minmax(9rem, 1.25fr) minmax(10rem, 1.5fr) minmax(7rem, 1fr) minmax(4.5rem, auto)
+    minmax(11rem, auto) minmax(5rem, auto) minmax(8rem, auto) minmax(14rem, 1.5fr);
+}
 
 .session-configuration-trigger .icon {
   margin-left: auto;
@@ -1312,6 +1356,81 @@ textarea:disabled {
   border-bottom: 1px solid var(--border);
 }
 
+.session-cost-sheet {
+  width: min(100%, 34rem);
+  margin-inline: auto;
+}
+
+.session-cost-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.session-cost-header > div {
+  min-width: 0;
+}
+
+.session-cost-header h2,
+.session-cost-header p {
+  margin: 0;
+}
+
+.session-cost-header h2 {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+}
+
+.session-cost-header p {
+  margin-top: 0.35rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.session-cost-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.85rem 1.25rem max(1.25rem, var(--safe-area-bottom));
+}
+
+.session-cost-list {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.session-cost-row {
+  display: flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid var(--border);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.session-cost-row > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-cost-row > span:last-child {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+}
 .model-settings-header > div {
   min-width: 0;
 }
@@ -3995,6 +4114,9 @@ textarea:disabled {
   }
 
   .session-changes-trigger.ui-button {
+    min-height: 2.75rem;
+  }
+  .session-cost-trigger.ui-button {
     min-height: 2.75rem;
   }
 
