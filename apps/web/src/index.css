@@ -2257,7 +2257,7 @@ textarea:disabled {
 }
 
 .transcript-tool .message-author i {
-  color: var(--transcript-green);
+  color: var(--transcript-muted);
 }
 
 .transcript-system .message-author i {
@@ -2557,6 +2557,27 @@ textarea:disabled {
 .syntax-operator,
 .syntax-punctuation {
   color: var(--transcript-code-neutral);
+}
+
+.transcript-command-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.transcript-command-token-word {
+  color: var(--transcript-green);
+}
+
+.transcript-command-token-operator {
+  color: var(--transcript-cyan);
+}
+
+.transcript-command-token-option {
+  color: var(--transcript-code-neutral);
+}
+
+.transcript-command-token-string {
+  color: var(--transcript-code-string);
 }
 
 .transcript-user > .transcript-message {
@@ -3144,29 +3165,20 @@ textarea:disabled {
   color: var(--transcript-body);
 }
 
-.transcript-tool .transcript-disclosure-frame {
-  border-color: color-mix(in srgb, var(--transcript-green) 40%, var(--transcript-separator));
-}
-
 .transcript-system .transcript-disclosure-frame {
   border-color: color-mix(in srgb, var(--transcript-blue) 40%, var(--transcript-separator));
 }
 
-.transcript-tool .tool-output-divider {
-  color: var(--transcript-green);
+.transcript-tool .message-disclosure-chevron {
+  border-color: var(--transcript-muted);
 }
 
-.transcript-system .message-disclosure-chevron,
-.transcript-tool .message-disclosure-chevron {
+.transcript-system .message-disclosure-chevron {
   border-color: currentColor;
 }
 
 .transcript-system .message-disclosure-chevron {
   color: var(--transcript-blue);
-}
-
-.transcript-tool .message-disclosure-chevron {
-  color: var(--transcript-green);
 }
 
 .transcript-ask .ask-status,
