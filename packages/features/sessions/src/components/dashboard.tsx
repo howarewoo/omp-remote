@@ -47,6 +47,7 @@ import {
   MessageScrollerItem,
   MessageScrollerProvider,
   MessageScrollerViewport,
+  useMessageScroller,
 } from "./ui/message-scroller.js";
 import {
   Sidebar,
@@ -1491,6 +1492,26 @@ export function renderTranscriptMessageItems({ messages }: { messages: readonly 
   );
 }
 
+type MessageScrollerScrollRegistration = (handler: (() => void) | null) => void;
+
+export function MessageScrollerScrollController({
+  onScrollToEnd,
+}: {
+  onScrollToEnd: MessageScrollerScrollRegistration;
+}) {
+  const { scrollToEnd } = useMessageScroller();
+
+  useEffect(() => {
+    const scrollToEndImmediately = () => {
+      scrollToEnd({ behavior: "auto" });
+    };
+    onScrollToEnd(scrollToEndImmediately);
+    return () => onScrollToEnd(null);
+  }, [onScrollToEnd, scrollToEnd]);
+
+  return null;
+}
+
 const MemoizedBashTitle = memo(function BashTitle({ title }: { title: string }) {
   const suffix = title.slice(BASH_TITLE_PREFIX.length);
   const tokens = useMemo(() => tokenizeBashTitle(suffix), [suffix]);
@@ -2752,6 +2773,10 @@ function DashboardContent({
   const [activeHistoryQuery, setActiveHistoryQuery] = useState("");
   const [transcriptLoadingId, setTranscriptLoadingId] = useState<string | null>(null);
   const loadedTranscriptIdRef = useRef<string | null>(null);
+  const transcriptScrollToEndRef = useRef<(() => void) | null>(null);
+  const registerTranscriptScrollToEnd = useCallback((handler: (() => void) | null) => {
+    transcriptScrollToEndRef.current = handler;
+  }, []);
   const configurationRequestRef = useRef<{ sessionId: string } | null>(null);
   const configurationSessionIdRef = useRef<string | null>(null);
   const [fileChangesOpen, setFileChangesOpen] = useState(false);
@@ -3106,6 +3131,7 @@ function DashboardContent({
     setCommandError(null);
     try {
       await onCommand(selectedSession.id, "steer", message.trim());
+      transcriptScrollToEndRef.current?.();
       setMessage("");
     } catch (commandFailure) {
       setCommandError(
@@ -3635,6 +3661,7 @@ function DashboardContent({
                   <Icon name="down" />
                 </MessageScrollerButton>
               </MessageScroller>
+              <MessageScrollerScrollController onScrollToEnd={registerTranscriptScrollToEnd} />
             </MessageScrollerProvider>
             {selectedSession.activeSubagents.length > 0 ? (
               <section className="subagent-activity" aria-label="Active subagents" aria-live="polite">
