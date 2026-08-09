@@ -1,0 +1,56 @@
+.subagent-session-header {
+  display: flex;
+  min-height: calc(4.5rem + var(--safe-area-top));
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: calc(1rem + var(--safe-area-top)) 1.25rem 1rem;
+  border-bottom: 1px solid var(--border);
+  background: oklch(15% 0.02 295);
+}
+
+.subagent-session-header > div:first-child {
+  min-width: 0;
+}
+
+.subagent-session-header h2,
+.subagent-session-header p {
+  margin: 0;
+}
+
+.subagent-session-header h2 {
+  overflow: hidden;
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-session-header p {
+  margin-top: 0.35rem;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-session-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.subagent-session-header-actions svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
