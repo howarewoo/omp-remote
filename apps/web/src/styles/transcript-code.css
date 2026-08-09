@@ -1,0 +1,202 @@
+.transcript-message-diff > span {
+  display: block;
+  min-height: 1lh;
+}
+
+.transcript-message-diff {
+  max-width: 100%;
+  overflow-x: auto;
+  border-radius: var(--radius);
+  background: var(--omp-tool-message);
+  scrollbar-width: thin;
+  scrollbar-color: var(--transcript-separator) transparent;
+}
+
+.transcript-message
+  > :where(.transcript-prose, .code-block, .transcript-message-diff)
+  + :where(.transcript-prose, .code-block, .transcript-message-diff) {
+  margin-top: 0.85rem;
+}
+
+.code-block {
+  margin: 0;
+}
+
+.code-block summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--transcript-muted);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  text-transform: lowercase;
+}
+
+.code-block summary::-webkit-details-marker {
+  display: none;
+}
+
+.code-block-chevron {
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: none;
+  border-right: 1.5px solid var(--transcript-blue);
+  border-bottom: 1.5px solid var(--transcript-blue);
+  transform: rotate(-45deg);
+  transition: transform 140ms ease;
+}
+
+.code-block[open] .code-block-chevron {
+  transform: rotate(45deg);
+}
+
+.code-block-action {
+  margin-inline-start: auto;
+  color: var(--transcript-subtle);
+}
+
+.code-block-action-expanded {
+  display: none;
+}
+
+.code-block[open] .code-block-action-collapsed {
+  display: none;
+}
+
+.code-block[open] .code-block-action-expanded {
+  display: inline;
+}
+
+.code-block pre {
+  margin: 0;
+  overflow-x: auto;
+  padding: 0.8rem 0.9rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--transcript-separator) transparent;
+}
+
+.diff-line {
+  width: max-content;
+  min-width: 100%;
+  padding: 0.05rem 0.65rem;
+  font-family: var(--font-mono);
+  font-size: var(--transcript-mono-size, 0.75rem);
+  line-height: 1.75;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.session-change-line {
+  width: max-content;
+  min-width: 100%;
+  padding: 0.05rem 0.65rem;
+  font-family: var(--font-mono);
+  font-size: var(--transcript-mono-size, 0.75rem);
+  line-height: 1.75;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.session-change-line-added {
+  color: var(--transcript-green);
+  background: color-mix(in srgb, var(--transcript-green) 10%, transparent);
+}
+
+.session-change-line-removed {
+  color: var(--transcript-red);
+  background: color-mix(in srgb, var(--transcript-red) 10%, transparent);
+}
+
+.session-change-line-meta {
+  color: var(--transcript-blue);
+}
+
+.session-change-line-context {
+  color: var(--transcript-muted);
+}
+
+.diff-added {
+  color: var(--transcript-green);
+  background: color-mix(in srgb, var(--transcript-green) 10%, transparent);
+}
+
+.diff-removed {
+  color: var(--transcript-red);
+  background: color-mix(in srgb, var(--transcript-red) 10%, transparent);
+}
+
+.diff-meta {
+  color: var(--transcript-blue);
+}
+
+.diff-context {
+  color: var(--transcript-muted);
+}
+
+.code-block code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  color: var(--transcript-code-neutral);
+  font-family: var(--font-mono);
+  font-size: var(--transcript-mono-size, 0.75rem);
+  line-height: 1.65;
+  white-space: pre;
+}
+
+.syntax-comment {
+  color: var(--transcript-code-comment);
+}
+
+.syntax-keyword {
+  color: var(--transcript-code-keyword);
+}
+
+.syntax-function {
+  color: var(--transcript-code-function);
+}
+
+.syntax-variable {
+  color: var(--transcript-code-variable);
+}
+
+.syntax-string {
+  color: var(--transcript-code-string);
+}
+
+.syntax-number {
+  color: var(--transcript-code-number);
+}
+
+.syntax-type {
+  color: var(--transcript-code-type);
+}
+
+.syntax-operator,
+.syntax-punctuation {
+  color: var(--transcript-code-neutral);
+}
+
+.transcript-command-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.transcript-command-token-word {
+  color: var(--transcript-green);
+}
+
+.transcript-command-token-operator {
+  color: var(--transcript-cyan);
+}
+
+.transcript-command-token-option {
+  color: var(--transcript-code-neutral);
+}
+
+.transcript-command-token-string {
+  color: var(--transcript-code-string);
+}
