@@ -1,0 +1,220 @@
+.transcript-entry > :is(.system-message-disclosure, .tool-message-disclosure) {
+  color: var(--transcript-muted);
+}
+
+.transcript-disclosure-text,
+.tool-message-preview {
+  color: var(--transcript-body);
+}
+
+.transcript-system .transcript-disclosure-frame {
+  border-color: color-mix(in srgb, var(--transcript-blue) 40%, var(--transcript-separator));
+}
+
+.transcript-tool .message-disclosure-chevron {
+  border-color: var(--transcript-muted);
+}
+
+.transcript-system .message-disclosure-chevron {
+  border-color: currentColor;
+}
+
+.transcript-system .message-disclosure-chevron {
+  color: var(--transcript-blue);
+}
+
+.transcript-ask .ask-status,
+.transcript-ask .ask-progress {
+  color: var(--transcript-blue);
+}
+
+.streaming-badge {
+  border-color: color-mix(in srgb, var(--transcript-blue) 45%, transparent);
+  color: var(--transcript-blue);
+}
+
+@media (min-width: 34rem) {
+  .todo-phase li {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .todo-phase li > .todo-state-badge {
+    grid-column: 3;
+  }
+}
+
+.streaming-badge {
+  min-height: 1.35rem;
+  margin-left: auto;
+  border-color: color-mix(in srgb, var(--transcript-blue) 45%, transparent);
+  color: var(--transcript-blue);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+
+.empty-transcript,
+.no-session {
+  display: grid;
+  justify-items: start;
+  align-content: center;
+  gap: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.empty-transcript {
+  min-height: 100%;
+  padding: 3rem 0;
+}
+
+.empty-transcript strong {
+  color: var(--foreground);
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 450;
+}
+
+.empty-transcript p,
+.no-session p {
+  max-width: 54ch;
+  margin: 0;
+  line-height: 1.65;
+}
+
+.terminal-prompt {
+  display: inline-grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  color: var(--primary);
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  font-style: italic;
+}
+
+.composer {
+  flex: 0 0 auto;
+  padding: 0.75rem 0 max(1rem, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+  background: var(--background);
+}
+
+.composer-field {
+  position: relative;
+  display: block;
+}
+
+.skill-suggestions {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  bottom: calc(100% + 0.5rem);
+  left: 0;
+  max-height: min(21rem, 45dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.3rem;
+  border: 1px solid var(--border-strong);
+  border-radius: calc(var(--radius) * 2);
+  background: var(--popover);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 45%);
+}
+
+.skill-suggestion {
+  display: grid;
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.6rem 0.75rem;
+  border: 0;
+  border-radius: var(--radius);
+  color: var(--popover-foreground);
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.skill-suggestion:hover,
+.skill-suggestion.active {
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+}
+
+.skill-suggestion code {
+  overflow: hidden;
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-suggestion span {
+  overflow: hidden;
+  margin-top: 0.2rem;
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-field .ui-textarea {
+  display: block;
+  min-height: 3rem;
+  max-height: 12rem;
+  padding-block: 0.65rem;
+}
+
+.send-button {
+  position: absolute;
+  right: 0.55rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2.75rem;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+}
+
+.history-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 0 max(1rem, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+}
+
+.history-controls > div {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.history-controls span {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+.inline-error {
+  margin: 0.6rem 0 0;
+  color: oklch(79% 0.12 25);
+  font-size: 0.75rem;
+}
+
+.no-session {
+  min-height: 0;
+  flex: 1;
+  justify-content: center;
+  padding: clamp(2rem, 8vw, 7rem);
+}
+
+.no-session h2 {
+  max-width: 12ch;
+  margin: 0.7rem 0 0;
+  color: var(--foreground);
+  font-family: var(--font-display);
+  font-size: clamp(2.5rem, 7vw, 5.5rem);
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  line-height: 0.98;
+}
