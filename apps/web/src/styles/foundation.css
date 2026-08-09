@@ -1,0 +1,138 @@
+@import url("https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT,WONK@9..144,300..900,0..100,0..1&family=Geist:wght@300..700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap");
+
+:root {
+  font-family: "Geist", ui-sans-serif, system-ui, sans-serif;
+  color: var(--foreground);
+  background: var(--background);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  color-scheme: dark;
+  --background: oklch(13.5% 0.018 295);
+  --foreground: oklch(97% 0.008 90);
+  --card: oklch(17.2% 0.022 295);
+  --card-foreground: oklch(97% 0.008 90);
+  --popover: oklch(17.2% 0.022 295);
+  --popover-foreground: oklch(97% 0.008 90);
+  --primary: oklch(70% 0.24 340);
+  --primary-foreground: oklch(100% 0 0);
+  --secondary: oklch(20.5% 0.025 294);
+  --secondary-foreground: oklch(97% 0.008 90);
+  --muted: oklch(20.5% 0.022 295);
+  --muted-foreground: oklch(68% 0.018 288);
+  --accent: oklch(70% 0.24 340);
+  --accent-foreground: oklch(100% 0 0);
+  --destructive: oklch(62% 0.2 25);
+  --destructive-foreground: oklch(98% 0.01 90);
+  --border: oklch(100% 0 0 / 0.075);
+  --border-strong: oklch(100% 0 0 / 0.14);
+  --input: oklch(100% 0 0 / 0.1);
+  --ring: oklch(70% 0.24 340);
+  --cyan: oklch(81% 0.14 200);
+  --success: oklch(78% 0.16 150);
+  --warning: oklch(82% 0.16 90);
+  --omp-cyan: #0088fa;
+  --omp-blue: #178fb9;
+  --omp-green: #89d281;
+  --omp-red: #fc3a4b;
+  --omp-yellow: #e4c00f;
+  --omp-gray: #858b96;
+  --omp-dim-gray: #7c828d;
+  --omp-dark-gray: #3d424a;
+  --omp-accent: #febc38;
+  --omp-user-message: #221d1a;
+  --omp-tool-message: #161a1f;
+  --omp-inline-code: #e5c1ff;
+  --omp-code-text: #9cdcfe;
+  --transcript-body: #d4d4d4;
+  --transcript-muted: #b5bfcc;
+  --transcript-subtle: #9ba7b5;
+  --transcript-cyan: #61d4ff;
+  --transcript-blue: #70c8ff;
+  --transcript-green: #a9e89e;
+  --transcript-yellow: #f7dc5e;
+  --transcript-red: #ff7e88;
+  --transcript-code-comment: #a9e89e;
+  --transcript-code-keyword: #70c8ff;
+  --transcript-code-function: #f7dc5e;
+  --transcript-code-variable: #61d4ff;
+  --transcript-code-string: #ffb38f;
+  --transcript-code-number: #c8e8ae;
+  --transcript-code-type: #71e0c4;
+  --transcript-code-neutral: #d4d4d4;
+  --transcript-separator: #3d424a;
+  --radius: 0.25rem;
+  --sidebar-width: 19rem;
+  --font-display: "Fraunces", "Iowan Old Style", Georgia, serif;
+  --font-brand: "Plus Jakarta Sans", "Geist", ui-sans-serif, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  min-width: 320px;
+  min-height: 100%;
+  background: var(--background);
+}
+
+body {
+  position: relative;
+  margin: 0;
+  min-width: 320px;
+  min-height: 100dvh;
+  overflow: hidden;
+  background: var(--background);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  appearance: none;
+}
+
+button {
+  color: inherit;
+}
+
+button,
+input[type="search"] {
+  touch-action: manipulation;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+button:disabled,
+input:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+::selection {
+  color: var(--foreground);
+  background: oklch(70% 0.24 340 / 0.32);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
