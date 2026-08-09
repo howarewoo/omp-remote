@@ -125,32 +125,22 @@ beforeEach(() => {
 
 import {
   AskToolCall,
-  canKillSession,
   Dashboard,
   type DashboardProps,
   findLatestTodoResult,
-  formatSubagentActivityLabel,
   formatSystemTextPreview,
   formatToolTextPreview,
-  getActiveAskRequest,
-  getComposerAction,
-  getSkillSuggestions,
-  groupSessionsForSidebar,
   MessageScrollerScrollController,
   parseDisclosureImages,
-  parseInlineTranscript,
-  parseTodoResult,
-  parseTranscriptBlocks,
   renderTranscriptMessageItems,
   SystemTranscriptText,
   TodoToolTranscript,
   ToolTranscriptText,
   TranscriptCodeBlock,
   TranscriptEntry,
-  tokenizeBashTitle,
-  tokenizeCode,
   WorkingIndicator,
 } from "./dashboard.js";
+import { parseTodoResult } from "./todo-parser.js";
 import { formatUsd, getSessionCostRows } from "./session-cost.js";
 import { SessionCostMetadata, SessionCostViewer } from "./session-cost-viewer.js";
 import { SessionBranchSelector, type SessionBranchSelectorProps } from "./session-branch-selector.js";
@@ -297,118 +287,6 @@ describe("dashboard session cost", () => {
   });
 });
 
-describe("getComposerAction", () => {
-  it("uses the integrated submit control to abort a running session when the composer is blank", () => {
-    expect(getComposerAction({ ...BASE_SESSION, status: "running" }, "   ")).toBe("abort");
-  });
-
-  it("changes the integrated submit control to steer when the composer contains text", () => {
-    expect(getComposerAction({ ...BASE_SESSION, status: "running" }, "Change direction")).toBe("steer");
-  });
-
-  it("has no action for blank input when the session cannot be aborted", () => {
-    expect(getComposerAction(BASE_SESSION, "")).toBeNull();
-    expect(
-      getComposerAction(
-        {
-          ...BASE_SESSION,
-          status: "running",
-          capabilities: BASE_SESSION.capabilities.filter((capability) => capability !== "abort"),
-        },
-        "",
-      ),
-    ).toBeNull();
-  });
-});
-
-describe("getSkillSuggestions", () => {
-  const skills: Session["skillCommands"] = [
-    { name: "skill:seo", description: "Audit search visibility" },
-    { name: "skill:woostack-change", description: "Ship a bounded enhancement" },
-    { name: "skill:woostack-fix", description: "Diagnose and fix a bug" },
-  ];
-
-  it("shows sorted skill commands for an empty slash query", () => {
-    expect(getSkillSuggestions("/", skills)).toEqual(skills);
-  });
-
-  it.each(["/woo", "/skill:woo"])("filters skills from %s", (message) => {
-    expect(getSkillSuggestions(message, skills).map(({ name }) => name)).toEqual([
-      "skill:woostack-change",
-      "skill:woostack-fix",
-    ]);
-  });
-
-  it("closes suggestions once command arguments begin", () => {
-    expect(getSkillSuggestions("/skill:seo audit this page", skills)).toEqual([]);
-  });
-});
-
-describe("canKillSession", () => {
-  it("allows killing only sessions that advertise the capability", () => {
-    expect(canKillSession({ ...BASE_SESSION, capabilities: [...BASE_SESSION.capabilities, "kill"] })).toBe(
-      true,
-    );
-    expect(canKillSession(BASE_SESSION)).toBe(false);
-  });
-});
-
-describe("groupSessionsForSidebar", () => {
-  it("separates live terminal and daemon-hosted sessions before disconnected sessions", () => {
-    const sessions = [
-      { ...BASE_SESSION, id: "disconnected-new", connected: false, status: "disconnected" as const },
-      { ...BASE_SESSION, id: "terminal-new", source: "extension" as const },
-      { ...BASE_SESSION, id: "daemon-new" },
-      { ...BASE_SESSION, id: "terminal-old", source: "extension" as const },
-      { ...BASE_SESSION, id: "daemon-old" },
-      {
-        ...BASE_SESSION,
-        id: "disconnected-old",
-        connected: false,
-        source: "history" as const,
-        status: "history" as const,
-      },
-    ];
-
-    expect(groupSessionsForSidebar(sessions)).toEqual([
-      {
-        id: "terminal",
-        label: "Live terminal sessions",
-        sessions: [sessions[1], sessions[3]],
-      },
-      {
-        id: "daemon",
-        label: "Live daemon-hosted sessions",
-        sessions: [sessions[2], sessions[4]],
-      },
-      {
-        id: "disconnected",
-        label: "Disconnected",
-        sessions: [sessions[0], sessions[5]],
-      },
-    ]);
-  });
-
-  it("omits empty sidebar sections", () => {
-    expect(groupSessionsForSidebar([BASE_SESSION])).toEqual([
-      {
-        id: "daemon",
-        label: "Live daemon-hosted sessions",
-        sessions: [BASE_SESSION],
-      },
-    ]);
-  });
-});
-
-describe("formatSubagentActivityLabel", () => {
-  it.each([
-    [1, "1 subagent running"],
-    [3, "3 subagents running"],
-  ])("formats %i active subagents", (count, expected) => {
-    expect(formatSubagentActivityLabel(count)).toBe(expected);
-  });
-});
-
 describe("TranscriptCodeBlock", () => {
   it("renders code as a closed disclosure by default", () => {
     const block = TranscriptCodeBlock({ code: "const ready = true;", language: "ts" });
@@ -433,96 +311,6 @@ const TODO_RESULT_TEXT = [
   "  Verification:",
   "    - [ ] Exercise todo flow in browser (blocked: format probe)",
 ].join("\n");
-
-describe("parseTodoResult", () => {
-  it("parses canonical multi-phase progress and derives phase states", () => {
-    expect(parseTodoResult(TODO_RESULT_TEXT)).toEqual({
-      overall: { done: 2, total: 4, open: 1, blocked: 1 },
-      activePhase: { index: 2, total: 3, name: "Implementation", done: 0, taskTotal: 1 },
-      phases: [
-        {
-          name: "Research",
-          state: "completed",
-          tasks: [
-            { label: "Locate todo rendering and UI conventions", state: "completed" },
-            { label: "Define todo interaction contract", state: "completed" },
-          ],
-        },
-        {
-          name: "Implementation",
-          state: "in-progress",
-          tasks: [{ label: "Build custom todo tool interface", state: "in-progress" }],
-        },
-        {
-          name: "Verification",
-          state: "blocked",
-          tasks: [{ label: "Exercise todo flow in browser", state: "blocked", reason: "format probe" }],
-        },
-      ],
-    });
-  });
-
-  it("preserves completed, blocked, and dropped task states", () => {
-    const parsed = parseTodoResult(
-      [
-        "Overall: 2/3 done, 0 open, 1 blocked.",
-        'Active phase 1/1 "Delivery" (2/3).',
-        "  Delivery:",
-        "    - [x] Ship renderer (completed)",
-        "    - [ ] Await approval (blocked: review pending)",
-        "    - [ ] Remove obsolete branch (dropped)",
-      ].join("\n"),
-    );
-
-    expect(parsed?.overall).toEqual({ done: 2, total: 3, open: 0, blocked: 1 });
-    expect(parsed?.phases[0]).toEqual({
-      name: "Delivery",
-      state: "blocked",
-      tasks: [
-        { label: "Ship renderer", state: "completed" },
-        { label: "Await approval", state: "blocked", reason: "review pending" },
-        { label: "Remove obsolete branch", state: "dropped" },
-      ],
-    });
-  });
-
-  it("accepts completed output without an active phase or open count", () => {
-    expect(
-      parseTodoResult(["Overall: 1/1 done.", "  Finish:", "    - [x] Hand off"].join("\n")),
-    ).toMatchObject({
-      overall: { done: 1, total: 1 },
-      phases: [{ state: "completed" }],
-    });
-  });
-
-  it("rejects overall and active counts that contradict task states", () => {
-    expect(parseTodoResult(TODO_RESULT_TEXT.replace("2/4 done, 1 open", "1/4 done, 2 open"))).toBeNull();
-    expect(parseTodoResult(TODO_RESULT_TEXT.replace("(0/1) —", "(1/1) —"))).toBeNull();
-  });
-
-  it("treats omitted open and blocked counts as zero", () => {
-    expect(
-      parseTodoResult(
-        [
-          "Overall: 0/1 done.",
-          'Active phase 1/1 "Work" (0/1).',
-          "  Work:",
-          "    - [ ] Continue work (in progress)",
-        ].join("\n"),
-      ),
-    ).toBeNull();
-    expect(
-      parseTodoResult(
-        [
-          "Overall: 0/1 done.",
-          'Active phase 1/1 "Work" (0/1).',
-          "  Work:",
-          "    - [ ] Await access (blocked)",
-        ].join("\n"),
-      ),
-    ).toBeNull();
-  });
-});
 
 describe("findLatestTodoResult", () => {
   it("keeps the latest completed canonical result through malformed and streaming tails", () => {
@@ -640,113 +428,6 @@ describe("parseDisclosureImages", () => {
 });
 
 describe("Bash title rendering", () => {
-  it("tokenizes chained commands losslessly with shell operators and quoted strings", () => {
-    const title = String.raw`pnpm test && printf '%s\n' "https://example.com/a?b=1" > out.txt`;
-    const tokens = tokenizeBashTitle(title);
-
-    expect(tokens.map((token) => token.text).join("")).toBe(title);
-    expect(tokens.filter((token) => token.kind === "operator").map((token) => token.text)).toEqual([
-      "&&",
-      ">",
-    ]);
-    expect(tokens.filter((token) => token.kind === "string").map((token) => token.text)).toEqual([
-      "'%s\\n'",
-      '"https://example.com/a?b=1"',
-    ]);
-    expect(tokens.filter((token) => token.kind === "word").map((token) => token.text)).toEqual([
-      "pnpm",
-      "test",
-      "printf",
-      "out.txt",
-    ]);
-  });
-
-  it("keeps complete option and format words neutral", () => {
-    const tokens = tokenizeBashTitle("grep -n +format --color=auto");
-
-    expect(tokens.filter((token) => token.kind === "option").map((token) => token.text)).toEqual([
-      "-n",
-      "+format",
-      "--color=auto",
-    ]);
-    expect(tokens.map((token) => token.text).join("")).toBe("grep -n +format --color=auto");
-  });
-
-  it("keeps escapes and URLs as lossless ordinary command text", () => {
-    const title = String.raw`echo https://example.com/a\?b=1`;
-    const tokens = tokenizeBashTitle(title);
-
-    expect(tokens.map((token) => token.text).join("")).toBe(title);
-    expect(tokens.filter((token) => token.kind === "string")).toHaveLength(0);
-    expect(tokens.filter((token) => token.kind === "word").map((token) => token.text)).toEqual([
-      "echo",
-      "https://example.com/a\\?b=1",
-    ]);
-  });
-
-  it("handles descriptor redirects and contextual bang tokens without false fallback", () => {
-    const title = "! exec 10>out 2>&1 && if ! false; then echo foo!bar !; else ! true; fi";
-    const tokens = tokenizeBashTitle(title);
-
-    expect(tokens.map((token) => token.text).join("")).toBe(title);
-    expect(tokens.filter((token) => token.kind === "operator").map((token) => token.text)).toEqual([
-      "!",
-      "10>",
-      "2>&1",
-      "&&",
-      "!",
-      ";",
-      ";",
-      "!",
-      ";",
-    ]);
-    expect(tokens.filter((token) => token.kind === "word").map((token) => token.text)).toEqual([
-      "exec",
-      "out",
-      "if",
-      "false",
-      "then",
-      "echo",
-      "foo!bar",
-      "!",
-      "else",
-      "true",
-      "fi",
-    ]);
-  });
-
-  it("balances grouping and command substitutions inside complete quoted strings", () => {
-    const title = 'echo "$(date)" `whoami` (printf ok)';
-    const tokens = tokenizeBashTitle(title);
-
-    expect(tokens.map((token) => token.text).join("")).toBe(title);
-    expect(tokens.filter((token) => token.kind === "string").map((token) => token.text)).toEqual([
-      '"$(date)"',
-      "`whoami`",
-    ]);
-    expect(tokens.filter((token) => token.kind === "operator").map((token) => token.text)).toEqual([
-      "(",
-      ")",
-    ]);
-  });
-
-  it.each([
-    'echo "unfinished',
-    "echo trailing\\",
-    "echo (",
-    "echo foo >&",
-    "echo $(date",
-    "echo foo | | cat",
-    "| cat",
-    "echo (date",
-    "echo foo)",
-    'echo "$(date"',
-    "echo `date",
-    "echo >>> out",
-  ])("falls back to a plain lossless title for incomplete shell text: %s", (title) => {
-    expect(tokenizeBashTitle(title)).toEqual([{ kind: "plain", text: title }]);
-  });
-
   it("renders only exact Bash titles with command token spans and keeps output neutral", () => {
     const title = 'Bash: echo "title" && cat --raw';
     const nodes = renderTranscriptNodes(
@@ -1985,126 +1666,6 @@ describe("SystemTranscriptText", () => {
   });
 });
 
-describe("getActiveAskRequest", () => {
-  const requests: AskRequest[] = [
-    {
-      sessionId: "session-2",
-      requestId: "ask-2",
-      kind: "select",
-      title: "Second session question",
-      options: ["Continue", "Stop"],
-      initialValue: null,
-      expiresAt: null,
-    },
-    {
-      sessionId: "session-1",
-      requestId: "ask-1",
-      kind: "text",
-      title: "Selected session question",
-      options: [],
-      initialValue: null,
-      expiresAt: null,
-    },
-  ];
-
-  it("prioritizes the selected session without reordering the request queue", () => {
-    expect(getActiveAskRequest(requests, "session-1")).toBe(requests[1]);
-    expect(requests.map(({ requestId }) => requestId)).toEqual(["ask-2", "ask-1"]);
-  });
-
-  it("returns only a request belonging to the selected session", () => {
-    expect(getActiveAskRequest(requests, "missing-session")).toBeNull();
-    expect(getActiveAskRequest(requests, null)).toBeNull();
-    expect(getActiveAskRequest([], "session-1")).toBeNull();
-  });
-});
-
-describe("parseTranscriptBlocks", () => {
-  it("marks additions and deletions inside fenced diffs", () => {
-    expect(
-      parseTranscriptBlocks(
-        [
-          "Updated the component:",
-          "```diff",
-          " const stable = true;",
-          "-const tone = 'blue';",
-          "+const tone = 'green';",
-          "```",
-        ].join("\n"),
-      ),
-    ).toEqual([
-      { kind: "text", text: "Updated the component:" },
-      {
-        kind: "diff",
-        lines: [
-          { kind: "context", text: " const stable = true;" },
-          { kind: "removed", text: "-const tone = 'blue';" },
-          { kind: "added", text: "+const tone = 'green';" },
-        ],
-      },
-    ]);
-  });
-
-  it("keeps unified diff metadata distinct from following prose", () => {
-    expect(
-      parseTranscriptBlocks(
-        [
-          "diff --git a/source.ts b/source.ts",
-          "--- a/source.ts",
-          "+++ b/source.ts",
-          "@@ -1 +1 @@",
-          "-const before = true;",
-          "+const after = true;",
-          "Finished.",
-        ].join("\n"),
-      ),
-    ).toEqual([
-      {
-        kind: "diff",
-        lines: [
-          { kind: "meta", text: "diff --git a/source.ts b/source.ts" },
-          { kind: "meta", text: "--- a/source.ts" },
-          { kind: "meta", text: "+++ b/source.ts" },
-          { kind: "meta", text: "@@ -1 +1 @@" },
-          { kind: "removed", text: "-const before = true;" },
-          { kind: "added", text: "+const after = true;" },
-        ],
-      },
-      { kind: "text", text: "Finished." },
-    ]);
-  });
-
-  it("does not color ordinary prose that starts with plus or minus", () => {
-    expect(parseTranscriptBlocks("- Removed clutter\n+ Added clarity")).toEqual([
-      { kind: "text", text: "- Removed clutter\n+ Added clarity" },
-    ]);
-  });
-
-  it("extracts a labeled fenced code block between prose", () => {
-    expect(
-      parseTranscriptBlocks(
-        ["Use this helper:", "```ts", "const tone = 'cyan';", "```", "Then render it."].join("\n"),
-      ),
-    ).toEqual([
-      { kind: "text", text: "Use this helper:" },
-      { kind: "code", language: "ts", text: "const tone = 'cyan';" },
-      { kind: "text", text: "Then render it." },
-    ]);
-  });
-
-  it("keeps an unfinished streaming fence as code", () => {
-    expect(parseTranscriptBlocks("```\nconst pending = true;")).toEqual([
-      { kind: "code", language: null, text: "const pending = true;" },
-    ]);
-  });
-
-  it("leaves inline backticks in ordinary transcript text", () => {
-    expect(parseTranscriptBlocks("Run `pnpm test` next.")).toEqual([
-      { kind: "text", text: "Run `pnpm test` next." },
-    ]);
-  });
-});
-
 interface RenderedNode {
   className?: string;
   open?: boolean;
@@ -2253,75 +1814,6 @@ describe("structured transcript presentation", () => {
         .filter((node) => node.type === "a")
         .map((node) => node.props?.href),
     ).toEqual(["https://user.example/docs"]);
-  });
-});
-
-describe("OMP-style transcript formatting", () => {
-  it("parses the inline markdown roles used by the OMP stream", () => {
-    expect(parseInlineTranscript("Use **bold**, `pnpm test`, and [docs](https://omp.sh).")).toEqual([
-      { kind: "text", text: "Use " },
-      { kind: "strong", text: "bold" },
-      { kind: "text", text: ", " },
-      { kind: "code", text: "pnpm test" },
-      { kind: "text", text: ", and " },
-      { kind: "link", text: "docs", href: "https://omp.sh" },
-      { kind: "text", text: "." },
-    ]);
-  });
-  it("tokenizes absolute HTTP(S) URLs without sentence punctuation or unbalanced delimiters", () => {
-    expect(parseInlineTranscript("See https://example.com/path_(safe), then https://omp.sh/docs.")).toEqual([
-      { kind: "text", text: "See " },
-      { kind: "link", text: "https://example.com/path_(safe)", href: "https://example.com/path_(safe)" },
-      { kind: "text", text: ", then " },
-      { kind: "link", text: "https://omp.sh/docs", href: "https://omp.sh/docs" },
-      { kind: "text", text: "." },
-    ]);
-  });
-  it("keeps escaped backslashes outside URL anchors", () => {
-    expect(parseInlineTranscript("See https://example.com/project-url\\")).toEqual([
-      { kind: "text", text: "See " },
-      { kind: "link", text: "https://example.com/project-url", href: "https://example.com/project-url" },
-      { kind: "text", text: "\\" },
-    ]);
-  });
-
-  it("keeps code, bare www, and unsafe schemes literal", () => {
-    expect(
-      parseInlineTranscript(
-        "`https://code.example` www.example.com javascript:https://example.com foohttps://embedded.example https://safe.example",
-      ),
-    ).toEqual([
-      { kind: "code", text: "https://code.example" },
-      {
-        kind: "text",
-        text: " www.example.com javascript:https://example.com foohttps://embedded.example ",
-      },
-      { kind: "link", text: "https://safe.example", href: "https://safe.example" },
-    ]);
-  });
-
-  it("maps source tokens to OMP's semantic syntax categories", () => {
-    expect(tokenizeCode('const answer: Result = run("42"); // ready', "ts")).toEqual(
-      expect.arrayContaining([
-        { kind: "keyword", text: "const" },
-        { kind: "variable", text: "answer" },
-        { kind: "type", text: "Result" },
-        { kind: "operator", text: "=" },
-        { kind: "function", text: "run" },
-        { kind: "string", text: '"42"' },
-        { kind: "comment", text: "// ready" },
-      ]),
-    );
-  });
-
-  it("keeps arithmetic operators separate from adjacent numbers", () => {
-    expect(tokenizeCode("const total = 1+2;", "ts")).toEqual(
-      expect.arrayContaining([
-        { kind: "number", text: "1" },
-        { kind: "operator", text: "+" },
-        { kind: "number", text: "2" },
-      ]),
-    );
   });
 });
 
