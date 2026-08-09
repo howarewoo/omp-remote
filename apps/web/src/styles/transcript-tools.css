@@ -1,0 +1,340 @@
+.transcript-user > .transcript-message {
+  color: var(--foreground);
+}
+
+.transcript-tool,
+.transcript-system {
+  padding: 0.75rem;
+  border-radius: var(--radius);
+  background: var(--omp-tool-message);
+}
+
+.transcript-tool:has(> .transcript-disclosure-frame),
+.transcript-system:has(> .transcript-disclosure-frame) {
+  padding: 0;
+  background: transparent;
+}
+
+.transcript-entry > .system-message-disclosure {
+  width: min(100%, 74ch);
+}
+
+.transcript-entry > :is(.system-message-disclosure, .tool-message-disclosure) {
+  min-width: 0;
+  color: var(--transcript-muted);
+  font-family: var(--font-mono);
+  font-size: var(--transcript-mono-size);
+  line-height: 1.7;
+}
+
+:is(.system-message-disclosure, .tool-message-disclosure) > :is(summary, .tool-message-header) {
+  display: grid;
+  gap: 0.45rem;
+  min-height: 2.75rem;
+  color: var(--transcript-muted);
+  list-style: none;
+}
+
+:is(.system-message-disclosure, .tool-message-disclosure) > summary {
+  cursor: pointer;
+}
+
+:is(.system-message-disclosure, .tool-message-disclosure) > summary::-webkit-details-marker {
+  display: none;
+}
+
+.transcript-disclosure-text,
+.tool-message-preview {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--transcript-body);
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  text-align: start;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.transcript-disclosure-content {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.55rem;
+}
+
+.transcript-disclosure-content > :is(.transcript-disclosure-text, .disclosure-image) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.transcript-disclosure-content[data-variant="thumbnail"] {
+  gap: 0.35rem;
+}
+
+.transcript-disclosure-content[data-variant="expanded"] {
+  padding: 0 0.75rem 0.75rem;
+}
+
+.disclosure-image {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.transcript-disclosure-content[data-variant="thumbnail"] .disclosure-image {
+  width: min(100%, 12rem);
+}
+
+.transcript-disclosure-content[data-variant="expanded"] .disclosure-image {
+  max-height: min(70vh, 40rem);
+  overflow: auto;
+}
+
+.disclosure-image-link {
+  display: block;
+  width: fit-content;
+  min-width: 0;
+  max-width: 100%;
+  border-radius: var(--radius);
+  color: inherit;
+  text-decoration: none;
+}
+
+.disclosure-image-media {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: none;
+  border: 1px solid var(--transcript-separator);
+  border-radius: var(--radius);
+  background: var(--omp-tool-message);
+  object-fit: contain;
+  object-position: left top;
+}
+
+.transcript-disclosure-content[data-variant="thumbnail"] .disclosure-image-media {
+  width: 100%;
+  height: 5rem;
+  max-height: none;
+  object-fit: cover;
+}
+
+.disclosure-image-fallback {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 4.5rem;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  overflow: hidden;
+  border: 1px solid var(--transcript-separator);
+  border-radius: var(--radius);
+  background: var(--omp-tool-message);
+  color: var(--transcript-body);
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.transcript-disclosure-content[data-variant="thumbnail"] .disclosure-image-fallback {
+  min-height: 3rem;
+}
+
+@media (hover: hover) {
+  .disclosure-image-link:hover .disclosure-image-media {
+    border-color: var(--transcript-muted);
+  }
+}
+
+.disclosure-image-link:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.system-message-disclosure > summary > .transcript-disclosure-text,
+.system-message-disclosure
+  > summary
+  > .transcript-disclosure-content[data-variant="thumbnail"]
+  > .transcript-disclosure-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+:is(.system-message-disclosure, .tool-message-disclosure)
+  > :where(summary:hover)
+  > :where(.transcript-disclosure-text, .tool-message-preview),
+:is(.system-message-disclosure, .tool-message-disclosure)
+  > :where(summary:hover)
+  > .transcript-disclosure-content[data-variant="thumbnail"]
+  > .transcript-disclosure-text {
+  color: var(--foreground);
+}
+
+:is(.system-message-disclosure, .tool-message-disclosure) > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.message-disclosure-chevron {
+  width: 0.42rem;
+  height: 0.42rem;
+  flex: none;
+  border-right: 1.5px solid var(--transcript-blue);
+  border-bottom: 1.5px solid var(--transcript-blue);
+  transform: translateY(-0.08rem) rotate(45deg);
+  transition: transform 140ms ease;
+}
+
+.system-message-disclosure[open] .message-disclosure-chevron,
+.tool-message-disclosure[open] .message-disclosure-chevron,
+.read-result-content[open] .message-disclosure-chevron {
+  transform: translateY(0.08rem) rotate(225deg);
+}
+
+:is(.system-message-disclosure, .tool-message-disclosure)[open]
+  > :where(summary)
+  > :where(
+    .transcript-disclosure-text,
+    .tool-message-preview,
+    .transcript-disclosure-content[data-variant="thumbnail"]
+  ) {
+  display: none;
+}
+
+.read-result-content > summary {
+  display: grid;
+  gap: 0.45rem;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.75rem;
+  color: var(--transcript-muted);
+  cursor: pointer;
+  list-style: none;
+}
+
+.read-result-content .message-author {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.read-result-content > summary::-webkit-details-marker {
+  display: none;
+}
+
+.read-result-content > summary:hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--transcript-separator) 35%, transparent);
+}
+
+.read-result-content > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.read-result-content[open] .read-result-preview {
+  display: none;
+}
+
+.read-result-preview {
+  min-width: 0;
+}
+
+.read-result-content > .transcript-disclosure-text {
+  padding: 0 0.75rem 0.75rem;
+}
+
+.read-result-more {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--transcript-subtle);
+}
+
+.read-result-resolved-path {
+  min-width: 0;
+  padding: 0.5rem 0.75rem 0.75rem;
+}
+
+.read-result-resolved-path > span {
+  display: inline-block;
+  max-width: 100%;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid var(--transcript-separator);
+  border-radius: 0.25rem;
+  color: var(--transcript-muted);
+  overflow-wrap: anywhere;
+}
+
+:is(.system-message-disclosure, .tool-message-disclosure) > .transcript-message {
+  max-width: 100%;
+  color: var(--transcript-muted);
+}
+
+.transcript-disclosure-frame {
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--transcript-separator);
+  border-radius: calc(var(--radius) + 0.125rem);
+  background: var(--omp-tool-message);
+}
+
+.transcript-disclosure-frame > :is(summary, .tool-message-header) {
+  min-height: 2.75rem;
+  padding: 0.5rem 0.75rem;
+  list-style: none;
+}
+
+.transcript-disclosure-frame > summary:hover {
+  color: var(--foreground);
+  background: color-mix(in srgb, var(--transcript-separator) 35%, transparent);
+}
+
+.transcript-disclosure-frame > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.transcript-disclosure-frame:not(.tool-output-disclosure)[open] > summary {
+  border-bottom: 1px solid var(--transcript-separator);
+}
+
+.transcript-disclosure-frame > :is(.transcript-message, .transcript-disclosure-text),
+.todo-tool-disclosure > .todo-phase-list {
+  padding: 0 0.75rem 0.75rem;
+}
+
+.tool-output-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding-inline: 0.75rem;
+  color: var(--transcript-subtle);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+}
+
+:is(.tool-message-disclosure, .read-result-content)
+  > :is(summary, .tool-message-header)
+  > .tool-output-divider {
+  margin-inline: -0.75rem;
+}
+
+.tool-output-divider::before,
+.tool-output-divider::after {
+  height: 1px;
+  flex: 1;
+  background: var(--transcript-separator);
+  content: "";
+}
