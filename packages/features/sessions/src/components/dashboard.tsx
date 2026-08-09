@@ -13,28 +13,23 @@ import { SessionBranchSelector } from "./session-branch-selector.js";
 import { formatSessionFileChangesMetadata, SessionFileChangesViewer } from "./session-file-changes-viewer.js";
 import { SubagentSessionViewer } from "./subagent-session-viewer.js";
 import { SessionCostViewer } from "./session-cost-viewer.js";
+import {
+  EffortConfigurationDrawer,
+  ModelConfigurationDrawer,
+  useConfigurationController,
+} from "./dashboard/configuration-drawers.js";
 import { EmptyDashboard } from "./dashboard/empty-dashboard.js";
-import { DashboardIcon, SessionHeader, type NotificationState } from "./dashboard/session-header.js";
-import { formatEffortLabel, SessionMetadata } from "./dashboard/session-metadata.js";
+import { LaunchSessionDialog } from "./dashboard/launch-session-dialog.js";
+import { AbortSessionDialog, KillSessionDialog } from "./dashboard/session-action-dialogs.js";
+import { SessionComposer } from "./dashboard/session-composer.js";
+import { SessionHeader, type NotificationState } from "./dashboard/session-header.js";
+import { SessionMetadata } from "./dashboard/session-metadata.js";
 import { SessionSidebar } from "./dashboard/session-sidebar.js";
 import { SessionTranscript, WorkingIndicator } from "./dashboard/session-transcript.js";
+import { TodoDrawer } from "./dashboard/todo-drawer.js";
 import { Button } from "./ui/button.js";
-import { Dialog } from "./ui/dialog.js";
-import {
-  Drawer,
-  DrawerClose,
-  DrawerContent,
-  DrawerDescription,
-  DrawerFooter,
-  DrawerHeader,
-  DrawerTitle,
-  getResponsiveDrawerProps,
-} from "./ui/drawer.js";
-import { Input } from "./ui/input.js";
 import { MessageScrollerItem } from "./ui/message-scroller.js";
 import { SidebarInset, SidebarProvider, useSidebar } from "./ui/sidebar.js";
-import { Textarea } from "./ui/textarea.js";
-import { cn } from "./ui/utils.js";
 import {
   getActiveAskRequest,
   getComposerAction,
@@ -45,8 +40,6 @@ import {
   findLatestTodoResult,
   getTodoPresentation,
   getTodoTrackerLabel,
-  TodoPhaseList,
-  TodoProgressSummary,
 } from "./transcript/todo-tool-transcript.js";
 import { renderTranscriptMessageItems } from "./transcript/transcript-entry.js";
 export { AskToolCall, type AskToolCallProps } from "./ask/ask-tool-call.js";
@@ -91,9 +84,6 @@ export {
 export { WorkingIndicator } from "./dashboard/session-transcript.js";
 
 type ComposerMode = "prompt" | "steer" | "follow_up";
-
-const EMPTY_MODEL_OPTIONS: NonNullable<Session["availableModels"]> = [];
-const SKILL_SUGGESTION_LIST_ID = "composer-skill-suggestions";
 
 export interface DashboardProps {
   sessions: Session[];
@@ -185,13 +175,6 @@ function DashboardContent({
   const [killOpen, setKillOpen] = useState(false);
   const [todoOpenSessionId, setTodoOpenSessionId] = useState<string | null>(null);
   const [costDrawerOpen, setCostDrawerOpen] = useState(false);
-  const [configurationDrawer, setConfigurationDrawer] = useState<"model" | "effort" | null>(null);
-  const [modelQuery, setModelQuery] = useState("");
-  const [configurationPending, setConfigurationPending] = useState<string | null>(null);
-  const [configurationError, setConfigurationError] = useState<{
-    drawer: "model" | "effort";
-    message: string;
-  } | null>(null);
   const [historyQuery, setHistoryQuery] = useState("");
   const [activeHistoryQuery, setActiveHistoryQuery] = useState("");
   const [transcriptLoadingId, setTranscriptLoadingId] = useState<string | null>(null);
@@ -200,8 +183,6 @@ function DashboardContent({
   const registerTranscriptScrollToEnd = useCallback((handler: (() => void) | null) => {
     transcriptScrollToEndRef.current = handler;
   }, []);
-  const configurationRequestRef = useRef<{ sessionId: string } | null>(null);
-  const configurationSessionIdRef = useRef<string | null>(null);
   const [fileChangesOpen, setFileChangesOpen] = useState(false);
   const [sessionFileChanges, setSessionFileChanges] = useState<SessionFileChangesResponse | null>(null);
   const [sessionFileChangesLoading, setSessionFileChangesLoading] = useState(false);
@@ -383,34 +364,31 @@ function DashboardContent({
     [message, selectedSession?.skillCommands],
   );
   const visibleSkillSuggestions = autocompleteDismissedFor === message ? [] : skillSuggestions;
-  const activeSkillSuggestion = visibleSkillSuggestions[activeSkillIndex] ?? visibleSkillSuggestions[0];
   const viewedSubagentSession = useMemo(
     () => sessions.find((session) => session.id === viewedSubagent?.id) ?? null,
     [sessions, viewedSubagent?.id],
   );
-  const availableModels = selectedSession?.availableModels ?? EMPTY_MODEL_OPTIONS;
-  const currentModelOption = availableModels.find(
-    (model) => `${model.provider}/${model.id}` === selectedSession?.model,
-  );
-  const filteredModels = useMemo(() => {
-    const query = modelQuery.trim().toLocaleLowerCase();
-    const matchingModels = query
-      ? availableModels.filter((model) =>
-          [model.name, model.provider, model.id, ...(model.roles ?? [])].some((value) =>
-            value.toLocaleLowerCase().includes(query),
-          ),
-        )
-      : availableModels;
-    return matchingModels
-      .map((model, index) => ({ model, index }))
-      .sort(
-        (a, b) =>
-          Number((b.model.roles?.length ?? 0) > 0) - Number((a.model.roles?.length ?? 0) > 0) ||
-          a.index - b.index,
-      )
-      .map(({ model }) => model);
-  }, [availableModels, modelQuery]);
-  const availableEfforts = currentModelOption?.efforts ?? [];
+  const {
+    availableModels,
+    currentModelOption,
+    filteredModels,
+    availableEfforts,
+    configurationDrawer,
+    modelQuery,
+    configurationPending,
+    configurationError,
+    openModelConfiguration,
+    openEffortConfiguration,
+    handleModelConfigurationOpenChange,
+    handleEffortConfigurationOpenChange,
+    onModelQueryChange,
+    selectModel,
+    selectEffort,
+  } = useConfigurationController({
+    session: selectedSession,
+    onSetModel,
+    onSetEffort,
+  });
   const sessionFileChangesMatchesSelection =
     selectedSession !== null && sessionFileChangesSessionId === selectedSession.id;
   const visibleSessionFileChanges = sessionFileChangesMatchesSelection ? sessionFileChanges : null;
@@ -451,15 +429,6 @@ function DashboardContent({
       setTodoOpenSessionId(null);
     }
   }, [currentTodo, selectedSession?.id, todoOpenSessionId]);
-
-  useLayoutEffect(() => {
-    configurationSessionIdRef.current = selectedSession?.id ?? null;
-    configurationRequestRef.current = null;
-    setConfigurationDrawer(null);
-    setModelQuery("");
-    setConfigurationPending(null);
-    setConfigurationError(null);
-  }, [selectedSession?.id]);
 
   useLayoutEffect(() => {
     if (branchSelectorSessionIdRef.current === null) return;
@@ -701,82 +670,6 @@ function DashboardContent({
     }
   };
 
-  const selectModel = async (model: string) => {
-    if (
-      !selectedSession ||
-      configurationPending ||
-      !selectedSession.capabilities.includes("model") ||
-      !availableModels.some((option) => `${option.provider}/${option.id}` === model)
-    )
-      return;
-    const request = { sessionId: selectedSession.id };
-    configurationRequestRef.current = request;
-    setConfigurationPending(model);
-    setConfigurationError(null);
-    try {
-      await onSetModel(selectedSession.id, model);
-    } catch (configurationFailure) {
-      if (
-        configurationRequestRef.current !== request ||
-        configurationSessionIdRef.current !== request.sessionId
-      )
-        return;
-      setConfigurationError({
-        drawer: "model",
-        message:
-          configurationFailure instanceof Error
-            ? configurationFailure.message
-            : "The model could not be changed",
-      });
-    } finally {
-      if (
-        configurationRequestRef.current === request &&
-        configurationSessionIdRef.current === request.sessionId
-      ) {
-        configurationRequestRef.current = null;
-        setConfigurationPending(null);
-      }
-    }
-  };
-
-  const selectEffort = async (effort: Effort) => {
-    if (
-      !selectedSession ||
-      configurationPending ||
-      !selectedSession.capabilities.includes("effort") ||
-      !currentModelOption?.efforts.includes(effort)
-    )
-      return;
-    const request = { sessionId: selectedSession.id };
-    configurationRequestRef.current = request;
-    setConfigurationPending(effort);
-    setConfigurationError(null);
-    try {
-      await onSetEffort(selectedSession.id, effort);
-    } catch (configurationFailure) {
-      if (
-        configurationRequestRef.current !== request ||
-        configurationSessionIdRef.current !== request.sessionId
-      )
-        return;
-      setConfigurationError({
-        drawer: "effort",
-        message:
-          configurationFailure instanceof Error
-            ? configurationFailure.message
-            : "The effort could not be changed",
-      });
-    } finally {
-      if (
-        configurationRequestRef.current === request &&
-        configurationSessionIdRef.current === request.sessionId
-      ) {
-        configurationRequestRef.current = null;
-        setConfigurationPending(null);
-      }
-    }
-  };
-
   const selectBranch = async (branch: string) => {
     if (
       !selectedSession ||
@@ -890,8 +783,8 @@ function DashboardContent({
                     }
                   : null,
               onOpenBranchSelector: () => handleBranchSelectorOpenChange(true),
-              onOpenModelSelector: () => setConfigurationDrawer("model"),
-              onOpenEffortSelector: () => setConfigurationDrawer("effort"),
+              onOpenModelSelector: openModelConfiguration,
+              onOpenEffortSelector: openEffortConfiguration,
               onOpenFileChanges: () => handleFileChangesOpenChange(true),
               onOpenCost: () => setCostDrawerOpen(true),
               onOpenTodo: () => setTodoOpenSessionId(selectedSession.id),
@@ -912,102 +805,22 @@ function DashboardContent({
                 </Button>
               </div>
             ) : (
-              <form className="composer" onSubmit={submitMessage}>
-                <div className="composer-field">
-                  <label className="sr-only" htmlFor="composer-message">
-                    Steer current run
-                  </label>
-                  {visibleSkillSuggestions.length > 0 ? (
-                    <div
-                      className="skill-suggestions"
-                      id={SKILL_SUGGESTION_LIST_ID}
-                      role="listbox"
-                      aria-label="Available skills"
-                    >
-                      {visibleSkillSuggestions.map((skill, index) => (
-                        <button
-                          type="button"
-                          className={cn("skill-suggestion", index === activeSkillIndex && "active")}
-                          id={`${SKILL_SUGGESTION_LIST_ID}-${index}`}
-                          role="option"
-                          aria-selected={index === activeSkillIndex}
-                          key={skill.name}
-                          onMouseDown={(event) => event.preventDefault()}
-                          onClick={(event) => {
-                            selectSkillSuggestion(skill.name);
-                            event.currentTarget.form?.querySelector("textarea")?.focus();
-                          }}
-                        >
-                          <code>/{skill.name}</code>
-                          {skill.description ? <span>{skill.description}</span> : null}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                  <Textarea
-                    id="composer-message"
-                    value={message}
-                    aria-autocomplete="list"
-                    aria-controls={visibleSkillSuggestions.length > 0 ? SKILL_SUGGESTION_LIST_ID : undefined}
-                    aria-expanded={visibleSkillSuggestions.length > 0}
-                    aria-activedescendant={
-                      activeSkillSuggestion
-                        ? `${SKILL_SUGGESTION_LIST_ID}-${visibleSkillSuggestions.indexOf(activeSkillSuggestion)}`
-                        : undefined
-                    }
-                    onChange={(event) => setMessage(event.target.value)}
-                    placeholder="Redirect the current run…"
-                    rows={1}
-                    onKeyDown={(event) => {
-                      if (event.nativeEvent.isComposing) return;
-                      if (event.key === "Enter" && event.shiftKey) return;
-                      if (visibleSkillSuggestions.length > 0) {
-                        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-                          event.preventDefault();
-                          const direction = event.key === "ArrowDown" ? 1 : -1;
-                          setActiveSkillIndex(
-                            (current) =>
-                              (current + direction + visibleSkillSuggestions.length) %
-                              visibleSkillSuggestions.length,
-                          );
-                        } else if (
-                          (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey) ||
-                          event.key === "Tab"
-                        ) {
-                          event.preventDefault();
-                          if (activeSkillSuggestion) selectSkillSuggestion(activeSkillSuggestion.name);
-                        } else if (event.key === "Escape") {
-                          event.preventDefault();
-                          setAutocompleteDismissedFor(message);
-                        }
-                        return;
-                      }
-                      if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey) {
-                        event.preventDefault();
-                        event.currentTarget.form?.requestSubmit();
-                      }
-                    }}
-                  />
-                  <Button
-                    className="send-button"
-                    type="submit"
-                    size="icon"
-                    variant={composerAction === "abort" ? "destructive" : "default"}
-                    disabled={!composerAction || commandState === "sending"}
-                    aria-label={
-                      commandState === "sending"
-                        ? "Sending instruction"
-                        : composerAction === "abort"
-                          ? "Abort active run"
-                          : composerAction === "steer"
-                            ? "Steer active run"
-                            : "Enter an instruction to steer"
-                    }
-                  >
-                    <DashboardIcon name={composerAction === "abort" ? "stop" : "send"} />
-                  </Button>
-                </div>
-              </form>
+              SessionComposer({
+                message,
+                skillSuggestions: visibleSkillSuggestions,
+                activeSkillIndex,
+                composerAction,
+                sending: commandState === "sending",
+                onSubmit: submitMessage,
+                onMessageChange: setMessage,
+                onMoveActiveSkill: (direction) =>
+                  setActiveSkillIndex(
+                    (current) =>
+                      (current + direction + visibleSkillSuggestions.length) % visibleSkillSuggestions.length,
+                  ),
+                onSelectSkill: selectSkillSuggestion,
+                onDismissAutocomplete: setAutocompleteDismissedFor,
+              })
             )}
 
             {commandError ? (
@@ -1089,390 +902,73 @@ function DashboardContent({
         onSelectBranch={(branch) => void selectBranch(branch)}
         onOpenChange={handleBranchSelectorOpenChange}
       />
-      <Drawer
-        open={todoOpenSessionId === selectedSession?.id && currentTodo !== null}
-        onOpenChange={(open) =>
-          setTodoOpenSessionId(open && currentTodo ? (selectedSession?.id ?? null) : null)
-        }
-        {...getResponsiveDrawerProps(isMobile)}
-      >
-        <DrawerContent className="model-settings-sheet todo-tracker-sheet">
-          <DrawerHeader className="model-settings-header todo-tracker-sheet-header">
-            <div>
-              <DrawerTitle>Current Todo</DrawerTitle>
-              <DrawerDescription>
-                Review the latest Todo progress and complete task list for this session.
-              </DrawerDescription>
-            </div>
-            <DrawerClose
-              render={
-                <Button type="button" variant="ghost" size="icon" autoFocus aria-label="Close current Todo" />
-              }
-            >
-              <DashboardIcon name="close" />
-            </DrawerClose>
-          </DrawerHeader>
-          <div className="model-settings-body todo-tracker-sheet-body">
-            {currentTodo ? (
-              <>
-                <TodoProgressSummary todo={currentTodo} />
-                <TodoPhaseList todo={currentTodo} />
-              </>
-            ) : null}
-          </div>
-        </DrawerContent>
-      </Drawer>
-
-      <Drawer
-        open={configurationDrawer === "model"}
-        onOpenChange={(open) => {
-          if (configurationPending) return;
-          setConfigurationDrawer(open ? "model" : null);
-          if (!open) {
-            setModelQuery("");
-            setConfigurationError(null);
-          }
-        }}
-        {...getResponsiveDrawerProps(isMobile)}
-      >
-        <DrawerContent className="model-settings-sheet">
-          <DrawerHeader className="model-settings-header">
-            <div>
-              <DrawerTitle>Model</DrawerTitle>
-              <DrawerDescription>Choose the model for this session.</DrawerDescription>
-            </div>
-            <DrawerClose
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Close model settings"
-                  disabled={configurationPending !== null}
-                />
-              }
-            >
-              <DashboardIcon name="close" />
-            </DrawerClose>
-          </DrawerHeader>
-          <div className="model-settings-body" aria-busy={configurationPending !== null}>
-            {selectedSession?.capabilities.includes("model") && availableModels.length > 0 ? (
-              <>
-                {availableModels.length > 8 ? (
-                  <label className="model-search-field" htmlFor="model-settings-search">
-                    <span className="sr-only">Search models</span>
-                    <DashboardIcon name="search" />
-                    <Input
-                      id="model-settings-search"
-                      value={modelQuery}
-                      onChange={(event) => setModelQuery(event.target.value)}
-                      placeholder="Search models"
-                      autoComplete="off"
-                    />
-                  </label>
-                ) : null}
-                <section className="model-settings-section" aria-labelledby="model-settings-model-heading">
-                  <div className="model-settings-section-heading">
-                    <h3 id="model-settings-model-heading">Model</h3>
-                    <span>{availableModels.length} available</span>
-                  </div>
-                  <div className="model-option-list">
-                    {filteredModels.map((model) => {
-                      const value = `${model.provider}/${model.id}`;
-                      const roles = model.roles ?? [];
-                      const selected = value === selectedSession.model;
-                      return (
-                        <Button
-                          className={cn("model-option", selected && "selected")}
-                          type="button"
-                          variant="ghost"
-                          aria-pressed={selected}
-                          disabled={configurationPending !== null}
-                          onClick={() => void selectModel(value)}
-                          key={value}
-                        >
-                          <span>
-                            <strong>{model.name}</strong>
-                            {roles.length > 0 ? (
-                              <small className="model-option-roles">
-                                Configured roles: {roles.join(" · ")}
-                              </small>
-                            ) : null}
-                            <small>{value}</small>
-                          </span>
-                          <span className="selection-indicator" aria-hidden="true" />
-                        </Button>
-                      );
-                    })}
-                    {filteredModels.length === 0 ? (
-                      <p className="model-settings-empty">No models match “{modelQuery.trim()}”.</p>
-                    ) : null}
-                  </div>
-                </section>
-              </>
-            ) : (
-              <p className="model-settings-empty model-settings-unavailable">
-                {selectedSession?.source !== "history"
-                  ? "Restart this session with the latest extension to change its model."
-                  : "Resume this session to load its available models."}
-              </p>
-            )}
-            {configurationError?.drawer === "model" ? (
-              <p className="inline-error model-settings-error" role="alert">
-                {configurationError.message}
-              </p>
-            ) : null}
-          </div>
-          <DrawerFooter className="model-settings-footer">
-            <DrawerClose
-              render={
-                <Button type="button" disabled={configurationPending !== null}>
-                  Done
-                </Button>
-              }
-            />
-          </DrawerFooter>
-        </DrawerContent>
-      </Drawer>
-
-      <Drawer
-        open={configurationDrawer === "effort"}
-        onOpenChange={(open) => {
-          if (configurationPending) return;
-          setConfigurationDrawer(open ? "effort" : null);
-          if (!open) setConfigurationError(null);
-        }}
-        {...getResponsiveDrawerProps(isMobile)}
-      >
-        <DrawerContent className="model-settings-sheet">
-          <DrawerHeader className="model-settings-header">
-            <div>
-              <DrawerTitle>Effort</DrawerTitle>
-              <DrawerDescription>
-                Choose the reasoning effort for {currentModelOption?.name ?? "this session"}.
-              </DrawerDescription>
-            </div>
-            <DrawerClose
-              render={
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Close effort settings"
-                  disabled={configurationPending !== null}
-                />
-              }
-            >
-              <DashboardIcon name="close" />
-            </DrawerClose>
-          </DrawerHeader>
-          <div className="model-settings-body" aria-busy={configurationPending !== null}>
-            {selectedSession?.capabilities.includes("effort") &&
-            currentModelOption &&
-            availableEfforts.length > 0 ? (
-              <section className="model-settings-section" aria-labelledby="model-settings-effort-heading">
-                <div className="model-settings-section-heading">
-                  <h3 id="model-settings-effort-heading">Effort</h3>
-                  <span>{currentModelOption.name}</span>
-                </div>
-                <div className="effort-options">
-                  {availableEfforts.map((effort) => (
-                    <Button
-                      className={cn("effort-option", effort === selectedSession.effort && "selected")}
-                      type="button"
-                      variant="outline"
-                      aria-pressed={effort === selectedSession.effort}
-                      disabled={configurationPending !== null}
-                      onClick={() => void selectEffort(effort)}
-                      key={effort}
-                    >
-                      {formatEffortLabel(effort)}
-                    </Button>
-                  ))}
-                </div>
-              </section>
-            ) : (
-              <p className="model-settings-empty model-settings-unavailable">
-                {selectedSession?.capabilities.includes("effort") &&
-                currentModelOption &&
-                availableEfforts.length === 0
-                  ? "This model does not expose adjustable effort."
-                  : selectedSession?.source !== "history"
-                    ? "Restart this session with the latest extension to change its effort."
-                    : "Resume this session to load its available effort choices."}
-              </p>
-            )}
-            {configurationError?.drawer === "effort" ? (
-              <p className="inline-error model-settings-error" role="alert">
-                {configurationError.message}
-              </p>
-            ) : null}
-          </div>
-          <DrawerFooter className="model-settings-footer">
-            <DrawerClose
-              render={
-                <Button type="button" disabled={configurationPending !== null}>
-                  Done
-                </Button>
-              }
-            />
-          </DrawerFooter>
-        </DrawerContent>
-      </Drawer>
-
-      <Dialog
-        open={launchOpen}
-        onOpenChange={(open) => {
+      {TodoDrawer({
+        open: todoOpenSessionId === selectedSession?.id && currentTodo !== null,
+        mobile: isMobile,
+        todo: currentTodo,
+        onOpenChange: (open) =>
+          setTodoOpenSessionId(open && currentTodo ? (selectedSession?.id ?? null) : null),
+      })}
+      {ModelConfigurationDrawer({
+        open: configurationDrawer === "model",
+        mobile: isMobile,
+        session: selectedSession,
+        availableModels,
+        filteredModels,
+        modelQuery,
+        pending: configurationPending,
+        error: configurationError,
+        onOpenChange: handleModelConfigurationOpenChange,
+        onModelQueryChange,
+        onSelectModel: (model) => void selectModel(model),
+      })}
+      {EffortConfigurationDrawer({
+        open: configurationDrawer === "effort",
+        mobile: isMobile,
+        session: selectedSession,
+        model: currentModelOption,
+        availableEfforts,
+        pending: configurationPending,
+        error: configurationError,
+        onOpenChange: handleEffortConfigurationOpenChange,
+        onSelectEffort: (effort) => void selectEffort(effort),
+      })}
+      {LaunchSessionDialog({
+        open: launchOpen,
+        cwd: launchCwd,
+        savedWorkingDirectories,
+        savedDirectoryPending,
+        savedDirectoryError,
+        launchError,
+        sending: launchState === "sending",
+        onOpenChange: (open) => {
           setLaunchOpen(open);
           if (!open) {
             setSavedDirectoryError(null);
             setLaunchError(null);
           }
-        }}
-        title="Start an OMP session"
-        description="Choose a working directory. Add a saved session ID or JSONL path to resume it."
-      >
-        <form className="launch-form" onSubmit={submitLaunch}>
-          <div className="launch-field">
-            <label htmlFor="launch-cwd">Working directory</label>
-            <div className="launch-cwd-control">
-              <Input
-                id="launch-cwd"
-                name="cwd"
-                required
-                placeholder="/Users/you/project"
-                autoComplete="off"
-                autoFocus
-                value={launchCwd}
-                onChange={(event) => setLaunchCwd(event.target.value)}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                disabled={!launchCwd.trim() || savedDirectoryPending !== null}
-                onClick={() => void saveWorkingDirectory()}
-              >
-                {savedDirectoryPending?.action === "save" ? "Saving…" : "Save"}
-              </Button>
-            </div>
-          </div>
-          {savedWorkingDirectories.length > 0 ? (
-            <section className="saved-directory-list" aria-label="Saved working directories">
-              {savedWorkingDirectories.map((cwd) => (
-                <div className="saved-directory-item" key={cwd}>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="saved-directory-select"
-                    disabled={savedDirectoryPending !== null}
-                    onClick={() => setLaunchCwd(cwd)}
-                  >
-                    {cwd}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Remove saved working directory ${cwd}`}
-                    disabled={savedDirectoryPending !== null}
-                    onClick={() => void removeWorkingDirectory(cwd)}
-                  >
-                    <DashboardIcon name="trash" />
-                  </Button>
-                </div>
-              ))}
-            </section>
-          ) : null}
-          <label htmlFor="launch-resume">
-            <span>
-              Resume ID or path <small>Optional</small>
-            </span>
-            <Input
-              id="launch-resume"
-              name="resume"
-              placeholder="Session ID or .jsonl path"
-              autoComplete="off"
-            />
-          </label>
-          {savedDirectoryError ? (
-            <p className="inline-error saved-directory-error" role="alert">
-              {savedDirectoryError}
-            </p>
-          ) : null}
-          {launchError ? (
-            <p className="inline-error" role="alert">
-              {launchError}
-            </p>
-          ) : null}
-          <footer className="dialog-actions">
-            <Button
-              type="button"
-              variant="ghost"
-              disabled={launchState === "sending"}
-              onClick={() => setLaunchOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={launchState === "sending"}>
-              {launchState === "sending" ? "Starting…" : "Start session"}
-            </Button>
-          </footer>
-        </form>
-      </Dialog>
-
-      <Dialog
-        open={abortOpen}
-        onOpenChange={setAbortOpen}
-        title="Abort this run?"
-        description="OMP will stop the active run. The session and transcript stay available."
-      >
-        <footer className="dialog-actions">
-          <Button type="button" variant="ghost" onClick={() => setAbortOpen(false)}>
-            Keep running
-          </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            disabled={commandState === "sending"}
-            onClick={() => void abortSelectedSession()}
-          >
-            Abort run
-          </Button>
-        </footer>
-      </Dialog>
-
-      <Dialog
-        open={killOpen}
-        onOpenChange={setKillOpen}
-        dismissible={commandState !== "sending"}
-        title="Kill this session?"
-        description="This ends the OMP process and its active run. The transcript stays available as a saved session."
-      >
-        {commandError ? (
-          <p className="inline-error" role="alert">
-            {commandError}
-          </p>
-        ) : null}
-        <footer className="dialog-actions kill-dialog-actions">
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={commandState === "sending"}
-            onClick={() => setKillOpen(false)}
-          >
-            Keep session
-          </Button>
-          <Button
-            type="button"
-            variant="destructive"
-            disabled={commandState === "sending"}
-            aria-busy={commandState === "sending"}
-            onClick={() => void killSelectedSession()}
-          >
-            {commandState === "sending" ? "Killing…" : "Kill session"}
-          </Button>
-        </footer>
-      </Dialog>
+        },
+        onCwdChange: setLaunchCwd,
+        onSaveWorkingDirectory: () => void saveWorkingDirectory(),
+        onRemoveWorkingDirectory: (cwd) => void removeWorkingDirectory(cwd),
+        onSubmit: submitLaunch,
+        onCancel: () => setLaunchOpen(false),
+      })}
+      {AbortSessionDialog({
+        open: abortOpen,
+        sending: commandState === "sending",
+        onOpenChange: setAbortOpen,
+        onAbort: () => void abortSelectedSession(),
+        onKeepRunning: () => setAbortOpen(false),
+      })}
+      {KillSessionDialog({
+        open: killOpen,
+        sending: commandState === "sending",
+        commandError,
+        onOpenChange: setKillOpen,
+        onKill: () => void killSelectedSession(),
+        onKeepSession: () => setKillOpen(false),
+      })}
     </div>
   );
 }
