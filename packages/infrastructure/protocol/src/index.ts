@@ -14,12 +14,24 @@ export const SessionCapabilitySchema = z.enum([
 ]);
 
 export const EffortSchema = z.enum(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+export const RoleEffortSchema = z.enum([
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "auto",
+  "inherit",
+]);
 export const SessionModelOptionSchema = z.object({
   provider: z.string().min(1),
   id: z.string().min(1),
   name: z.string().min(1),
   efforts: z.array(EffortSchema),
   roles: z.array(z.string().min(1)).optional(),
+  roleEfforts: z.record(z.string().min(1), RoleEffortSchema).optional(),
 });
 export const TranscriptPresentationSchema = z.enum(["text", "diff"]);
 
@@ -761,6 +773,7 @@ export type AskDialogResultItem = z.infer<typeof AskDialogResultItemSchema>;
 export type BrowserCommand = z.infer<typeof BrowserCommandSchema>;
 export type CommandResult = z.infer<typeof CommandResultSchema>;
 export type Effort = z.infer<typeof EffortSchema>;
+export type RoleEffort = z.infer<typeof RoleEffortSchema>;
 export type ActiveSubagent = z.infer<typeof ActiveSubagentSchema>;
 export type ExtensionCommand = z.infer<typeof ExtensionCommandSchema>;
 export type ExtensionFrame = z.infer<typeof ExtensionFrameSchema>;

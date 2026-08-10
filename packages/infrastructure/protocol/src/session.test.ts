@@ -70,12 +70,22 @@ describe("historical session schemas", () => {
             id: "gpt-5.6",
             name: "GPT-5.6",
             efforts: ["low", "medium", "high", "xhigh"],
+            roles: ["default", "slow"],
+            roleEfforts: { default: "high", slow: "xhigh" },
           },
         ],
       }),
     ).toMatchObject({
       effort: "high",
-      availableModels: [{ provider: "openai", id: "gpt-5.6", efforts: ["low", "medium", "high", "xhigh"] }],
+      availableModels: [
+        {
+          provider: "openai",
+          id: "gpt-5.6",
+          efforts: ["low", "medium", "high", "xhigh"],
+          roles: ["default", "slow"],
+          roleEfforts: { default: "high", slow: "xhigh" },
+        },
+      ],
     });
   });
 

@@ -547,6 +547,6 @@ describe("dashboard current Todo tracker", () => {
     ).toHaveLength(0);
     expect(
       findElements(output, (element) => element.type === "dt").map((element) => textContent(element)),
-    ).toEqual(["Branch", "Model", "Effort", "Context", "Changes", "Cost"]);
+    ).toEqual(["Branch", "Model · Effort", "Context", "Changes", "Cost"]);
   });
 });

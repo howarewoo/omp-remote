@@ -91,10 +91,7 @@
 .session-metadata {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: minmax(10rem, 1.5fr) minmax(7rem, 1fr) minmax(4.5rem, auto) minmax(11rem, auto) minmax(
-      5rem,
-      auto
-    );
+  grid-template-columns: minmax(13rem, 1.5fr) minmax(4.5rem, auto) minmax(11rem, auto) minmax(8rem, auto);
   align-items: stretch;
   margin: 0;
   padding: 0.65rem 0 0.75rem;
@@ -104,20 +101,20 @@
 
 .session-metadata:has(> .session-branch-metadata) {
   grid-template-columns:
-    minmax(9rem, 1.25fr) minmax(10rem, 1.5fr) minmax(7rem, 1fr) minmax(4.5rem, auto)
-    minmax(11rem, auto) minmax(5rem, auto);
+    minmax(9rem, 1.25fr) minmax(13rem, 1.5fr) minmax(4.5rem, auto) minmax(11rem, auto)
+    minmax(8rem, auto);
 }
 
 .session-metadata:has(> .todo-tracker-metadata) {
   grid-template-columns:
-    minmax(10rem, 1.5fr) minmax(7rem, 1fr) minmax(4.5rem, auto) minmax(11rem, auto)
-    minmax(5rem, auto) minmax(14rem, 1.5fr);
+    minmax(13rem, 1.5fr) minmax(4.5rem, auto) minmax(11rem, auto) minmax(8rem, auto)
+    minmax(14rem, 1.5fr);
 }
 
 .session-metadata:has(> .session-branch-metadata):has(> .todo-tracker-metadata) {
   grid-template-columns:
-    minmax(9rem, 1.25fr) minmax(10rem, 1.5fr) minmax(7rem, 1fr) minmax(4.5rem, auto)
-    minmax(11rem, auto) minmax(5rem, auto) minmax(14rem, 1.5fr);
+    minmax(9rem, 1.25fr) minmax(13rem, 1.5fr) minmax(4.5rem, auto) minmax(11rem, auto)
+    minmax(8rem, auto) minmax(14rem, 1.5fr);
 }
 
 .session-metadata > div {
@@ -171,6 +168,16 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-configuration-separator {
+  flex: 0 0 auto;
+  color: var(--border-strong);
+}
+
+.session-configuration-effort {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
 }
 
 .session-branch-metadata dd {
@@ -237,32 +244,6 @@
 
 .session-cost-trigger.ui-button:hover {
   color: var(--foreground);
-}
-
-.session-metadata:has(> .session-cost-metadata) {
-  grid-template-columns:
-    minmax(10rem, 1.5fr) minmax(7rem, 1fr) minmax(4.5rem, auto) minmax(11rem, auto)
-    minmax(5rem, auto) minmax(8rem, auto);
-}
-
-.session-metadata:has(> .session-branch-metadata):has(> .session-cost-metadata) {
-  grid-template-columns:
-    minmax(9rem, 1.25fr) minmax(10rem, 1.5fr) minmax(7rem, 1fr) minmax(4.5rem, auto)
-    minmax(11rem, auto) minmax(5rem, auto) minmax(8rem, auto);
-}
-
-.session-metadata:has(> .todo-tracker-metadata):has(> .session-cost-metadata) {
-  grid-template-columns:
-    minmax(10rem, 1.5fr) minmax(7rem, 1fr) minmax(4.5rem, auto) minmax(11rem, auto)
-    minmax(5rem, auto) minmax(8rem, auto) minmax(14rem, 1.5fr);
-}
-
-.session-metadata:has(> .session-branch-metadata):has(> .todo-tracker-metadata):has(
-  > .session-cost-metadata
-) {
-  grid-template-columns:
-    minmax(9rem, 1.25fr) minmax(10rem, 1.5fr) minmax(7rem, 1fr) minmax(4.5rem, auto)
-    minmax(11rem, auto) minmax(5rem, auto) minmax(8rem, auto) minmax(14rem, 1.5fr);
 }
 
 .session-configuration-trigger .icon {

@@ -302,6 +302,74 @@
   white-space: nowrap;
 }
 
+.role-option-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.role-option.ui-button {
+  display: grid;
+  width: 100%;
+  min-height: 3.75rem;
+  height: auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  justify-content: stretch;
+  gap: 0.75rem;
+  padding: 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 1.5);
+  color: var(--foreground);
+  background: oklch(100% 0 0 / 0.025);
+  text-align: left;
+}
+
+.role-option-model {
+  display: grid;
+  min-width: 0;
+  gap: 0.2rem;
+}
+
+.role-option-model strong,
+.role-option-model small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role-option-model strong {
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.role-option-model small {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+}
+
+.role-option-name {
+  padding: 0.3rem 0.45rem;
+  border-radius: var(--radius);
+  color: var(--accent);
+  background: oklch(70% 0.24 340 / 0.1);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 650;
+}
+
+.role-option-effort {
+  justify-self: end;
+  padding: 0.25rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--muted-foreground);
+  background: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  white-space: nowrap;
+}
+
 .model-option-list {
   display: grid;
   overflow: hidden;
@@ -321,8 +389,32 @@
   text-align: left;
 }
 
-.model-option + .model-option {
+.model-option-list > * + * {
   border-top: 1px solid var(--border);
+}
+
+.model-option-disclosure {
+  display: grid;
+}
+
+.model-option-disclosure > .model-option.ui-button {
+  border: 0;
+}
+
+.model-effort-dropdown {
+  display: grid;
+  gap: 0.65rem;
+  padding: 0.25rem 0.8rem 0.8rem;
+}
+
+.model-effort-dropdown > span {
+  color: var(--muted-foreground);
+  font-size: 0.625rem;
+  font-weight: 600;
+}
+
+.model-use-option.ui-button {
+  justify-self: start;
 }
 
 .model-option > span:first-child {
@@ -349,13 +441,6 @@
   font-size: 0.625rem;
   font-weight: 450;
 }
-.model-option-roles {
-  color: var(--accent);
-  font-family: var(--font-display);
-  font-size: 0.6rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
 
 .selection-indicator {
   width: 0.6rem;
@@ -377,8 +462,12 @@
 
 .effort-options {
   display: grid;
+  min-width: 0;
   grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
   gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 .effort-option.selected {

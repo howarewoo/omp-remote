@@ -25,7 +25,7 @@ import {
   ExtensionToolCallTracker,
   normalizeExtensionMessage,
 } from "./transcript-normalizer.js";
-import { getSessionModelOptions, getSkillCommands } from "./model-options.js";
+import { getConfiguredRoleEffort, getSessionModelOptions, getSkillCommands } from "./model-options.js";
 import { normalizeRemoteAskResponse, type RemoteAskOutcome } from "./remote-ask.js";
 
 export {
@@ -34,7 +34,7 @@ export {
   materializeExtensionReadImages,
   normalizeExtensionMessage,
 } from "./transcript-normalizer.js";
-export { getSessionModelOptions, getSkillCommands } from "./model-options.js";
+export { getConfiguredRoleEffort, getSessionModelOptions, getSkillCommands } from "./model-options.js";
 export { normalizeRemoteAskResponse } from "./remote-ask.js";
 
 const DEFAULT_EXTENSION_URL = "ws://127.0.0.1:4387/extension";
@@ -110,6 +110,16 @@ function createOwnReadImageResolver(maxBytes: number) {
 export default function ompRemoteExtension(pi: ExtensionAPI): void {
   const rpcMode = isRpcMode();
   const { z } = pi.zod;
+  const resolveRoleAssignment = (ctx: ExtensionContext, role: string) => {
+    if (typeof ctx.models.resolve !== "function") return undefined;
+    const model = ctx.models.resolve(role.startsWith("@") ? role : `@${role}`);
+    if (!model) return undefined;
+    return {
+      provider: model.provider,
+      id: model.id,
+      effort: getConfiguredRoleEffort(role, (candidate) => pi.pi.settings.getModelRole(candidate)),
+    };
+  };
   const AskDialogResultItemSchema = z
     .object({
       id: z.string().min(1),
@@ -422,15 +432,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
       connected: true,
       model: model ? `${model.provider}/${model.id}` : null,
       effort: pi.getThinkingLevel() ?? null,
-      availableModels: getSessionModelOptions(
-        ctx.models.list(),
-        typeof ctx.models.resolve === "function"
-          ? (role) => {
-              const roleModel = ctx.models.resolve(role.startsWith("@") ? role : `@${role}`);
-              return roleModel ? { provider: roleModel.provider, id: roleModel.id } : undefined;
-            }
-          : undefined,
-      ),
+      availableModels: getSessionModelOptions(ctx.models.list(), (role) => resolveRoleAssignment(ctx, role)),
       contextPercent: normalizeContextPercent(ctx),
       createdAt,
       lastActivity: now,
@@ -578,14 +580,8 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
         model: model ? `${model.provider}/${model.id}` : null,
         contextPercent: normalizeContextPercent(currentContext),
         effort: pi.getThinkingLevel() ?? null,
-        availableModels: getSessionModelOptions(
-          currentContext.models.list(),
-          typeof currentContext.models.resolve === "function"
-            ? (role) => {
-                const roleModel = currentContext.models.resolve(role.startsWith("@") ? role : `@${role}`);
-                return roleModel ? { provider: roleModel.provider, id: roleModel.id } : undefined;
-              }
-            : undefined,
+        availableModels: getSessionModelOptions(currentContext.models.list(), (role) =>
+          resolveRoleAssignment(currentContext, role),
         ),
         idle: currentContext.isIdle(),
         skillCommands: getSkillCommands(pi.getCommands()),

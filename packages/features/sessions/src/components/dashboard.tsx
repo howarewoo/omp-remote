@@ -13,11 +13,7 @@ import { SessionBranchSelector } from "./session-branch-selector.js";
 import { formatSessionFileChangesMetadata, SessionFileChangesViewer } from "./session-file-changes-viewer.js";
 import { SubagentSessionViewer } from "./subagent-session-viewer.js";
 import { SessionCostViewer } from "./session-cost-viewer.js";
-import {
-  EffortConfigurationDrawer,
-  ModelConfigurationDrawer,
-  useConfigurationController,
-} from "./dashboard/configuration-drawers.js";
+import { ModelConfigurationDrawer, useConfigurationController } from "./dashboard/configuration-drawers.js";
 import { EmptyDashboard } from "./dashboard/empty-dashboard.js";
 import { LaunchSessionDialog } from "./dashboard/launch-session-dialog.js";
 import { AbortSessionDialog, KillSessionDialog } from "./dashboard/session-action-dialogs.js";
@@ -372,18 +368,16 @@ function DashboardContent({
     availableModels,
     currentModelOption,
     filteredModels,
-    availableEfforts,
-    configurationDrawer,
+    configurationOpen,
+    expandedModel,
     modelQuery,
     configurationPending,
     configurationError,
-    openModelConfiguration,
-    openEffortConfiguration,
-    handleModelConfigurationOpenChange,
-    handleEffortConfigurationOpenChange,
+    openConfiguration,
+    handleConfigurationOpenChange,
+    onExpandedModelChange,
     onModelQueryChange,
-    selectModel,
-    selectEffort,
+    selectConfiguration,
   } = useConfigurationController({
     session: selectedSession,
     onSetModel,
@@ -783,8 +777,7 @@ function DashboardContent({
                     }
                   : null,
               onOpenBranchSelector: () => handleBranchSelectorOpenChange(true),
-              onOpenModelSelector: openModelConfiguration,
-              onOpenEffortSelector: openEffortConfiguration,
+              onOpenConfiguration: openConfiguration,
               onOpenFileChanges: () => handleFileChangesOpenChange(true),
               onOpenCost: () => setCostDrawerOpen(true),
               onOpenTodo: () => setTodoOpenSessionId(selectedSession.id),
@@ -910,28 +903,21 @@ function DashboardContent({
           setTodoOpenSessionId(open && currentTodo ? (selectedSession?.id ?? null) : null),
       })}
       {ModelConfigurationDrawer({
-        open: configurationDrawer === "model",
+        open: configurationOpen,
         mobile: isMobile,
         session: selectedSession,
         availableModels,
         filteredModels,
+        expandedModel,
         modelQuery,
         pending: configurationPending,
         error: configurationError,
-        onOpenChange: handleModelConfigurationOpenChange,
+        onOpenChange: handleConfigurationOpenChange,
+        onExpandedModelChange,
         onModelQueryChange,
-        onSelectModel: (model) => void selectModel(model),
-      })}
-      {EffortConfigurationDrawer({
-        open: configurationDrawer === "effort",
-        mobile: isMobile,
-        session: selectedSession,
-        model: currentModelOption,
-        availableEfforts,
-        pending: configurationPending,
-        error: configurationError,
-        onOpenChange: handleEffortConfigurationOpenChange,
-        onSelectEffort: (effort) => void selectEffort(effort),
+        onSelectRole: (model, role) => void selectConfiguration({ model, role }),
+        onSelectModel: (model, effort) =>
+          void selectConfiguration(effort === undefined ? { model } : { model, effort }),
       })}
       {LaunchSessionDialog({
         open: launchOpen,
