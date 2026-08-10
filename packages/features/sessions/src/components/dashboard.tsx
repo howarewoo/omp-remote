@@ -22,6 +22,7 @@ import { SessionHeader, type NotificationState } from "./dashboard/session-heade
 import { SessionMetadata } from "./dashboard/session-metadata.js";
 import { SessionSidebar } from "./dashboard/session-sidebar.js";
 import { SessionTranscript, WorkingIndicator } from "./dashboard/session-transcript.js";
+import { NotificationSettingsDrawer } from "./notification-settings-drawer.js";
 import { TodoDrawer } from "./dashboard/todo-drawer.js";
 import { Button } from "./ui/button.js";
 import { MessageScrollerItem } from "./ui/message-scroller.js";
@@ -81,6 +82,9 @@ export { WorkingIndicator } from "./dashboard/session-transcript.js";
 
 type ComposerMode = "prompt" | "steer" | "follow_up";
 
+type NotificationEventKey = "inputRequired" | "sessionIdle";
+type NotificationEventPreferences = Record<NotificationEventKey, boolean>;
+
 export interface DashboardProps {
   sessions: Session[];
   askRequests: AskRequest[];
@@ -91,9 +95,11 @@ export interface DashboardProps {
   connection: "connecting" | "connected" | "disconnected";
   error: string | null;
   notificationState: NotificationState;
+  notificationPreferences?: NotificationEventPreferences;
+  notificationError?: string | null;
   selectedSessionId: string | null;
   onSelectedSessionChange(sessionId: string): void;
-  onEnableNotifications(): Promise<void>;
+  onToggleNotification?(event: NotificationEventKey, enabled: boolean): Promise<void>;
   onLaunch(cwd: string, resume: string | null): Promise<string>;
   onSaveWorkingDirectory(cwd: string): Promise<void>;
   onRemoveWorkingDirectory(cwd: string): Promise<void>;
@@ -131,9 +137,11 @@ function DashboardContent({
   connection,
   error,
   notificationState,
+  notificationPreferences = { inputRequired: false, sessionIdle: false },
+  notificationError = null,
   selectedSessionId,
   onSelectedSessionChange,
-  onEnableNotifications,
+  onToggleNotification = async () => undefined,
   onLaunch,
   onSaveWorkingDirectory,
   onRemoveWorkingDirectory,
@@ -156,6 +164,7 @@ function DashboardContent({
   const [message, setMessage] = useState("");
   const [activeSkillIndex, setActiveSkillIndex] = useState(0);
   const [autocompleteDismissedFor, setAutocompleteDismissedFor] = useState<string | null>(null);
+  const [notificationSettingsOpen, setNotificationSettingsOpen] = useState(false);
   const [commandState, setCommandState] = useState<"idle" | "sending">("idle");
   const [commandError, setCommandError] = useState<string | null>(null);
   const [launchOpen, setLaunchOpen] = useState(false);
@@ -729,7 +738,7 @@ function DashboardContent({
           selectedSession,
           selectedSessionStatus,
           notificationState,
-          onEnableNotifications: () => void onEnableNotifications(),
+          onOpenNotificationSettings: () => setNotificationSettingsOpen(true),
           onKillSession: () => {
             setCommandError(null);
             setKillOpen(true);
@@ -955,6 +964,15 @@ function DashboardContent({
         onKill: () => void killSelectedSession(),
         onKeepSession: () => setKillOpen(false),
       })}
+      <NotificationSettingsDrawer
+        open={notificationSettingsOpen}
+        mobile={isMobile}
+        state={notificationState}
+        preferences={notificationPreferences}
+        error={notificationError}
+        onOpenChange={setNotificationSettingsOpen}
+        onToggleEvent={onToggleNotification}
+      />
     </div>
   );
 }
