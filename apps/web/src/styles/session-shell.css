@@ -58,7 +58,7 @@
 }
 
 @media (max-width: 767px) {
-  .new-session-button {
+  .session-header .new-session-button {
     display: none;
   }
 }
