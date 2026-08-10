@@ -79,7 +79,7 @@ export function NotificationSettingsDrawer({
           </DrawerClose>
         </DrawerHeader>
         <div className="notification-settings-body">
-          <div className="notification-settings-list" aria-label="Session notification events">
+          <section className="notification-settings-list" aria-label="Session notification events">
             {EVENTS.map((event) => (
               <div className="notification-settings-row" key={event.key}>
                 <div>
@@ -94,7 +94,7 @@ export function NotificationSettingsDrawer({
                 />
               </div>
             ))}
-          </div>
+          </section>
         </div>
       </DrawerContent>
     </Drawer>
