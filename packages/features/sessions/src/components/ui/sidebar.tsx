@@ -1,8 +1,8 @@
 import { Dialog } from "@base-ui/react/dialog";
 import {
   type ComponentProps,
-  createContext,
   type CSSProperties,
+  createContext,
   type Dispatch,
   type HTMLAttributes,
   type SetStateAction,
@@ -10,9 +10,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { Button } from "./button.js";
+import { isSidebarOpenSwipe } from "./sidebar-swipe.js";
 import { useIsMobile } from "./use-mobile.js";
 import { cn } from "./utils.js";
 
@@ -34,6 +36,16 @@ type SidebarContextValue = {
 };
 
 const SidebarContext = createContext<SidebarContextValue | null>(null);
+
+type SwipeStart = {
+  identifier: number;
+  x: number;
+  y: number;
+};
+
+function isIosStandalonePwa(): boolean {
+  return (navigator as Navigator & { standalone?: boolean }).standalone === true;
+}
 
 export function useSidebar(): SidebarContextValue {
   const context = useContext(SidebarContext);
@@ -58,6 +70,7 @@ export function SidebarProvider({
 }: SidebarProviderProps) {
   const isMobile = useIsMobile();
   const [openMobile, setOpenMobile] = useState(false);
+  const swipeStartRef = useRef<SwipeStart | null>(null);
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
   const open = openProp ?? internalOpen;
 
@@ -87,6 +100,55 @@ export function SidebarProvider({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [toggleSidebar]);
+
+  useEffect(() => {
+    if (!isMobile || openMobile || !isIosStandalonePwa()) return;
+
+    const handleTouchStart = (event: TouchEvent) => {
+      const touch = event.touches.length === 1 ? event.touches.item(0) : null;
+      swipeStartRef.current = touch
+        ? { identifier: touch.identifier, x: touch.clientX, y: touch.clientY }
+        : null;
+    };
+    const handleTouchEnd = (event: TouchEvent) => {
+      const start = swipeStartRef.current;
+      swipeStartRef.current = null;
+      if (!start) return;
+
+      let end: Touch | null = null;
+      for (let index = 0; index < event.changedTouches.length; index += 1) {
+        const touch = event.changedTouches.item(index);
+        if (touch?.identifier === start.identifier) {
+          end = touch;
+          break;
+        }
+      }
+
+      if (
+        end &&
+        isSidebarOpenSwipe({
+          startX: start.x,
+          startY: start.y,
+          endX: end.clientX,
+          endY: end.clientY,
+        })
+      ) {
+        setOpenMobile(true);
+      }
+    };
+    const cancelSwipe = () => {
+      swipeStartRef.current = null;
+    };
+
+    window.addEventListener("touchstart", handleTouchStart, { passive: true });
+    window.addEventListener("touchend", handleTouchEnd, { passive: true });
+    window.addEventListener("touchcancel", cancelSwipe, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", handleTouchStart);
+      window.removeEventListener("touchend", handleTouchEnd);
+      window.removeEventListener("touchcancel", cancelSwipe);
+    };
+  }, [isMobile, openMobile]);
 
   const state = open ? "expanded" : "collapsed";
   const value = useMemo<SidebarContextValue>(
