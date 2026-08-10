@@ -5,6 +5,7 @@ import { Badge } from "../ui/badge.js";
 import { Button } from "../ui/button.js";
 import { SidebarTrigger } from "../ui/sidebar.js";
 import { cn } from "../ui/utils.js";
+import { compactPath } from "./session-path.js";
 
 export type NotificationState = "blocked" | "enabled" | "error" | "prompt" | "unsupported";
 
@@ -45,7 +46,9 @@ export function SessionHeader({
           <>
             <div>
               <h1>{selectedSession.name ?? "Untitled session"}</h1>
-              <p>{selectedSession.cwd}</p>
+              <p className="session-root" title={selectedSession.cwd}>
+                {compactPath(selectedSession.cwd)}
+              </p>
             </div>
             <Badge className={cn("status-badge", `status-${SESSION_STATUS_TONE[selectedSessionStatus]}`)}>
               <span aria-hidden="true" />
