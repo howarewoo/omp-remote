@@ -1,5 +1,5 @@
-import type { SessionBranchTopology, SessionBranchTopologyNode } from "@omp-remote/protocol";
 import type { CSSProperties } from "react";
+import type { SessionBranchTopology, SessionBranchTopologyNode } from "@omp-remote/protocol";
 import { Button } from "./ui/button.js";
 import {
   Drawer,
@@ -14,14 +14,22 @@ import {
 import { Input } from "./ui/input.js";
 import { RadioGroup, RadioGroupItem } from "./ui/radio-group.js";
 
-const TOPOLOGY_DEPTH_LIMIT = 4;
 const LOADING_ROWS = [0, 1, 2, 3] as const;
+
+interface SessionBranchTopologyJoin {
+  startLane: number;
+  endLane: number;
+  direction: "upper" | "lower";
+}
 
 export interface SessionBranchTopologyRow {
   branch: SessionBranchTopologyNode;
-  depth: number;
   index: number;
-  parentIndex: number | null;
+  lane: number;
+  lanes: number[];
+  upperLanes: number[];
+  lowerLanes: number[];
+  joins: SessionBranchTopologyJoin[];
 }
 
 export interface SessionBranchSelectorProps {
@@ -41,40 +49,94 @@ export interface SessionBranchSelectorProps {
 }
 
 export function getSessionBranchTopologyRows(topology: SessionBranchTopology): SessionBranchTopologyRow[] {
-  const branchIndex = new Map(topology.branches.map((branch, index) => [branch.name, index]));
-  const depthByName = new Map<string, number>();
-
+  const indexByName = new Map(topology.branches.map((branch, index) => [branch.name, index]));
+  const childrenByParent = new Map<string, SessionBranchTopologyNode[]>();
   for (const branch of topology.branches) {
-    if (depthByName.has(branch.name)) continue;
-    const path: SessionBranchTopologyNode[] = [];
-    const visited = new Set<string>();
-    let cursor: SessionBranchTopologyNode | undefined = branch;
-    let depth = -1;
-
-    while (cursor) {
-      const knownDepth = depthByName.get(cursor.name);
-      if (knownDepth !== undefined) {
-        depth = knownDepth;
-        break;
-      }
-      if (visited.has(cursor.name)) break;
-      visited.add(cursor.name);
-      path.push(cursor);
-      const parentIndex: number | undefined = cursor.parent ? branchIndex.get(cursor.parent) : undefined;
-      cursor = parentIndex === undefined ? undefined : topology.branches[parentIndex];
-    }
-
-    for (let index = path.length - 1; index >= 0; index -= 1) {
-      depth = Math.min(depth + 1, TOPOLOGY_DEPTH_LIMIT);
-      depthByName.set((path[index] as SessionBranchTopologyNode).name, depth);
-    }
+    if (!branch.parent || !indexByName.has(branch.parent)) continue;
+    const siblings = childrenByParent.get(branch.parent) ?? [];
+    siblings.push(branch);
+    childrenByParent.set(branch.parent, siblings);
   }
 
+  const laneByName = new Map<string, number>();
+  let nextLane = 0;
+  const resolveLane = (branch: SessionBranchTopologyNode, path = new Set<string>()): number => {
+    const existingLane = laneByName.get(branch.name);
+    if (existingLane !== undefined) return existingLane;
+    if (path.has(branch.name)) {
+      const cycleLane = nextLane++;
+      laneByName.set(branch.name, cycleLane);
+      return cycleLane;
+    }
+
+    const parentIndex = branch.parent ? indexByName.get(branch.parent) : undefined;
+    if (parentIndex === undefined) {
+      const rootLane = nextLane++;
+      laneByName.set(branch.name, rootLane);
+      return rootLane;
+    }
+
+    path.add(branch.name);
+    const parent = topology.branches[parentIndex];
+    if (!parent) {
+      const rootLane = nextLane++;
+      laneByName.set(branch.name, rootLane);
+      path.delete(branch.name);
+      return rootLane;
+    }
+    const parentLane = resolveLane(parent, path);
+    path.delete(branch.name);
+    const latestSibling = childrenByParent.get(parent.name)?.[0];
+    const lane = latestSibling?.name === branch.name ? parentLane : nextLane++;
+    laneByName.set(branch.name, lane);
+    return lane;
+  };
+
+  for (const branch of topology.branches) resolveLane(branch);
+
+  const laneCount = Math.max(nextLane, 1);
+  const upperLanes = topology.branches.map(() => new Set<number>());
+  const lowerLanes = topology.branches.map(() => new Set<number>());
+  const joins = topology.branches.map(() => [] as SessionBranchTopologyJoin[]);
+
+  topology.branches.forEach((branch, childIndex) => {
+    const parentIndex = branch.parent ? indexByName.get(branch.parent) : undefined;
+    if (parentIndex === undefined) return;
+    const childLane = laneByName.get(branch.name) ?? 0;
+    const parentLane = laneByName.get(branch.parent ?? "") ?? 0;
+    const firstIndex = Math.min(childIndex, parentIndex);
+    const lastIndex = Math.max(childIndex, parentIndex);
+
+    const sharedLane = childLane === parentLane;
+    if (childIndex < parentIndex) {
+      lowerLanes[childIndex]?.add(childLane);
+      if (sharedLane) upperLanes[parentIndex]?.add(childLane);
+    } else {
+      upperLanes[childIndex]?.add(childLane);
+      if (sharedLane) lowerLanes[parentIndex]?.add(childLane);
+    }
+    for (let index = firstIndex + 1; index < lastIndex; index += 1) {
+      upperLanes[index]?.add(childLane);
+      lowerLanes[index]?.add(childLane);
+    }
+    if (!sharedLane) {
+      joins[parentIndex]?.push({
+        startLane: Math.min(childLane, parentLane),
+        endLane: Math.max(childLane, parentLane),
+        direction: childIndex < parentIndex ? "upper" : "lower",
+      });
+    }
+  });
+
+  const lanes = Array.from({ length: laneCount }, (_, lane) => lane);
   return topology.branches.map((branch, index) => ({
     branch,
-    depth: depthByName.get(branch.name) ?? 0,
     index,
-    parentIndex: branch.parent ? (branchIndex.get(branch.parent) ?? null) : null,
+    lane: laneByName.get(branch.name) ?? 0,
+    lanes,
+    upperLanes: [...(upperLanes[index] ?? [])],
+    lowerLanes: [...(lowerLanes[index] ?? [])],
+    joins: joins[index] ?? [],
   }));
 }
 
@@ -83,9 +145,11 @@ export function filterSessionBranchTopologyRows(
   query: string,
 ): SessionBranchTopologyRow[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const rows = getSessionBranchTopologyRows(topology);
-  if (!normalizedQuery) return rows;
-  return rows.filter(({ branch }) => branch.name.toLocaleLowerCase().includes(normalizedQuery));
+  if (!normalizedQuery) return getSessionBranchTopologyRows(topology);
+  return getSessionBranchTopologyRows({
+    ...topology,
+    branches: topology.branches.filter(({ name }) => name.toLocaleLowerCase().includes(normalizedQuery)),
+  });
 }
 
 function CloseIcon() {
@@ -112,7 +176,6 @@ export function SessionBranchSelector({
   onOpenChange,
 }: SessionBranchSelectorProps) {
   const rows = topology ? filterSessionBranchTopologyRows(topology, query) : [];
-  const rowIndexByBranch = new Map(rows.map(({ branch }, index) => [branch.name, index]));
   const checkoutDisabled = running || checkoutPending !== null;
 
   return (
@@ -199,24 +262,17 @@ export function SessionBranchSelector({
                   if (branch !== currentBranch) onSelectBranch(branch);
                 }}
               >
-                {rows.map(({ branch, depth }, index) => {
+                {rows.map(({ branch, lane, lanes, upperLanes, lowerLanes, joins }) => {
                   const current = branch.name === currentBranch;
                   const branchDisabled = checkoutDisabled || current;
-                  const parentIndex = branch.parent ? rowIndexByBranch.get(branch.parent) : undefined;
-                  const parentRow = parentIndex === undefined ? undefined : rows[parentIndex];
-                  const parentDirection =
-                    parentIndex === undefined ? "root" : parentIndex < index ? "above" : "below";
-                  const style = {
-                    "--branch-depth": depth,
-                    "--branch-parent-depth": parentRow?.depth ?? depth,
-                    "--branch-parent-distance": parentIndex === undefined ? 0 : Math.abs(parentIndex - index),
-                  } as CSSProperties;
+                  const trunk = !branch.parent;
                   return (
                     <RadioGroupItem
                       className={current ? "session-branch-option selected" : "session-branch-option"}
                       value={branch.name}
                       data-branch={branch.name}
                       data-parent={branch.parent}
+                      data-lane={lane}
                       aria-label={
                         current
                           ? `Current branch ${branch.name}`
@@ -228,15 +284,61 @@ export function SessionBranchSelector({
                       key={branch.name}
                     >
                       <span
-                        className="session-branch-topology-rail"
-                        data-parent-direction={parentDirection}
-                        style={style}
+                        className="session-branch-graph"
+                        style={{ "--branch-lane-count": lanes.length } as CSSProperties}
                         aria-hidden="true"
                       >
-                        <span />
+                        {joins.map((join) => (
+                          <span
+                            className="session-branch-node-join"
+                            data-start-lane={join.startLane}
+                            data-end-lane={join.endLane}
+                            data-direction={join.direction}
+                            data-color={join.endLane % 5}
+                            style={
+                              {
+                                "--branch-join-start": join.startLane,
+                                "--branch-join-span": join.endLane - join.startLane,
+                              } as CSSProperties
+                            }
+                            key={`${join.startLane}-${join.endLane}`}
+                          />
+                        ))}
+                        {lanes.map((graphLane) => (
+                          <span
+                            className="session-branch-node-lane"
+                            data-color={graphLane % 5}
+                            key={graphLane}
+                          >
+                            {upperLanes.includes(graphLane) ? (
+                              <span
+                                className="session-branch-node-line"
+                                data-kind="upper"
+                                data-lane={graphLane}
+                              />
+                            ) : null}
+                            {graphLane === lane ? (
+                              <span className="session-branch-node-dot" data-selected={current} />
+                            ) : null}
+                            {lowerLanes.includes(graphLane) ? (
+                              <span
+                                className="session-branch-node-line"
+                                data-kind="lower"
+                                data-lane={graphLane}
+                              />
+                            ) : null}
+                          </span>
+                        ))}
                       </span>
-                      <span className="session-branch-option-name" title={branch.name}>
-                        {branch.name}
+                      <span className="session-branch-row-content">
+                        <span className="session-branch-option-name" title={branch.name}>
+                          {branch.name}
+                        </span>
+                        {trunk ? (
+                          <span className="session-branch-trunk-label" aria-hidden="true">
+                            (trunk)
+                          </span>
+                        ) : null}
                       </span>
                     </RadioGroupItem>
                   );
