@@ -13,6 +13,7 @@ import {
 } from "../ui/sidebar.js";
 import { cn } from "../ui/utils.js";
 import { DashboardIcon } from "./session-header.js";
+import { compactPath } from "./session-path.js";
 
 interface SessionSidebarSection {
   id: "terminal" | "daemon" | "disconnected";
@@ -192,12 +193,6 @@ export function SessionSidebar({
       <SidebarRail />
     </Sidebar>
   );
-}
-
-function compactPath(path: string): string {
-  const segments = path.split("/").filter(Boolean);
-  if (segments.length <= 2) return path;
-  return `…/${segments.slice(-2).join("/")}`;
 }
 
 export function formatSessionTime(timestamp: string): string {
