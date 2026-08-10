@@ -89,7 +89,7 @@ describe("dashboard composer keyboard", () => {
   it("leaves Shift+Enter untouched when autocomplete suggestions are visible", () => {
     const props = composerDashboardProps({
       ...BASE_SESSION,
-      skillCommands: [{ name: "skill:seo", description: "Audit search visibility" }],
+      composerCommands: [{ name: "skill:seo", description: "Audit search visibility" }],
     });
     let output = renderControlledDashboard(props);
     (findComposerTextarea(output).props.onChange as (event: { target: { value: string } }) => void)({
@@ -108,7 +108,7 @@ describe("dashboard composer keyboard", () => {
   it("leaves composing Enter untouched when autocomplete suggestions are visible", () => {
     const props = composerDashboardProps({
       ...BASE_SESSION,
-      skillCommands: [{ name: "skill:seo", description: "Audit search visibility" }],
+      composerCommands: [{ name: "skill:seo", description: "Audit search visibility" }],
     });
     let output = renderControlledDashboard(props);
     (findComposerTextarea(output).props.onChange as (event: { target: { value: string } }) => void)({
@@ -134,7 +134,7 @@ describe("dashboard composer keyboard", () => {
     (key) => {
       const props = composerDashboardProps({
         ...BASE_SESSION,
-        skillCommands: [{ name: "skill:seo", description: "Audit search visibility" }],
+        composerCommands: [{ name: "skill:seo", description: "Audit search visibility" }],
       });
       let output = renderControlledDashboard(props);
       (findComposerTextarea(output).props.onChange as (event: { target: { value: string } }) => void)({
@@ -150,6 +150,38 @@ describe("dashboard composer keyboard", () => {
       expect(findComposerTextarea(output)?.props.value).toBe("/skill:seo ");
     },
   );
+
+  it("inserts the advertised btw command with a trailing space", () => {
+    const props = composerDashboardProps({
+      ...BASE_SESSION,
+      composerCommands: [{ name: "btw", description: "Show branch context" }],
+    });
+    let output = renderControlledDashboard(props);
+    (findComposerTextarea(output).props.onChange as (event: { target: { value: string } }) => void)({
+      target: { value: "/bt" },
+    });
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+
+    pressComposerKey(findComposerTextarea(output), "Enter");
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+
+    expect(findComposerTextarea(output).props.value).toBe("/btw ");
+  });
+
+  it("uses generic accessible labels for command suggestions", () => {
+    const props = composerDashboardProps({
+      ...BASE_SESSION,
+      composerCommands: [{ name: "btw", description: "Show branch context" }],
+    });
+    let output = renderControlledDashboard(props);
+    (findComposerTextarea(output).props.onChange as (event: { target: { value: string } }) => void)({
+      target: { value: "/" },
+    });
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+
+    const listbox = findElements(output, (element) => element.props.role === "listbox")[0];
+    expect(listbox?.props["aria-label"]).toBe("Available commands");
+  });
 
   it("does not render a composer footer or its keyboard shortcut", () => {
     const output = renderControlledDashboard(composerDashboardProps());

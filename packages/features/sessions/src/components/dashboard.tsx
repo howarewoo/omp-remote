@@ -30,7 +30,7 @@ import { SidebarInset, SidebarProvider, useSidebar } from "./ui/sidebar.js";
 import {
   getActiveAskRequest,
   getComposerAction,
-  getSkillSuggestions,
+  getComposerSuggestions,
   groupSessionsForSidebar,
 } from "./dashboard-actions.js";
 import {
@@ -45,7 +45,7 @@ export {
   formatSubagentActivityLabel,
   getActiveAskRequest,
   getComposerAction,
-  getSkillSuggestions,
+  getComposerSuggestions,
   groupSessionsForSidebar,
 } from "./dashboard-actions.js";
 export { parseTodoResult } from "./todo-parser.js";
@@ -162,7 +162,7 @@ function DashboardContent({
 }: DashboardProps) {
   const [viewedSubagent, setViewedSubagent] = useState<ActiveSubagent | null>(null);
   const [message, setMessage] = useState("");
-  const [activeSkillIndex, setActiveSkillIndex] = useState(0);
+  const [activeComposerIndex, setActiveComposerIndex] = useState(0);
   const [autocompleteDismissedFor, setAutocompleteDismissedFor] = useState<string | null>(null);
   const [notificationSettingsOpen, setNotificationSettingsOpen] = useState(false);
   const [commandState, setCommandState] = useState<"idle" | "sending">("idle");
@@ -364,11 +364,11 @@ function DashboardContent({
   );
   const currentTodoPresentation = currentTodo ? getTodoPresentation(currentTodo) : null;
   const composerAction = selectedSession ? getComposerAction(selectedSession, message) : null;
-  const skillSuggestions = useMemo(
-    () => getSkillSuggestions(message, selectedSession?.skillCommands ?? []),
-    [message, selectedSession?.skillCommands],
+  const composerSuggestions = useMemo(
+    () => getComposerSuggestions(message, selectedSession?.composerCommands ?? []),
+    [message, selectedSession?.composerCommands],
   );
-  const visibleSkillSuggestions = autocompleteDismissedFor === message ? [] : skillSuggestions;
+  const visibleComposerSuggestions = autocompleteDismissedFor === message ? [] : composerSuggestions;
   const viewedSubagentSession = useMemo(
     () => sessions.find((session) => session.id === viewedSubagent?.id) ?? null,
     [sessions, viewedSubagent?.id],
@@ -410,7 +410,7 @@ function DashboardContent({
   );
 
   useEffect(() => {
-    setActiveSkillIndex(0);
+    setActiveComposerIndex(0);
     setAutocompleteDismissedFor(null);
   }, [message, selectedSession?.id]);
 
@@ -531,7 +531,7 @@ function DashboardContent({
       .finally(() => setTranscriptLoadingId((current) => (current === sessionId ? null : current)));
   }, [onLoadTranscript, selectedSession]);
 
-  const selectSkillSuggestion = (commandName: string) => {
+  const selectComposerSuggestion = (commandName: string) => {
     setMessage(`/${commandName} `);
   };
 
@@ -809,18 +809,19 @@ function DashboardContent({
             ) : (
               SessionComposer({
                 message,
-                skillSuggestions: visibleSkillSuggestions,
-                activeSkillIndex,
+                composerSuggestions: visibleComposerSuggestions,
+                activeComposerIndex,
                 composerAction,
                 sending: commandState === "sending",
                 onSubmit: submitMessage,
                 onMessageChange: setMessage,
-                onMoveActiveSkill: (direction) =>
-                  setActiveSkillIndex(
+                onMoveActiveComposer: (direction) =>
+                  setActiveComposerIndex(
                     (current) =>
-                      (current + direction + visibleSkillSuggestions.length) % visibleSkillSuggestions.length,
+                      (current + direction + visibleComposerSuggestions.length) %
+                      visibleComposerSuggestions.length,
                   ),
-                onSelectSkill: selectSkillSuggestion,
+                onSelectComposer: selectComposerSuggestion,
                 onDismissAutocomplete: setAutocompleteDismissedFor,
               })
             )}

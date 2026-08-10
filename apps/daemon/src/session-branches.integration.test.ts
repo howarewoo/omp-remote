@@ -61,7 +61,7 @@ function session(id: string, cwd: string, status: Session["status"] = "idle"): S
     messages: [],
     sessionPath: null,
     activeSubagents: [],
-    skillCommands: [],
+    composerCommands: [],
   };
 }
 

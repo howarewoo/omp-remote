@@ -161,7 +161,7 @@ export function registerExtensionWebSocketRoute(
           effort: frame.effort,
           availableModels: frame.availableModels,
           lastActivity: new Date().toISOString(),
-          ...(frame.skillCommands !== undefined ? { skillCommands: frame.skillCommands } : {}),
+          ...(frame.composerCommands !== undefined ? { composerCommands: frame.composerCommands } : {}),
         });
         if (currentSession) refreshSessionBranch(frame.sessionId, currentSession.cwd);
       } else if (frame.type === "event") {

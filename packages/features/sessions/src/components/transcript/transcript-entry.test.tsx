@@ -128,7 +128,7 @@ const BASE_SESSION: Session = {
   messages: [],
   sessionPath: "/work/.omp/session.jsonl",
   activeSubagents: [],
-  skillCommands: [],
+  composerCommands: [],
 };
 
 interface RenderedNode {

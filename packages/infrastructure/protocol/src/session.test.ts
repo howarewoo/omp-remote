@@ -32,7 +32,7 @@ describe("historical session schemas", () => {
     messages: [],
     sessionPath: "/home/user/.omp/agent/sessions/project/session.jsonl",
     activeSubagents: [],
-    skillCommands: [],
+    composerCommands: [],
     costSummary: { totalUsd: 0, partial: true, agents: [] },
   };
   it("preserves legacy sessions without a cost summary", () => {
@@ -49,8 +49,8 @@ describe("historical session schemas", () => {
     expect(
       SessionSchema.parse({
         ...historicalSession,
-        skillCommands: [{ name: "skill:seo", description: "Audit search visibility" }],
-      }).skillCommands,
+        composerCommands: [{ name: "skill:seo", description: "Audit search visibility" }],
+      }).composerCommands,
     ).toEqual([{ name: "skill:seo", description: "Audit search visibility" }]);
   });
 
@@ -327,7 +327,7 @@ describe("ExtensionRegisterSchema", () => {
         branch: null,
         activeSubagents: [],
         sessionPath: null,
-        skillCommands: [],
+        composerCommands: [],
       },
     });
   });
@@ -342,7 +342,7 @@ describe("ExtensionRegisterSchema", () => {
       }),
     ).toEqual({
       type: "register",
-      session: { ...currentExtensionSession, activeSubagents: [], sessionPath, skillCommands: [] },
+      session: { ...currentExtensionSession, activeSubagents: [], sessionPath, composerCommands: [] },
     });
   });
 
@@ -378,8 +378,8 @@ describe("ExtensionRegisterSchema", () => {
         model: "anthropic/claude-sonnet-4",
         contextPercent: 42,
         idle: true,
-        skillCommands: [{ name: "skill:seo", description: "Audit search visibility" }],
-      }).skillCommands,
+        composerCommands: [{ name: "skill:seo", description: "Audit search visibility" }],
+      }).composerCommands,
     ).toEqual([{ name: "skill:seo", description: "Audit search visibility" }]);
   });
 });

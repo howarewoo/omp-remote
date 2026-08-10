@@ -1,5 +1,4 @@
-import type { RoleEffort } from "@omp-remote/protocol";
-
+import type { ComposerCommand, RoleEffort } from "@omp-remote/protocol";
 const MODEL_ROLE_ORDER = [
   "default",
   "smol",
@@ -100,21 +99,29 @@ export function getSessionModelOptions(models: readonly ModelSummary[], resolveR
 }
 
 type AvailableCommand = {
-  name: string;
-  description?: string;
-  source: string;
+  name: unknown;
+  description?: unknown;
+  source: unknown;
 };
 
-type ExtensionSkillCommand = {
-  name: string;
-  description?: string;
-};
+export function getComposerCommands(commands: readonly AvailableCommand[]): ComposerCommand[] {
+  const composerCommands: ComposerCommand[] = [];
+  for (const command of commands) {
+    const validName =
+      (command.source === "skill" &&
+        typeof command.name === "string" &&
+        /^skill:[^\s]+$/.test(command.name)) ||
+      (command.source === "builtin" && command.name === "btw");
+    if (!validName) continue;
 
-export function getSkillCommands(commands: readonly AvailableCommand[]): ExtensionSkillCommand[] {
-  return commands
-    .filter((command) => command.source === "skill" && command.name.startsWith("skill:"))
-    .map((command) => ({
-      name: command.name,
-      ...(command.description?.trim() ? { description: command.description.trim() } : {}),
-    }));
+    if (command.description === undefined) {
+      composerCommands.push({ name: command.name as string });
+      continue;
+    }
+    if (typeof command.description !== "string") continue;
+    const description = command.description.trim();
+    if (!description) continue;
+    composerCommands.push({ name: command.name as string, description });
+  }
+  return composerCommands;
 }

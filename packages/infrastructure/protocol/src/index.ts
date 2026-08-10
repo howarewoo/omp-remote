@@ -213,10 +213,12 @@ export const SessionCostSummarySchema = z
   })
   .strict();
 
-export const SkillCommandSchema = z.object({
-  name: z.string().regex(/^skill:[^\s]+$/),
-  description: z.string().trim().min(1).optional(),
-});
+export const ComposerCommandSchema = z
+  .object({
+    name: z.union([z.string().regex(/^skill:[^\s]+$/), z.literal("btw")]),
+    description: z.string().trim().min(1).optional(),
+  })
+  .strict();
 
 export const AskDialogOptionSchema = z
   .object({
@@ -303,7 +305,7 @@ export const SessionSchema = z.object({
   sessionPath: z.string().min(1).nullable(),
   costSummary: SessionCostSummarySchema.optional(),
   activeSubagents: z.array(ActiveSubagentSchema).default([]),
-  skillCommands: z.array(SkillCommandSchema).default([]),
+  composerCommands: z.array(ComposerCommandSchema).default([]),
 });
 
 export const SessionPatchSchema = SessionSchema.omit({ id: true, messages: true })
@@ -311,7 +313,7 @@ export const SessionPatchSchema = SessionSchema.omit({ id: true, messages: true 
   .extend({
     branch: SessionSchema.shape.branch.unwrap().optional(),
     activeSubagents: SessionSchema.shape.activeSubagents.unwrap().optional(),
-    skillCommands: SessionSchema.shape.skillCommands.unwrap().optional(),
+    composerCommands: SessionSchema.shape.composerCommands.unwrap().optional(),
   })
   .strict();
 
@@ -714,7 +716,7 @@ export const ExtensionHeartbeatSchema = z.object({
   effort: EffortSchema.nullable().optional(),
   availableModels: z.array(SessionModelOptionSchema).optional(),
   idle: z.boolean(),
-  skillCommands: z.array(SkillCommandSchema).optional(),
+  composerCommands: z.array(ComposerCommandSchema).optional(),
 });
 export const ExtensionResultSchema = z.object({
   type: z.literal("command_result"),
@@ -790,7 +792,7 @@ export type SessionModelOption = z.infer<typeof SessionModelOptionSchema>;
 export type SessionPatch = z.infer<typeof SessionPatchSchema>;
 export type SessionCapability = z.infer<typeof SessionCapabilitySchema>;
 export type SessionStatus = z.infer<typeof SessionStatusSchema>;
-export type SkillCommand = z.infer<typeof SkillCommandSchema>;
+export type ComposerCommand = z.infer<typeof ComposerCommandSchema>;
 export type SessionCostAgent = z.infer<typeof SessionCostAgentSchema>;
 export type SessionCostSummary = z.infer<typeof SessionCostSummarySchema>;
 export type TranscriptMessage = z.infer<typeof TranscriptMessageSchema>;

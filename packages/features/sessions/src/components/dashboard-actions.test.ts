@@ -5,7 +5,7 @@ import {
   formatSubagentActivityLabel,
   getActiveAskRequest,
   getComposerAction,
-  getSkillSuggestions,
+  getComposerSuggestions,
   groupSessionsForSidebar,
 } from "./dashboard-actions.js";
 
@@ -26,7 +26,7 @@ const BASE_SESSION: Session = {
   sessionPath: "/work/.omp/session.jsonl",
   activeSubagents: [],
 
-  skillCommands: [],
+  composerCommands: [],
 };
 
 describe("getComposerAction", () => {
@@ -53,26 +53,36 @@ describe("getComposerAction", () => {
   });
 });
 
-describe("getSkillSuggestions", () => {
-  const skills: Session["skillCommands"] = [
+describe("getComposerSuggestions", () => {
+  const composerCommands: Session["composerCommands"] = [
     { name: "skill:seo", description: "Audit search visibility" },
     { name: "skill:woostack-change", description: "Ship a bounded enhancement" },
     { name: "skill:woostack-fix", description: "Diagnose and fix a bug" },
+    { name: "btw", description: "Show branch context" },
   ];
 
-  it("shows sorted skill commands for an empty slash query", () => {
-    expect(getSkillSuggestions("/", skills)).toEqual(skills);
+  it("shows sorted composer commands for an empty slash query", () => {
+    expect(getComposerSuggestions("/", composerCommands)).toEqual([
+      composerCommands[3],
+      composerCommands[0],
+      composerCommands[1],
+      composerCommands[2],
+    ]);
   });
 
   it.each(["/woo", "/skill:woo"])("filters skills from %s", (message) => {
-    expect(getSkillSuggestions(message, skills).map(({ name }) => name)).toEqual([
+    expect(getComposerSuggestions(message, composerCommands).map(({ name }) => name)).toEqual([
       "skill:woostack-change",
       "skill:woostack-fix",
     ]);
   });
 
+  it.each(["/b", "/bt", "/btw"])("matches the advertised btw command from %s", (message) => {
+    expect(getComposerSuggestions(message, composerCommands).map(({ name }) => name)).toEqual(["btw"]);
+  });
+
   it("closes suggestions once command arguments begin", () => {
-    expect(getSkillSuggestions("/skill:seo audit this page", skills)).toEqual([]);
+    expect(getComposerSuggestions("/skill:seo audit this page", composerCommands)).toEqual([]);
   });
 });
 

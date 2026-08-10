@@ -136,7 +136,7 @@ function cloneSession(session: Session): Session {
         }
       : {}),
     activeSubagents: session.activeSubagents.map((subagent) => ({ ...subagent })),
-    skillCommands: session.skillCommands.map((command) => ({ ...command })),
+    composerCommands: session.composerCommands.map((command) => ({ ...command })),
   };
 }
 
@@ -172,8 +172,8 @@ function cloneSessionPatch(patch: SessionPatch): Partial<Omit<Session, "id" | "m
   if (patch.activeSubagents !== undefined) {
     clone.activeSubagents = patch.activeSubagents.map((subagent) => ({ ...subagent }));
   }
-  if (patch.skillCommands !== undefined) {
-    clone.skillCommands = patch.skillCommands.map((command) => ({ ...command }));
+  if (patch.composerCommands !== undefined) {
+    clone.composerCommands = patch.composerCommands.map((command) => ({ ...command }));
   }
   if (patch.costSummary !== undefined) {
     clone.costSummary = {

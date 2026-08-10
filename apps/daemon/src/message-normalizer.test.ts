@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeRawMessage, normalizeSkillCommands, ToolCallTracker } from "./message-normalizer.js";
+import { normalizeRawMessage, normalizeComposerCommands, ToolCallTracker } from "./message-normalizer.js";
 
 const SNAPSHOT_CONTENT = [{ type: "text", text: "*** Begin Patch\n*** End Patch" }];
 const CANONICAL_DIFF = "-1|before\n+1|after";
@@ -588,14 +588,22 @@ describe("normalizeRawMessage", () => {
   });
 });
 
-describe("normalizeSkillCommands", () => {
-  it("keeps only valid skill command metadata from OMP", () => {
+describe("normalizeComposerCommands", () => {
+  it("keeps valid skills and advertised btw while rejecting unsupported or malformed commands", () => {
     expect(
-      normalizeSkillCommands([
-        { name: "skill:seo", description: "Audit search visibility", source: "skill" },
+      normalizeComposerCommands([
+        { name: "skill:seo", description: "  Audit search visibility  ", source: "skill" },
+        { name: "btw", description: "  Show branch context  ", source: "builtin" },
         { name: "help", description: "Show help", source: "builtin" },
-        { name: "skill:broken", description: 42, source: "skill" },
+        { name: "btw", description: "Wrong source", source: "skill" },
+        { name: "skill:wrong", description: "Wrong source", source: "builtin" },
+        { name: "skill:broken name", description: "Bad name", source: "skill" },
+        { name: "skill:bad", description: 42, source: "skill" },
+        { name: "btw", description: "   ", source: "builtin" },
       ]),
-    ).toEqual([{ name: "skill:seo", description: "Audit search visibility" }]);
+    ).toEqual([
+      { name: "skill:seo", description: "Audit search visibility" },
+      { name: "btw", description: "Show branch context" },
+    ]);
   });
 });

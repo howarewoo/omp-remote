@@ -36,7 +36,7 @@ const BASE_SESSION: Session = {
       { sessionId: "session-1", name: "Bootstrap", parentSessionId: null, totalUsd: 0.25, available: true },
     ],
   },
-  skillCommands: [],
+  composerCommands: [],
 };
 
 describe("SessionRegistry", () => {
@@ -316,7 +316,7 @@ describe("SessionRegistry", () => {
         lastActivity: "2026-07-28T18:00:00.000Z",
       },
     ];
-    const skillCommands: Session["skillCommands"] = [
+    const composerCommands: Session["composerCommands"] = [
       { name: "skill:seo", description: "Inspect search visibility" },
     ];
 
@@ -324,7 +324,7 @@ describe("SessionRegistry", () => {
       status: "running",
       capabilities,
       activeSubagents,
-      skillCommands,
+      composerCommands,
     });
 
     const expectedPatch = {
@@ -337,7 +337,7 @@ describe("SessionRegistry", () => {
           lastActivity: "2026-07-28T18:00:00.000Z",
         },
       ],
-      skillCommands: [{ name: "skill:seo", description: "Inspect search visibility" }],
+      composerCommands: [{ name: "skill:seo", description: "Inspect search visibility" }],
     };
     expect(events).toEqual([
       {
@@ -353,13 +353,13 @@ describe("SessionRegistry", () => {
     });
 
     const callerSubagent = activeSubagents[0];
-    const callerSkillCommand = skillCommands[0];
-    if (!callerSubagent || !callerSkillCommand) {
+    const callerComposerCommand = composerCommands[0];
+    if (!callerSubagent || !callerComposerCommand) {
       throw new Error("Expected caller-owned mutable metadata");
     }
     capabilities.push("kill");
     callerSubagent.name = "Caller mutation";
-    callerSkillCommand.description = "Caller mutation";
+    callerComposerCommand.description = "Caller mutation";
 
     expect(events).toEqual([
       {
@@ -376,13 +376,13 @@ describe("SessionRegistry", () => {
 
     if (!updated) throw new Error("Expected the updated session");
     const returnedSubagent = updated.activeSubagents[0];
-    const returnedSkillCommand = updated.skillCommands[0];
-    if (!returnedSubagent || !returnedSkillCommand) {
+    const returnedComposerCommand = updated.composerCommands[0];
+    if (!returnedSubagent || !returnedComposerCommand) {
       throw new Error("Expected returned mutable metadata");
     }
     updated.capabilities.push("resume");
     returnedSubagent.name = "Returned mutation";
-    returnedSkillCommand.description = "Returned mutation";
+    returnedComposerCommand.description = "Returned mutation";
 
     expect(events).toEqual([
       {
@@ -398,19 +398,19 @@ describe("SessionRegistry", () => {
     });
     expect(capabilities).toEqual(["prompt", "abort", "kill"]);
     expect(activeSubagents[0]?.name).toBe("Caller mutation");
-    expect(skillCommands[0]?.description).toBe("Caller mutation");
+    expect(composerCommands[0]?.description).toBe("Caller mutation");
 
-    if (!emittedPatch?.capabilities || !emittedPatch.activeSubagents || !emittedPatch.skillCommands) {
+    if (!emittedPatch?.capabilities || !emittedPatch.activeSubagents || !emittedPatch.composerCommands) {
       throw new Error("Expected a session update with mutable metadata arrays");
     }
     const emittedSubagent = emittedPatch.activeSubagents[0];
-    const emittedSkillCommand = emittedPatch.skillCommands[0];
-    if (!emittedSubagent || !emittedSkillCommand) {
+    const emittedComposerCommand = emittedPatch.composerCommands[0];
+    if (!emittedSubagent || !emittedComposerCommand) {
       throw new Error("Expected emitted mutable metadata");
     }
     emittedPatch.capabilities.push("resume");
     emittedSubagent.name = "Emitted mutation";
-    emittedSkillCommand.description = "Emitted mutation";
+    emittedComposerCommand.description = "Emitted mutation";
 
     expect(registry.get("session-1")).toEqual({
       ...BASE_SESSION,
@@ -421,7 +421,7 @@ describe("SessionRegistry", () => {
     const snapshot = registry.get("session-1");
     snapshot?.capabilities.push("kill");
     if (snapshot?.activeSubagents[0]) snapshot.activeSubagents[0].name = "Snapshot mutation";
-    if (snapshot?.skillCommands[0]) snapshot.skillCommands[0].description = "Snapshot mutation";
+    if (snapshot?.composerCommands[0]) snapshot.composerCommands[0].description = "Snapshot mutation";
 
     expect(emittedPatch).toEqual({
       ...expectedPatch,
@@ -433,7 +433,7 @@ describe("SessionRegistry", () => {
           lastActivity: "2026-07-28T18:00:00.000Z",
         },
       ],
-      skillCommands: [{ name: "skill:seo", description: "Emitted mutation" }],
+      composerCommands: [{ name: "skill:seo", description: "Emitted mutation" }],
     });
     expect(registry.get("session-1")).toEqual({
       ...BASE_SESSION,

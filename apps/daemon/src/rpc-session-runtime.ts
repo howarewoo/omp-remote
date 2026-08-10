@@ -11,7 +11,7 @@ import { createReadImageResolver, resolveAgentBlobDirectory, SessionCatalog } fr
 import {
   materializeReadImages,
   normalizeRawMessage,
-  normalizeSkillCommands,
+  normalizeComposerCommands,
   ToolCallTracker,
 } from "./message-normalizer.js";
 import {
@@ -81,7 +81,7 @@ export function createRpcSessionRuntime({
       } else if (frame.type === "available_commands_update") {
         const update = RpcAvailableCommandsUpdateSchema.safeParse(frame);
         if (update.success) {
-          registry.update(sessionId, { skillCommands: normalizeSkillCommands(update.data.commands) });
+          registry.update(sessionId, { composerCommands: normalizeComposerCommands(update.data.commands) });
         }
       } else if (frame.type === "process_exit") {
         markSessionHistorical(sessionId);
@@ -117,8 +117,8 @@ export function createRpcSessionRuntime({
       : undefined;
     const contextPercent = normalizePercent(stateResponse.data.contextUsage?.percent);
     const catalogSession = sessionCatalog.get(sessionId);
-    const [skillCommands, availableModels] = await Promise.all([
-      loadRpcSkillCommands(sessionId, rpc),
+    const [composerCommands, availableModels] = await Promise.all([
+      loadRpcComposerCommands(sessionId, rpc),
       loadRpcModelOptions(sessionId, rpc),
     ]);
     const now = new Date().toISOString();
@@ -146,7 +146,7 @@ export function createRpcSessionRuntime({
       messages: [],
       sessionPath: stateResponse.data.sessionFile ?? null,
       activeSubagents: catalogSession?.activeSubagents ?? [],
-      skillCommands,
+      composerCommands,
     };
     rpcSessions.set(sessionId, rpc);
     registry.upsert(session);
@@ -179,14 +179,17 @@ export function createRpcSessionRuntime({
     return registry.get(sessionId) ?? session;
   }
 
-  async function loadRpcSkillCommands(sessionId: string, rpc: RpcSession): Promise<Session["skillCommands"]> {
+  async function loadRpcComposerCommands(
+    sessionId: string,
+    rpc: RpcSession,
+  ): Promise<Session["composerCommands"]> {
     try {
       const response = RpcAvailableCommandsResponseSchema.parse(
         await rpc.request({ type: "get_available_commands" }),
       );
-      return normalizeSkillCommands(response.data.commands);
+      return normalizeComposerCommands(response.data.commands);
     } catch (error) {
-      logger.error("Could not load OMP skill commands", error, { sessionId });
+      logger.error("Could not load OMP composer commands", error, { sessionId });
       return [];
     }
   }

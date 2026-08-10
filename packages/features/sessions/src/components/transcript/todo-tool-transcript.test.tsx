@@ -120,7 +120,7 @@ const BASE_SESSION: Session = {
   messages: [],
   sessionPath: "/work/.omp/session.jsonl",
   activeSubagents: [],
-  skillCommands: [],
+  composerCommands: [],
 };
 const TODO_RESULT_TEXT =
   'Remaining items (1):\n  - Build custom todo tool interface [in_progress] (Implementation)\nOverall: 2/4 done, 1 open, 1 blocked.\nActive phase 2/3 "Implementation" (0/1) — earliest phase with open work\n  Research:\n    - [X] Locate todo rendering and UI conventions\n    - [X] Define todo interaction contract\n  Implementation:\n    - [ ] Build custom todo tool interface (in progress)\n  Verification:\n    - [ ] Exercise todo flow in browser (blocked: format probe)';

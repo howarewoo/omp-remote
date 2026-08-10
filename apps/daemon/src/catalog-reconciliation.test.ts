@@ -24,7 +24,7 @@ const ROOT_SESSION: Session = {
   messages: [],
   sessionPath: "/work/.omp/session.jsonl",
   activeSubagents: [],
-  skillCommands: [],
+  composerCommands: [],
 };
 
 const WORKER_SESSION: Session = {

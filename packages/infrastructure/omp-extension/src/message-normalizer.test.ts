@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ExtensionToolCallTracker, getSkillCommands, normalizeExtensionMessage } from "./extension.js";
+import { ExtensionToolCallTracker, getComposerCommands, normalizeExtensionMessage } from "./extension.js";
 
 const SNAPSHOT_CONTENT = [{ type: "text", text: "*** Begin Patch\n*** End Patch" }];
 const CANONICAL_DIFF = "-1|before\n+1|after";
@@ -361,13 +361,21 @@ describe("normalizeExtensionMessage", () => {
   });
 });
 
-describe("getSkillCommands", () => {
-  it("keeps only skill commands exposed by the active OMP session", () => {
+describe("getComposerCommands", () => {
+  it("keeps valid skill and advertised btw commands with trimmed descriptions", () => {
     expect(
-      getSkillCommands([
-        { name: "skill:seo", description: "Audit search visibility", source: "skill" },
+      getComposerCommands([
+        { name: "skill:seo", description: "  Audit search visibility  ", source: "skill" },
+        { name: "btw", description: "  Show branch context  ", source: "builtin" },
         { name: "review", description: "Review changes", source: "prompt" },
+        { name: "help", description: "Show help", source: "builtin" },
+        { name: "btw", description: "   ", source: "builtin" },
+        { name: "skill:broken name", description: "Bad", source: "skill" },
+        { name: "skill:bad", description: 42, source: "skill" },
       ]),
-    ).toEqual([{ name: "skill:seo", description: "Audit search visibility" }]);
+    ).toEqual([
+      { name: "skill:seo", description: "Audit search visibility" },
+      { name: "btw", description: "Show branch context" },
+    ]);
   });
 });

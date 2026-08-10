@@ -147,7 +147,7 @@ export const BASE_SESSION: Session = {
   sessionPath: "/work/.omp/session.jsonl",
   activeSubagents: [],
 
-  skillCommands: [],
+  composerCommands: [],
 };
 
 export interface RenderedNode {

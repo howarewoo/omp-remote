@@ -1,6 +1,6 @@
 import {
-  type SkillCommand,
-  SkillCommandSchema,
+  type ComposerCommand,
+  ComposerCommandSchema,
   type TranscriptImage,
   type TranscriptMessage,
 } from "@omp-remote/protocol";
@@ -29,7 +29,13 @@ const RawMessageSchema = z
   })
   .passthrough();
 
-const RawSkillCommandSchema = SkillCommandSchema.extend({ source: z.literal("skill") }).passthrough();
+const RawComposerCommandSchema = z.union([
+  ComposerCommandSchema.extend({
+    source: z.literal("skill"),
+    name: z.string().regex(/^skill:[^\s]+$/),
+  }).passthrough(),
+  ComposerCommandSchema.extend({ source: z.literal("builtin"), name: z.literal("btw") }).passthrough(),
+]);
 const CanonicalReadDetailsSchema = z
   .object({
     meta: z
@@ -255,11 +261,11 @@ function extractReadImages(
   return images;
 }
 
-export function normalizeSkillCommands(raw: unknown): SkillCommand[] {
+export function normalizeComposerCommands(raw: unknown): ComposerCommand[] {
   if (!Array.isArray(raw)) return [];
-  const commands: SkillCommand[] = [];
+  const commands: ComposerCommand[] = [];
   for (const command of raw) {
-    const parsed = RawSkillCommandSchema.safeParse(command);
+    const parsed = RawComposerCommandSchema.safeParse(command);
     if (!parsed.success) continue;
     commands.push({
       name: parsed.data.name,

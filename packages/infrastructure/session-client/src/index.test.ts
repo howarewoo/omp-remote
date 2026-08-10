@@ -40,7 +40,7 @@ const SESSION: Session = {
   ],
   sessionPath: "/tmp/session.jsonl",
   activeSubagents: [],
-  skillCommands: [],
+  composerCommands: [],
 };
 
 describe("commandResultValue", () => {
