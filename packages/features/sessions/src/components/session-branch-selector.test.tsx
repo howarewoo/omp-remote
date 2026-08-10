@@ -77,13 +77,39 @@ function branchOptions(node: ReactNode): ReactElement<TestProps>[] {
 }
 
 describe("session branch topology presentation", () => {
-  it("keeps daemon topology order while filtering names case-insensitively", () => {
-    expect(getSessionBranchTopologyRows(TOPOLOGY)).toMatchObject([
-      { branch: { name: "feature/child" }, depth: 2, index: 0, parentIndex: 1 },
-      { branch: { name: "feature/parent" }, depth: 1, index: 1, parentIndex: 4 },
-      { branch: { name: "feature/sibling" }, depth: 1, index: 2, parentIndex: 4 },
-      { branch: { name: LONG_BRANCH }, depth: 2, index: 3, parentIndex: 1 },
-      { branch: { name: "main" }, depth: 0, index: 4, parentIndex: null },
+  it("keeps daemon order while assigning only the latest child to its parent's stack lane", () => {
+    const rows = getSessionBranchTopologyRows(TOPOLOGY);
+
+    expect(rows.map(({ branch, lane }) => [branch.name, lane])).toEqual([
+      ["feature/child", 0],
+      ["feature/parent", 0],
+      ["feature/sibling", 1],
+      [LONG_BRANCH, 2],
+      ["main", 0],
+    ]);
+    const laneByBranch = new Map(rows.map(({ branch, lane }) => [branch.name, lane]));
+    expect(
+      rows.every(({ branch, lane }) => !branch.parent || lane >= (laneByBranch.get(branch.parent) ?? lane)),
+    ).toBe(true);
+    expect(rows.map(({ upperLanes, lowerLanes }) => [upperLanes, lowerLanes])).toEqual([
+      [[], [0]],
+      [[0], [0]],
+      [
+        [0, 2],
+        [0, 1, 2],
+      ],
+      [
+        [0, 1, 2],
+        [0, 1],
+      ],
+      [[0], []],
+    ]);
+    expect(rows.map(({ joins }) => joins)).toEqual([
+      [],
+      [{ startLane: 0, endLane: 2, direction: "lower" }],
+      [],
+      [],
+      [{ startLane: 0, endLane: 1, direction: "upper" }],
     ]);
     expect(filterSessionBranchTopologyRows(TOPOLOGY, "FEATURE/").map(({ branch }) => branch.name)).toEqual([
       "feature/child",
@@ -91,72 +117,85 @@ describe("session branch topology presentation", () => {
       "feature/sibling",
       LONG_BRANCH,
     ]);
-    expect(filterSessionBranchTopologyRows(TOPOLOGY, "sibling").map(({ branch }) => branch.name)).toEqual([
-      "feature/sibling",
-    ]);
+    expect(
+      filterSessionBranchTopologyRows(TOPOLOGY, "sibling").map(({ branch, lane }) => [branch.name, lane]),
+    ).toEqual([["feature/sibling", 0]]);
   });
 
-  it("terminates cyclic parents and caps deep topology rails", () => {
-    const cycle: SessionBranchTopology = {
-      sessionId: "cycle",
-      currentBranch: "feature/a",
-      branches: [
-        { name: "feature/a", parent: "feature/b" },
-        { name: "feature/b", parent: "feature/a" },
-      ],
-    };
-    const deep: SessionBranchTopology = {
-      sessionId: "deep",
-      currentBranch: "feature/leaf",
-      branches: [
-        { name: "feature/leaf", parent: "feature/five" },
-        { name: "feature/five", parent: "feature/four" },
-        { name: "feature/four", parent: "feature/three" },
-        { name: "feature/three", parent: "feature/two" },
-        { name: "feature/two", parent: "feature/one" },
-        { name: "feature/one", parent: "main" },
-        { name: "main" },
-      ],
-    };
-
-    expect(getSessionBranchTopologyRows(cycle).map(({ branch, depth }) => [branch.name, depth])).toEqual([
-      ["feature/a", 1],
-      ["feature/b", 0],
-    ]);
-    expect(getSessionBranchTopologyRows(deep).map(({ depth }) => depth)).toEqual([4, 4, 4, 3, 2, 1, 0]);
-  });
-
-  it("renders accessible ordered radio rows with connectors to their visible parents", () => {
+  it("renders siblings on disconnected parallel lanes with only the latest child stacked", () => {
     const output = renderSelector();
     const group = findElements(output, (element) => element.type === RadioGroup)[0];
     const options = branchOptions(output);
-    const rails = findElements(
+    const graphs = findElements(output, (element) => element.props.className === "session-branch-graph");
+    const joins = findElements(output, (element) => element.props.className === "session-branch-node-join");
+    const dots = findElements(output, (element) => element.props.className === "session-branch-node-dot");
+    const names = findElements(output, (element) => element.props.className === "session-branch-option-name");
+    const trunkLabel = findElements(
       output,
-      (element) => element.props.className === "session-branch-topology-rail",
-    );
+      (element) => element.props.className === "session-branch-trunk-label",
+    )[0];
 
     expect(group?.props).toMatchObject({
       "aria-label": "Local branches",
       value: TOPOLOGY.currentBranch,
     });
-    expect(options.map((option) => [option.props["data-branch"], option.props["data-parent"]])).toEqual([
-      ["feature/child", "feature/parent"],
-      ["feature/parent", "main"],
-      ["feature/sibling", "main"],
-      [LONG_BRANCH, "feature/parent"],
-      ["main", undefined],
-    ]);
-    expect(rails.map((rail) => rail.props["data-parent-direction"])).toEqual([
-      "below",
-      "below",
-      "below",
-      "above",
-      "root",
+    expect(
+      options.map((option) => [
+        option.props["data-branch"],
+        option.props["data-parent"],
+        option.props["data-lane"],
+      ]),
+    ).toEqual([
+      ["feature/child", "feature/parent", 0],
+      ["feature/parent", "main", 0],
+      ["feature/sibling", "main", 1],
+      [LONG_BRANCH, "feature/parent", 2],
+      ["main", undefined, 0],
     ]);
     expect(
-      rails.map((rail) => (rail.props.style as Record<string, number>)["--branch-parent-distance"]),
-    ).toEqual([1, 3, 2, 2, 0]);
-    expect(options.map((option) => textContent(option))).toEqual(TOPOLOGY.branches.map(({ name }) => name));
+      graphs.map((graph) =>
+        findElements(graph, (element) => element.props.className === "session-branch-node-line").map(
+          (line) => [line.props["data-kind"], line.props["data-lane"]],
+        ),
+      ),
+    ).toEqual([
+      [["lower", 0]],
+      [
+        ["upper", 0],
+        ["lower", 0],
+      ],
+      [
+        ["upper", 0],
+        ["lower", 0],
+        ["lower", 1],
+        ["upper", 2],
+        ["lower", 2],
+      ],
+      [
+        ["upper", 0],
+        ["lower", 0],
+        ["upper", 1],
+        ["lower", 1],
+        ["upper", 2],
+      ],
+      [["upper", 0]],
+    ]);
+    expect(
+      joins.map((join) => [
+        join.props["data-start-lane"],
+        join.props["data-end-lane"],
+        join.props["data-direction"],
+        join.props["data-color"],
+      ]),
+    ).toEqual([
+      [0, 2, "lower", 2],
+      [0, 1, "upper", 1],
+    ]);
+    expect(dots.map((dot) => dot.props["data-selected"])).toEqual([true, false, false, false, false]);
+    expect(names.map((name) => textContent(name))).toEqual(TOPOLOGY.branches.map(({ name }) => name));
+    expect(trunkLabel?.props["aria-hidden"]).toBe("true");
+    expect(textContent(trunkLabel)).toBe("(trunk)");
+    expect(textContent(options.at(-1))).toBe("main(trunk)");
   });
 
   it("makes the current branch selected and disabled without adding another current label", () => {
