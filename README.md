@@ -54,6 +54,10 @@ OMP support is called out explicitly; tools limited to the upstream Pi Coding Ag
 
 Capabilities reflect the linked projects' public documentation and may change.
 
+## Slash command limitations
+
+OMP Remote does not provide full access to OMP's slash-command catalog. It can invoke only commands that OMP exposes through its RPC or extension APIs. Commands implemented only in the interactive terminal UI are omitted from autocomplete and cannot retain their native behavior remotely. If entered manually, they may be sent as ordinary prompt or steer text instead. Run unavailable slash commands, including `/btw`, in the local OMP terminal.
+
 ## Stack
 
 | Layer | Choice | Version | Why |
