@@ -49,6 +49,19 @@
 .status-badge {
   flex: 0 0 auto;
 }
+
+.session-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+@media (max-width: 767px) {
+  .new-session-button {
+    display: none;
+  }
+}
 .notification-button {
   flex: 0 0 auto;
 }

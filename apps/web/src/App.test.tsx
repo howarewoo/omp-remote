@@ -18,8 +18,8 @@ vi.mock("react", async (importOriginal) => {
 vi.mock("@omp-remote/session-client", () => ({
   useSessionClient: () => ({
     sessions: [],
+    askRequests: [],
     sessionsReady: true,
-    historyLoading: false,
     hasMoreHistory: false,
     connection: "connected",
     error: null,
@@ -38,7 +38,12 @@ vi.mock("@omp-remote/session-client", () => ({
 
 vi.mock("@omp-remote/sessions/components", () => ({ Dashboard: vi.fn() }));
 vi.mock("./session-notifications.js", () => ({
-  useSessionNotifications: () => ({ state: "enabled", enable: vi.fn() }),
+  useSessionNotifications: () => ({
+    state: "enabled",
+    preferences: { inputRequired: true, sessionIdle: true },
+    error: null,
+    toggleEvent: vi.fn(),
+  }),
 }));
 
 interface ControlledDashboardProps {

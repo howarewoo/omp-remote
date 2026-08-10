@@ -8,8 +8,6 @@ import { cn } from "../ui/utils.js";
 
 export type NotificationState = "blocked" | "enabled" | "error" | "prompt" | "unsupported";
 
-type NotificationControl = { disabled: boolean; label: string };
-
 type DashboardIconName =
   | "bell"
   | "close"
@@ -22,19 +20,11 @@ type DashboardIconName =
   | "trash"
   | "up";
 
-const NOTIFICATION_CONTROL: Record<NotificationState, NotificationControl> = {
-  blocked: { disabled: true, label: "Notifications blocked in browser settings" },
-  enabled: { disabled: true, label: "Session notifications enabled" },
-  error: { disabled: false, label: "Retry enabling session notifications" },
-  prompt: { disabled: false, label: "Enable session notifications" },
-  unsupported: { disabled: true, label: "Session notifications unsupported" },
-};
-
 export interface SessionHeaderProps {
   selectedSession: Session | null;
   selectedSessionStatus: Session["status"] | undefined;
   notificationState: NotificationState;
-  onEnableNotifications(): void;
+  onOpenNotificationSettings(): void;
   onKillSession(): void;
   onLaunchSession(): void;
 }
@@ -43,7 +33,7 @@ export function SessionHeader({
   selectedSession,
   selectedSessionStatus,
   notificationState,
-  onEnableNotifications,
+  onOpenNotificationSettings,
   onKillSession,
   onLaunchSession,
 }: SessionHeaderProps) {
@@ -78,26 +68,25 @@ export function SessionHeader({
         ) : (
           <h1>OMP Remote</h1>
         )}
-        {notificationState !== "unsupported" ? (
-          <Button
-            className="notification-button"
-            type="button"
-            variant="ghost"
-            size="icon"
-            aria-label={NOTIFICATION_CONTROL[notificationState].label}
-            title={NOTIFICATION_CONTROL[notificationState].label}
-            data-state={notificationState}
-            disabled={NOTIFICATION_CONTROL[notificationState].disabled}
-            onClick={onEnableNotifications}
-          >
-            <DashboardIcon name="bell" />
-          </Button>
-        ) : null}
       </div>
-      <Button type="button" variant="outline" onClick={onLaunchSession}>
-        <DashboardIcon name="plus" />
-        New session
-      </Button>
+      <div className="session-header-actions">
+        <Button
+          className="notification-button"
+          type="button"
+          variant="ghost"
+          size="icon"
+          aria-label="Notification settings"
+          title="Notification settings"
+          data-state={notificationState}
+          onClick={onOpenNotificationSettings}
+        >
+          <DashboardIcon name="bell" />
+        </Button>
+        <Button className="new-session-button" type="button" variant="outline" onClick={onLaunchSession}>
+          <DashboardIcon name="plus" />
+          New session
+        </Button>
+      </div>
     </header>
   );
 }
