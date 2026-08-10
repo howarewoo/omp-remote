@@ -54,17 +54,20 @@ export async function collectSessionFileChanges({
 }: CollectSessionFileChangesOptions): Promise<SessionFileChangesResponse> {
   if (sources.length === 0) return emptyResponse(sessionId, "unavailable", "Session history is unavailable");
 
+  const [rootSource, ...descendantSources] = sources;
+  if (!rootSource) return emptyResponse(sessionId, "unavailable", "Session history is unavailable");
+
   const budget: CollectionBudget = {
     remainingOperations: MAX_OPERATIONS,
     remainingPatchBytes: MAX_RETAINED_PATCH_BYTES_TOTAL,
     remainingHistoryBytes: MAX_SCANNED_HISTORY_BYTES,
     remainingResponseBytes: RESPONSE_COLLECTION_BUDGET,
   };
-  const rootResult = await collectSource(sources[0]!, budget);
+  const rootResult = await collectSource(rootSource, budget);
   if (rootResult.unavailable) {
     return emptyResponse(sessionId, "unavailable", "Session history is unavailable");
   }
-  const descendantResults = await mapWithConcurrency(sources.slice(1), READ_CONCURRENCY, (source) =>
+  const descendantResults = await mapWithConcurrency(descendantSources, READ_CONCURRENCY, (source) =>
     collectSource(source, budget),
   );
   const results = [rootResult, ...descendantResults];
@@ -280,15 +283,17 @@ function operationsFromResult(
     return perFileEditOperations(details.perFileResults, descriptor, timestamp);
   }
   if (call.paths.length !== 1) return { operations: [], omitted: true };
+  const [path] = call.paths;
+  if (!path) return { operations: [], omitted: true };
   const detailPath = explicitResultPath(details, descriptor.root);
-  if (detailPath && detailPath !== call.paths[0]) return { operations: [], omitted: true };
+  if (detailPath && detailPath !== path) return { operations: [], omitted: true };
   if (typeof details.diff !== "string" && typeof details.patch !== "string") {
     return { operations: [], omitted: true };
   }
   return {
     operations: [
       {
-        path: call.paths[0]!,
+        path,
         operation: editOperation(details.patch ?? details.diff, details.op, descriptor.sessionId, timestamp),
       },
     ],

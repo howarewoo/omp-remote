@@ -253,97 +253,99 @@ export function SessionBranchSelector({
             </div>
           ) : topology ? (
             rows.length > 0 ? (
-              <RadioGroup
-                className="session-branch-list"
-                aria-label="Local branches"
-                value={currentBranch}
-                disabled={checkoutDisabled}
-                onValueChange={(branch) => {
-                  if (branch !== currentBranch) onSelectBranch(branch);
-                }}
-              >
-                {rows.map(({ branch, lane, lanes, upperLanes, lowerLanes, joins }) => {
-                  const current = branch.name === currentBranch;
-                  const branchDisabled = checkoutDisabled || current;
-                  const trunk = !branch.parent;
-                  return (
-                    <RadioGroupItem
-                      className={current ? "session-branch-option selected" : "session-branch-option"}
-                      value={branch.name}
-                      data-branch={branch.name}
-                      data-parent={branch.parent}
-                      data-lane={lane}
-                      aria-label={
-                        current
-                          ? `Current branch ${branch.name}`
-                          : branch.parent
-                            ? `Switch to branch ${branch.name}, based on ${branch.parent}`
-                            : `Switch to branch ${branch.name}`
-                      }
-                      disabled={branchDisabled}
-                      key={branch.name}
-                    >
-                      <span
-                        className="session-branch-graph"
-                        style={{ "--branch-lane-count": lanes.length } as CSSProperties}
-                        aria-hidden="true"
+              <section className="session-branch-list-scroll" aria-label="Scrollable branch graph">
+                <RadioGroup
+                  className="session-branch-list"
+                  aria-label="Local branches"
+                  value={currentBranch}
+                  disabled={checkoutDisabled}
+                  onValueChange={(branch) => {
+                    if (branch !== currentBranch) onSelectBranch(branch);
+                  }}
+                >
+                  {rows.map(({ branch, lane, lanes, upperLanes, lowerLanes, joins }) => {
+                    const current = branch.name === currentBranch;
+                    const branchDisabled = checkoutDisabled || current;
+                    const trunk = !branch.parent;
+                    return (
+                      <RadioGroupItem
+                        className={current ? "session-branch-option selected" : "session-branch-option"}
+                        value={branch.name}
+                        data-branch={branch.name}
+                        data-parent={branch.parent}
+                        data-lane={lane}
+                        aria-label={
+                          current
+                            ? `Current branch ${branch.name}`
+                            : branch.parent
+                              ? `Switch to branch ${branch.name}, based on ${branch.parent}`
+                              : `Switch to branch ${branch.name}`
+                        }
+                        disabled={branchDisabled}
+                        key={branch.name}
                       >
-                        {joins.map((join) => (
-                          <span
-                            className="session-branch-node-join"
-                            data-start-lane={join.startLane}
-                            data-end-lane={join.endLane}
-                            data-direction={join.direction}
-                            data-color={join.endLane % 5}
-                            style={
-                              {
-                                "--branch-join-start": join.startLane,
-                                "--branch-join-span": join.endLane - join.startLane,
-                              } as CSSProperties
-                            }
-                            key={`${join.startLane}-${join.endLane}`}
-                          />
-                        ))}
-                        {lanes.map((graphLane) => (
-                          <span
-                            className="session-branch-node-lane"
-                            data-color={graphLane % 5}
-                            key={graphLane}
-                          >
-                            {upperLanes.includes(graphLane) ? (
-                              <span
-                                className="session-branch-node-line"
-                                data-kind="upper"
-                                data-lane={graphLane}
-                              />
-                            ) : null}
-                            {graphLane === lane ? (
-                              <span className="session-branch-node-dot" data-selected={current} />
-                            ) : null}
-                            {lowerLanes.includes(graphLane) ? (
-                              <span
-                                className="session-branch-node-line"
-                                data-kind="lower"
-                                data-lane={graphLane}
-                              />
-                            ) : null}
-                          </span>
-                        ))}
-                      </span>
-                      <span className="session-branch-row-content">
-                        <span className="session-branch-option-name" title={branch.name}>
-                          {branch.name}
+                        <span
+                          className="session-branch-graph"
+                          style={{ "--branch-lane-count": lanes.length } as CSSProperties}
+                          aria-hidden="true"
+                        >
+                          {joins.map((join) => (
+                            <span
+                              className="session-branch-node-join"
+                              data-start-lane={join.startLane}
+                              data-end-lane={join.endLane}
+                              data-direction={join.direction}
+                              data-color={join.endLane % 5}
+                              style={
+                                {
+                                  "--branch-join-start": join.startLane,
+                                  "--branch-join-span": join.endLane - join.startLane,
+                                } as CSSProperties
+                              }
+                              key={`${join.startLane}-${join.endLane}`}
+                            />
+                          ))}
+                          {lanes.map((graphLane) => (
+                            <span
+                              className="session-branch-node-lane"
+                              data-color={graphLane % 5}
+                              key={graphLane}
+                            >
+                              {upperLanes.includes(graphLane) ? (
+                                <span
+                                  className="session-branch-node-line"
+                                  data-kind="upper"
+                                  data-lane={graphLane}
+                                />
+                              ) : null}
+                              {graphLane === lane ? (
+                                <span className="session-branch-node-dot" data-selected={current} />
+                              ) : null}
+                              {lowerLanes.includes(graphLane) ? (
+                                <span
+                                  className="session-branch-node-line"
+                                  data-kind="lower"
+                                  data-lane={graphLane}
+                                />
+                              ) : null}
+                            </span>
+                          ))}
                         </span>
-                        {trunk ? (
-                          <span className="session-branch-trunk-label" aria-hidden="true">
-                            (trunk)
+                        <span className="session-branch-row-content">
+                          <span className="session-branch-option-name" title={branch.name}>
+                            {branch.name}
                           </span>
-                        ) : null}
-                      </span>
-                    </RadioGroupItem>
-                  );
-                })}
-              </RadioGroup>
+                          {trunk ? (
+                            <span className="session-branch-trunk-label" aria-hidden="true">
+                              (trunk)
+                            </span>
+                          ) : null}
+                        </span>
+                      </RadioGroupItem>
+                    );
+                  })}
+                </RadioGroup>
+              </section>
             ) : (
               <div className="session-branch-empty" role="status">
                 <strong>No matching branches</strong>

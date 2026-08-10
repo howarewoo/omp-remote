@@ -134,10 +134,18 @@ describe("session branch topology presentation", () => {
       output,
       (element) => element.props.className === "session-branch-trunk-label",
     )[0];
+    const scrollRegion = findElements(
+      output,
+      (element) => element.props.className === "session-branch-list-scroll",
+    )[0];
 
     expect(group?.props).toMatchObject({
       "aria-label": "Local branches",
       value: TOPOLOGY.currentBranch,
+    });
+    expect(scrollRegion?.type).toBe("section");
+    expect(scrollRegion?.props).toMatchObject({
+      "aria-label": "Scrollable branch graph",
     });
     expect(
       options.map((option) => [
