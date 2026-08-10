@@ -252,6 +252,27 @@ describe("dashboard launch selection", () => {
     selectedSessionId: BASE_SESSION.id,
   };
 
+  it("opens the launch dialog from the mobile sidebar", () => {
+    reactHarness.isMobile = true;
+    const props = { ...baseProps, onLaunch: vi.fn() };
+    let output = renderControlledDashboard(props);
+    const sidebarActions = findElements(
+      output,
+      (element) => element.props.className === "sidebar-actions",
+    )[0];
+    const newSessionButton = findElements(
+      sidebarActions,
+      (element) => textContent(element) === "New session",
+    )[0];
+
+    (newSessionButton?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+
+    expect(
+      findElements(output, (element) => element.props.title === "Start an OMP session")[0]?.props.open,
+    ).toBe(true);
+  });
+
   it("selects the exact session returned by a successful new launch and resets the modal", async () => {
     const onLaunch = vi.fn().mockResolvedValue("new-session-id");
     const onSelectedSessionChange = vi.fn();
