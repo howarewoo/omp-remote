@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionUIDialogOptions } from "@oh-my-pi/pi-coding
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ompRemoteExtension, {
+  getConfiguredRoleEffort,
   getSessionModelOptions,
   isRpcMode,
   normalizeRemoteAskResponse,
@@ -130,17 +131,40 @@ describe("ompRemoteExtension", () => {
       { provider: "anthropic", id: "claude-opus-4.7", name: "Claude Opus 4.7" },
     ];
     const assignments = {
-      default: { provider: "openai", id: "gpt-5.6" },
-      slow: { provider: "anthropic", id: "claude-opus-4.7" },
+      default: { provider: "openai", id: "gpt-5.6", effort: "high" as const },
+      slow: { provider: "anthropic", id: "claude-opus-4.7", effort: "xhigh" as const },
     };
 
     expect(
       getSessionModelOptions(models, (role) => assignments[role as keyof typeof assignments]),
     ).toMatchObject([
-      { provider: "openai", id: "gpt-5.6", roles: ["default"] },
-      { provider: "anthropic", id: "claude-opus-4.7", roles: ["slow"] },
+      {
+        provider: "openai",
+        id: "gpt-5.6",
+        roles: ["default"],
+        roleEfforts: { default: "high" },
+      },
+      {
+        provider: "anthropic",
+        id: "claude-opus-4.7",
+        roles: ["slow"],
+        roleEfforts: { slow: "xhigh" },
+      },
       { provider: "google", id: "gemini-3-pro" },
     ]);
+  });
+
+  it("resolves explicit role effort through configured role aliases", () => {
+    const selectors: Record<string, string> = {
+      default: "openai/gpt-5.6:high",
+      slow: "@default:xhigh",
+      task: "@slow",
+    };
+
+    expect(getConfiguredRoleEffort("default", (role) => selectors[role])).toBe("high");
+    expect(getConfiguredRoleEffort("slow", (role) => selectors[role])).toBe("xhigh");
+    expect(getConfiguredRoleEffort("task", (role) => selectors[role])).toBe("xhigh");
+    expect(getConfiguredRoleEffort("vision", (role) => selectors[role])).toBe("inherit");
   });
 
   it.each([
@@ -164,6 +188,11 @@ describe("ompRemoteExtension", () => {
     const abort = vi.fn();
     const pi = {
       zod: { z: compatibilityZ },
+      pi: {
+        settings: {
+          getModelRole: (role: string) => (role === "default" ? "openai/gpt-5.6:high" : undefined),
+        },
+      },
       on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => {
         handlers.set(event, handler);
       }),
@@ -182,7 +211,7 @@ describe("ompRemoteExtension", () => {
       models: {
         current: () => model,
         list: () => [model],
-        resolve: (value: string) => (value === "openai/gpt-5.6" ? model : undefined),
+        resolve: (value: string) => (value === "openai/gpt-5.6" || value === "@default" ? model : undefined),
       },
       sessionManager: {
         getBranch: () => [],
@@ -214,7 +243,17 @@ describe("ompRemoteExtension", () => {
     await socket.emit("open");
     expect(JSON.parse(socket.sent[0] ?? "")).toMatchObject({
       type: "register",
-      session: { id: "session-1" },
+      session: {
+        id: "session-1",
+        availableModels: [
+          {
+            provider: "openai",
+            id: "gpt-5.6",
+            roles: ["default"],
+            roleEfforts: { default: "high" },
+          },
+        ],
+      },
     });
     await handlers.get("message_update")?.(
       {

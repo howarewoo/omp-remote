@@ -401,7 +401,8 @@ const CONFIGURABLE_SESSION: Session = {
       id: "gpt-5.6",
       name: "GPT-5.6",
       efforts: ["low", "medium", "high", "xhigh"],
-      roles: ["default"],
+      roles: ["default", "slow"],
+      roleEfforts: { default: "high", slow: "xhigh" },
     },
   ],
 };
@@ -425,134 +426,168 @@ function configurationProps(
   };
 }
 
-function findConfigurationTrigger(output: ReactNode, kind: "model" | "effort") {
-  const label = `Change ${kind}.`;
+function findConfigurationTrigger(output: ReactNode) {
   return findElements(
     output,
     (element) =>
-      typeof element.props["aria-label"] === "string" && element.props["aria-label"].startsWith(label),
+      typeof element.props["aria-label"] === "string" &&
+      element.props["aria-label"].startsWith("Change model and effort."),
   )[0];
 }
 
-function findConfigurationDrawer(output: ReactNode, title: "Model" | "Effort") {
+function findConfigurationDrawer(output: ReactNode) {
   return findElements(
     output,
-    (element) => element.type === Drawer && textContent(element.props.children as ReactNode).includes(title),
+    (element) =>
+      element.type === Drawer &&
+      textContent(element.props.children as ReactNode).includes("Model and effort"),
   )[0];
 }
 
-describe("session model and effort selectors", () => {
-  it("renders separate tappable Model and Effort selector cells", () => {
+function findRoleOption(output: ReactNode, role: string) {
+  return findElements(
+    output,
+    (element) =>
+      typeof element.props.className === "string" &&
+      element.props.className.split(/\s+/).includes("role-option") &&
+      textContent(element).includes(`@${role}`),
+  )[0];
+}
+
+function findAdHocDisclosure(output: ReactNode, modelName: string) {
+  return findElements(
+    output,
+    (element) =>
+      element.props.className === "model-option-disclosure" && textContent(element).includes(modelName),
+  )[0];
+}
+
+describe("session model and effort selector", () => {
+  it("renders one metadata button for the active model and effort", () => {
     const output = renderControlledDashboard(configurationProps(CONFIGURABLE_SESSION));
 
-    expect(findConfigurationTrigger(output, "model")?.props.disabled).not.toBe(true);
-    expect(findConfigurationTrigger(output, "effort")?.props.disabled).not.toBe(true);
+    expect(findConfigurationTrigger(output)?.props.disabled).not.toBe(true);
+    expect(findConfigurationTrigger(output)?.props["aria-label"]).toContain("current effort Medium");
     expect(
       findElements(output, (element) => element.type === "dt").map((element) => textContent(element)),
-    ).toEqual(["Branch", "Model", "Effort", "Context", "Changes", "Cost"]);
+    ).toEqual(["Branch", "Model · Effort", "Context", "Changes", "Cost"]);
   });
 
-  it("opens a populated model-only drawer", () => {
+  it("shows configured role buttons with their effort before ad hoc models", () => {
     const props = configurationProps(CONFIGURABLE_SESSION);
     let output = renderControlledDashboard(props);
 
-    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
+    (findConfigurationTrigger(output)?.props.onClick as (() => void) | undefined)?.();
     output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
 
-    const drawer = findConfigurationDrawer(output, "Model");
+    const drawer = findConfigurationDrawer(output);
+    const drawerText = textContent(drawer?.props.children as ReactNode);
+    const defaultRole = findRoleOption(drawer?.props.children as ReactNode, "default");
     expect(drawer?.props.open).toBe(true);
     expect(drawer?.props).toMatchObject({ showSwipeHandle: false, swipeDirection: "right" });
-    expect(textContent(drawer?.props.children as ReactNode)).toContain("GPT-5.6");
-    expect(textContent(drawer?.props.children as ReactNode)).toContain("Configured roles: default");
-    expect(textContent(drawer?.props.children as ReactNode)).toContain("Claude Opus 4.7");
-    const modelButtons = findElements(
-      drawer?.props.children as ReactNode,
-      (element) =>
-        typeof element.props.className === "string" &&
-        element.props.className.split(/\s+/).includes("model-option"),
+    expect(drawerText.indexOf("Configured roles")).toBeLessThan(drawerText.indexOf("Ad hoc model"));
+    expect(textContent(defaultRole)).toContain("@defaultGPT-5.6openai/gpt-5.6High");
+    expect(textContent(findRoleOption(drawer?.props.children as ReactNode, "slow"))).toContain(
+      "@slowGPT-5.6openai/gpt-5.6Extra high",
     );
-    expect(modelButtons.map((button) => textContent(button))).toEqual([
-      "GPT-5.6Configured roles: defaultopenai/gpt-5.6",
-      "Claude Opus 4.7anthropic/claude-opus-4.7",
-    ]);
-    expect(textContent(drawer?.props.children as ReactNode)).not.toContain("Effort");
+    expect(typeof defaultRole?.props.onClick).toBe("function");
+    expect(drawerText).toContain("Claude Opus 4.7");
   });
 
-  it("uses mobile bottom sheets for model and effort selectors", () => {
+  it("asks legacy sessions to restart instead of reporting inherited role effort", () => {
+    const legacySession: Session = {
+      ...CONFIGURABLE_SESSION,
+      availableModels: CONFIGURABLE_SESSION.availableModels?.map((model) =>
+        model.roles ? { ...model, roleEfforts: undefined } : model,
+      ),
+    };
+    const props = configurationProps(legacySession);
+    let output = renderControlledDashboard(props);
+
+    (findConfigurationTrigger(output)?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+
+    const drawer = findConfigurationDrawer(output);
+    const defaultRoleText = textContent(findRoleOption(drawer?.props.children as ReactNode, "default"));
+    expect(defaultRoleText).toContain("Restart session");
+    expect(defaultRoleText).not.toContain("Inherit");
+  });
+
+  it("uses one mobile bottom sheet for model and effort", () => {
     reactHarness.isMobile = true;
     const props = configurationProps(CONFIGURABLE_SESSION);
     let output = renderControlledDashboard(props);
 
-    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
+    (findConfigurationTrigger(output)?.props.onClick as (() => void) | undefined)?.();
     output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
-    expect(findConfigurationDrawer(output, "Model")?.props).toMatchObject({
-      showSwipeHandle: true,
-      swipeDirection: "down",
-    });
-
-    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
-    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
-    expect(findConfigurationDrawer(output, "Effort")?.props).toMatchObject({
+    expect(findConfigurationDrawer(output)?.props).toMatchObject({
       showSwipeHandle: true,
       swipeDirection: "down",
     });
   });
 
-  it("keeps only the most recently opened configuration drawer open", () => {
-    const props = configurationProps(CONFIGURABLE_SESSION);
+  it("requires an effort choice before applying an ad hoc model", async () => {
+    const onSetModel = vi.fn().mockResolvedValue(undefined);
+    const onSetEffort = vi.fn().mockResolvedValue(undefined);
+    const props = configurationProps(CONFIGURABLE_SESSION, { onSetModel, onSetEffort });
     let output = renderControlledDashboard(props);
 
-    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
+    (findConfigurationTrigger(output)?.props.onClick as (() => void) | undefined)?.();
     output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
-    expect(findConfigurationDrawer(output, "Model")?.props.open).toBe(true);
-    expect(findConfigurationDrawer(output, "Effort")?.props.open).toBe(false);
+    const disclosure = findAdHocDisclosure(
+      findConfigurationDrawer(output)?.props.children as ReactNode,
+      "Claude Opus 4.7",
+    );
+    expect(disclosure?.props.open).toBe(false);
+    (disclosure?.props.onOpenChange as ((open: boolean) => void) | undefined)?.(true);
+    expect(onSetModel).not.toHaveBeenCalled();
+    expect(onSetEffort).not.toHaveBeenCalled();
 
-    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
     output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
-    expect(findConfigurationDrawer(output, "Model")?.props.open).toBe(false);
-    expect(findConfigurationDrawer(output, "Effort")?.props.open).toBe(true);
-    expect(findConfigurationDrawer(output, "Effort")?.props).toMatchObject({
-      showSwipeHandle: false,
-      swipeDirection: "right",
-    });
+    const expandedDisclosure = findAdHocDisclosure(
+      findConfigurationDrawer(output)?.props.children as ReactNode,
+      "Claude Opus 4.7",
+    );
+    expect(expandedDisclosure?.props.open).toBe(true);
+    const maxEffort = findElements(
+      expandedDisclosure,
+      (element) => typeof element.props.onClick === "function" && textContent(element) === "Max",
+    )[0];
+    (maxEffort?.props.onClick as (() => void) | undefined)?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onSetModel).toHaveBeenCalledWith(CONFIGURABLE_SESSION.id, "anthropic/claude-opus-4.7");
+    expect(onSetEffort).toHaveBeenCalledWith(CONFIGURABLE_SESSION.id, "max");
+    expect(onSetModel.mock.invocationCallOrder[0]).toBeLessThan(onSetEffort.mock.invocationCallOrder[0] ?? 0);
   });
 
-  it("opens truthful recovery guidance when configuration data is unavailable", () => {
+  it("applies a configured role without asking for effort", async () => {
+    const onSetModel = vi.fn().mockResolvedValue(undefined);
+    const onSetEffort = vi.fn().mockResolvedValue(undefined);
+    const props = configurationProps(CONFIGURABLE_SESSION, { onSetModel, onSetEffort });
+    let output = renderControlledDashboard(props);
+
+    (findConfigurationTrigger(output)?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    const roleOption = findRoleOption(
+      findConfigurationDrawer(output)?.props.children as ReactNode,
+      "default",
+    );
+    (roleOption?.props.onClick as (() => void) | undefined)?.();
+    await Promise.resolve();
+
+    expect(onSetModel).toHaveBeenCalledWith(CONFIGURABLE_SESSION.id, "@default");
+    expect(onSetEffort).not.toHaveBeenCalled();
+  });
+
+  it("opens truthful combined recovery guidance when configuration data is unavailable", () => {
     const staleProps = configurationProps(BASE_SESSION);
     let output = renderControlledDashboard(staleProps);
 
-    expect(findConfigurationTrigger(output, "model")?.props.disabled).not.toBe(true);
-    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
+    (findConfigurationTrigger(output)?.props.onClick as (() => void) | undefined)?.();
     output = renderControlledDashboard(staleProps, { preserveState: true, effectsEnabled: false });
-    expect(textContent(findConfigurationDrawer(output, "Model")?.props.children as ReactNode)).toMatch(
-      /restart/i,
-    );
-
-    const disconnectedLiveSession: Session = {
-      ...BASE_SESSION,
-      connected: false,
-      status: "disconnected",
-    };
-    const disconnectedLiveProps = configurationProps(disconnectedLiveSession);
-    output = renderControlledDashboard(disconnectedLiveProps);
-    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
-    output = renderControlledDashboard(disconnectedLiveProps, {
-      preserveState: true,
-      effectsEnabled: false,
-    });
-    expect(textContent(findConfigurationDrawer(output, "Model")?.props.children as ReactNode)).toMatch(
-      /restart/i,
-    );
-
-    output = renderControlledDashboard(disconnectedLiveProps);
-    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
-    output = renderControlledDashboard(disconnectedLiveProps, {
-      preserveState: true,
-      effectsEnabled: false,
-    });
-    expect(textContent(findConfigurationDrawer(output, "Effort")?.props.children as ReactNode)).toMatch(
-      /restart/i,
-    );
+    expect(textContent(findConfigurationDrawer(output)?.props.children as ReactNode)).toMatch(/restart/i);
 
     const historySession: Session = {
       ...BASE_SESSION,
@@ -562,86 +597,35 @@ describe("session model and effort selectors", () => {
     };
     const historyProps = configurationProps(historySession);
     output = renderControlledDashboard(historyProps);
-    expect(findConfigurationTrigger(output, "effort")?.props.disabled).not.toBe(true);
-    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
+    (findConfigurationTrigger(output)?.props.onClick as (() => void) | undefined)?.();
     output = renderControlledDashboard(historyProps, { preserveState: true, effectsEnabled: false });
-    expect(textContent(findConfigurationDrawer(output, "Effort")?.props.children as ReactNode)).toMatch(
-      /resume/i,
-    );
+    expect(textContent(findConfigurationDrawer(output)?.props.children as ReactNode)).toMatch(/resume/i);
   });
 
-  it("sends only an effort command when an available effort is selected", async () => {
-    const onSetModel = vi.fn().mockResolvedValue(undefined);
-    const onSetEffort = vi.fn().mockResolvedValue(undefined);
-    const props = configurationProps(CONFIGURABLE_SESSION, { onSetModel, onSetEffort });
-    let output = renderControlledDashboard(props);
-
-    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
-    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
-    const effortDrawerText = textContent(
-      findConfigurationDrawer(output, "Effort")?.props.children as ReactNode,
-    );
-    expect(effortDrawerText).toContain("Extra high");
-    expect(effortDrawerText).not.toContain("Claude Opus 4.7");
-    expect(effortDrawerText).not.toContain("Max");
-    const highOption = findElements(
-      findConfigurationDrawer(output, "Effort")?.props.children as ReactNode,
-      (element) => textContent(element) === "High",
-    )[0];
-    (highOption?.props.onClick as (() => void) | undefined)?.();
-    await Promise.resolve();
-
-    expect(onSetEffort).toHaveBeenCalledWith(CONFIGURABLE_SESSION.id, "high");
-    expect(onSetModel).not.toHaveBeenCalled();
-  });
-
-  it("shows request errors only in the drawer that initiated them", async () => {
-    const modelProps = configurationProps(CONFIGURABLE_SESSION, {
+  it("keeps combined request errors in the selector", async () => {
+    const props = configurationProps(CONFIGURABLE_SESSION, {
       onSetModel: vi.fn().mockRejectedValue(new Error("Model request failed")),
     });
-    let output = renderControlledDashboard(modelProps);
+    let output = renderControlledDashboard(props);
 
-    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
-    output = renderControlledDashboard(modelProps, { preserveState: true, effectsEnabled: false });
-    const alternateModel = findElements(
-      findConfigurationDrawer(output, "Model")?.props.children as ReactNode,
-      (element) =>
-        typeof element.props.onClick === "function" && textContent(element).includes("Claude Opus 4.7"),
+    (findConfigurationTrigger(output)?.props.onClick as (() => void) | undefined)?.();
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    const disclosure = findAdHocDisclosure(
+      findConfigurationDrawer(output)?.props.children as ReactNode,
+      "Claude Opus 4.7",
+    );
+    (disclosure?.props.onOpenChange as ((open: boolean) => void) | undefined)?.(true);
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    const maxEffort = findElements(
+      findAdHocDisclosure(findConfigurationDrawer(output)?.props.children as ReactNode, "Claude Opus 4.7"),
+      (element) => typeof element.props.onClick === "function" && textContent(element) === "Max",
     )[0];
-    (alternateModel?.props.onClick as (() => void) | undefined)?.();
+    (maxEffort?.props.onClick as (() => void) | undefined)?.();
     await Promise.resolve();
-    output = renderControlledDashboard(modelProps, { preserveState: true, effectsEnabled: false });
-    expect(textContent(findConfigurationDrawer(output, "Model")?.props.children as ReactNode)).toContain(
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+
+    expect(textContent(findConfigurationDrawer(output)?.props.children as ReactNode)).toContain(
       "Model request failed",
-    );
-
-    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
-    output = renderControlledDashboard(modelProps, { preserveState: true, effectsEnabled: false });
-    expect(textContent(findConfigurationDrawer(output, "Effort")?.props.children as ReactNode)).not.toContain(
-      "Model request failed",
-    );
-
-    const effortProps = configurationProps(CONFIGURABLE_SESSION, {
-      onSetEffort: vi.fn().mockRejectedValue(new Error("Effort request failed")),
-    });
-    output = renderControlledDashboard(effortProps);
-    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
-    output = renderControlledDashboard(effortProps, { preserveState: true, effectsEnabled: false });
-    const highEffort = findElements(
-      findConfigurationDrawer(output, "Effort")?.props.children as ReactNode,
-      (element) => typeof element.props.onClick === "function" && textContent(element) === "High",
-    )[0];
-    (highEffort?.props.onClick as (() => void) | undefined)?.();
-    await Promise.resolve();
-    output = renderControlledDashboard(effortProps, { preserveState: true, effectsEnabled: false });
-    expect(textContent(findConfigurationDrawer(output, "Effort")?.props.children as ReactNode)).toContain(
-      "Effort request failed",
-    );
-
-    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
-    output = renderControlledDashboard(effortProps, { preserveState: true, effectsEnabled: false });
-    expect(textContent(findConfigurationDrawer(output, "Model")?.props.children as ReactNode)).not.toContain(
-      "Effort request failed",
     );
   });
 
@@ -650,9 +634,9 @@ describe("session model and effort selectors", () => {
     const firstModelRequest = new Promise<void>((_resolve, reject) => {
       rejectFirstModelRequest = reject;
     });
-    let resolveSecondEffortRequest: () => void = () => undefined;
-    const secondEffortRequest = new Promise<void>((resolve) => {
-      resolveSecondEffortRequest = resolve;
+    let resolveSecondRoleRequest: () => void = () => undefined;
+    const secondRoleRequest = new Promise<void>((resolve) => {
+      resolveSecondRoleRequest = resolve;
     });
     const secondSession: Session = {
       ...CONFIGURABLE_SESSION,
@@ -666,35 +650,40 @@ describe("session model and effort selectors", () => {
     };
     let output = renderControlledDashboard(firstProps);
 
-    (findConfigurationTrigger(output, "model")?.props.onClick as (() => void) | undefined)?.();
+    (findConfigurationTrigger(output)?.props.onClick as (() => void) | undefined)?.();
     output = renderControlledDashboard(firstProps, { preserveState: true, effectsEnabled: false });
-    const alternateModel = findElements(
-      findConfigurationDrawer(output, "Model")?.props.children as ReactNode,
-      (element) =>
-        typeof element.props.onClick === "function" && textContent(element).includes("Claude Opus 4.7"),
+    const firstDisclosure = findAdHocDisclosure(
+      findConfigurationDrawer(output)?.props.children as ReactNode,
+      "Claude Opus 4.7",
+    );
+    (firstDisclosure?.props.onOpenChange as ((open: boolean) => void) | undefined)?.(true);
+    output = renderControlledDashboard(firstProps, { preserveState: true, effectsEnabled: false });
+    const firstMaxEffort = findElements(
+      findAdHocDisclosure(findConfigurationDrawer(output)?.props.children as ReactNode, "Claude Opus 4.7"),
+      (element) => typeof element.props.onClick === "function" && textContent(element) === "Max",
     )[0];
-    (alternateModel?.props.onClick as (() => void) | undefined)?.();
+    (firstMaxEffort?.props.onClick as (() => void) | undefined)?.();
 
     const secondProps: ControlledDashboardProps = {
       ...firstProps,
       selectedSessionId: secondSession.id,
-      onSetEffort: vi.fn().mockReturnValue(secondEffortRequest),
+      onSetModel: vi.fn().mockReturnValue(secondRoleRequest),
     };
     renderControlledDashboard(secondProps, { preserveState: true });
     output = renderControlledDashboard(secondProps, {
       preserveState: true,
       effectsEnabled: false,
     });
-    (findConfigurationTrigger(output, "effort")?.props.onClick as (() => void) | undefined)?.();
+    (findConfigurationTrigger(output)?.props.onClick as (() => void) | undefined)?.();
     output = renderControlledDashboard(secondProps, {
       preserveState: true,
       effectsEnabled: false,
     });
-    const highEffort = findElements(
-      findConfigurationDrawer(output, "Effort")?.props.children as ReactNode,
-      (element) => typeof element.props.onClick === "function" && textContent(element) === "High",
-    )[0];
-    (highEffort?.props.onClick as (() => void) | undefined)?.();
+    const secondRole = findRoleOption(
+      findConfigurationDrawer(output)?.props.children as ReactNode,
+      "default",
+    );
+    (secondRole?.props.onClick as (() => void) | undefined)?.();
 
     rejectFirstModelRequest(new Error("Old session model failure"));
     await Promise.resolve();
@@ -702,14 +691,11 @@ describe("session model and effort selectors", () => {
       preserveState: true,
       effectsEnabled: false,
     });
-    const effortDrawer = findConfigurationDrawer(output, "Effort");
-    expect(textContent(effortDrawer?.props.children as ReactNode)).not.toContain("Old session model failure");
-    expect(
-      findElements(effortDrawer?.props.children as ReactNode, (element) => textContent(element) === "High")[0]
-        ?.props.disabled,
-    ).toBe(true);
+    const drawer = findConfigurationDrawer(output);
+    expect(textContent(drawer?.props.children as ReactNode)).not.toContain("Old session model failure");
+    expect(findRoleOption(drawer?.props.children as ReactNode, "default")?.props.disabled).toBe(true);
 
-    resolveSecondEffortRequest();
+    resolveSecondRoleRequest();
     await Promise.resolve();
   });
 });

@@ -1,5 +1,5 @@
-import { type Effort, type Session } from "@omp-remote/protocol";
-import { type TodoOverallProgress, type TodoTaskState } from "../todo-parser.js";
+import type { RoleEffort, Session } from "@omp-remote/protocol";
+import type { TodoOverallProgress, TodoTaskState } from "../todo-parser.js";
 import { SessionCostMetadata } from "../session-cost-viewer.js";
 import { Button } from "../ui/button.js";
 import { DashboardIcon } from "./session-header.js";
@@ -20,8 +20,7 @@ export interface SessionMetadataProps {
   fileChangesMetadata: string;
   todo: TodoMetadata | null;
   onOpenBranchSelector(): void;
-  onOpenModelSelector(): void;
-  onOpenEffortSelector(): void;
+  onOpenConfiguration(): void;
   onOpenFileChanges(): void;
   onOpenCost(): void;
   onOpenTodo(): void;
@@ -35,8 +34,7 @@ export function SessionMetadata({
   fileChangesMetadata,
   todo,
   onOpenBranchSelector,
-  onOpenModelSelector,
-  onOpenEffortSelector,
+  onOpenConfiguration,
   onOpenFileChanges,
   onOpenCost,
   onOpenTodo,
@@ -69,35 +67,22 @@ export function SessionMetadata({
         </div>
       ) : null}
       <div className="session-configuration-metadata">
-        <dt>Model</dt>
+        <dt>Model · Effort</dt>
         <dd>
           <Button
             className="session-configuration-trigger"
             type="button"
             variant="ghost"
-            aria-label={`Change model. Current model ${session.model ?? "Default"}`}
+            aria-label={`Change model and effort. Current model ${session.model ?? "Default"}, current effort ${formatEffortLabel(session.effort)}`}
             onClick={() => {
-              if (!configurationPending) onOpenModelSelector();
+              if (!configurationPending) onOpenConfiguration();
             }}
           >
             <span className="session-configuration-value">{modelLabel}</span>
-            <DashboardIcon name="up" />
-          </Button>
-        </dd>
-      </div>
-      <div className="session-configuration-metadata">
-        <dt>Effort</dt>
-        <dd>
-          <Button
-            className="session-configuration-trigger"
-            type="button"
-            variant="ghost"
-            aria-label={`Change effort. Current effort ${formatEffortLabel(session.effort)}`}
-            onClick={() => {
-              if (!configurationPending) onOpenEffortSelector();
-            }}
-          >
-            <span className="session-configuration-value">{formatEffortLabel(session.effort)}</span>
+            <span className="session-configuration-separator" aria-hidden="true">
+              ·
+            </span>
+            <span className="session-configuration-effort">{formatEffortLabel(session.effort)}</span>
             <DashboardIcon name="up" />
           </Button>
         </dd>
@@ -159,7 +144,7 @@ export function SessionMetadata({
   );
 }
 
-export function formatEffortLabel(effort: Effort | null | undefined): string {
+export function formatEffortLabel(effort: RoleEffort | null | undefined): string {
   if (!effort) return "Default effort";
   if (effort === "off") return "No reasoning";
   if (effort === "xhigh") return "Extra high";
