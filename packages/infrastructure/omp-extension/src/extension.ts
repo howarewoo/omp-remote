@@ -25,7 +25,11 @@ import {
   ExtensionToolCallTracker,
   normalizeExtensionMessage,
 } from "./transcript-normalizer.js";
-import { getConfiguredRoleEffort, getSessionModelOptions, getComposerCommands } from "./model-options.js";
+import {
+  getComposerCommandCatalog,
+  getConfiguredRoleEffort,
+  getSessionModelOptions,
+} from "./model-options.js";
 import { normalizeRemoteAskResponse, type RemoteAskOutcome } from "./remote-ask.js";
 
 export {
@@ -34,7 +38,12 @@ export {
   materializeExtensionReadImages,
   normalizeExtensionMessage,
 } from "./transcript-normalizer.js";
-export { getConfiguredRoleEffort, getSessionModelOptions, getComposerCommands } from "./model-options.js";
+export {
+  getComposerCommandCatalog,
+  getComposerCommands,
+  getConfiguredRoleEffort,
+  getSessionModelOptions,
+} from "./model-options.js";
 export { normalizeRemoteAskResponse } from "./remote-ask.js";
 
 const DEFAULT_EXTENSION_URL = "ws://127.0.0.1:4387/extension";
@@ -439,7 +448,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
       capabilities: ["prompt", "steer", "follow_up", "abort", "resume", "model", "effort"] as const,
       messages,
       sessionPath: ctx.sessionManager.getSessionFile() ?? null,
-      composerCommands: getComposerCommands(pi.getCommands()),
+      composerCommands: getComposerCommandCatalog(pi.getCommands()),
     };
   };
 
@@ -584,7 +593,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
           resolveRoleAssignment(currentContext, role),
         ),
         idle: currentContext.isIdle(),
-        composerCommands: getComposerCommands(pi.getCommands()),
+        composerCommands: getComposerCommandCatalog(pi.getCommands()),
       });
     }, HEARTBEAT_INTERVAL_MS);
   });

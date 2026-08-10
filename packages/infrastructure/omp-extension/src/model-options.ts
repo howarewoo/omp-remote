@@ -125,3 +125,20 @@ export function getComposerCommands(commands: readonly AvailableCommand[]): Comp
   }
   return composerCommands;
 }
+
+const FALLBACK_BTW_COMMAND = {
+  name: "btw",
+  description: "Ask an ephemeral side question using the current session context",
+} as const;
+
+export function getComposerCommandCatalog(commands: readonly AvailableCommand[]): ComposerCommand[] {
+  let hasBtw = false;
+  const composerCommands = getComposerCommands(commands).filter((command) => {
+    if (command.name !== "btw") return true;
+    if (hasBtw) return false;
+    hasBtw = true;
+    return true;
+  });
+  if (hasBtw) return composerCommands;
+  return [...composerCommands, { ...FALLBACK_BTW_COMMAND }];
+}

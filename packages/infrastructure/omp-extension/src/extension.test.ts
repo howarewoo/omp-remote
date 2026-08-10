@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionUIDialogOptions } from "@oh-my-pi/pi-coding
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import ompRemoteExtension, {
+  getComposerCommandCatalog,
   getConfiguredRoleEffort,
   getSessionModelOptions,
   isRpcMode,
@@ -167,6 +168,27 @@ describe("ompRemoteExtension", () => {
     expect(getConfiguredRoleEffort("vision", (role) => selectors[role])).toBe("inherit");
   });
 
+  it("normalizes commands and preserves one supplied btw entry", () => {
+    const commands = getComposerCommandCatalog([
+      { name: "skill:seo", description: "  Audit search visibility  ", source: "skill" },
+      { name: "btw", description: "  Existing context  ", source: "builtin" },
+      { name: "btw", description: "  Later context  ", source: "builtin" },
+    ]);
+    expect(commands).toEqual([
+      { name: "skill:seo", description: "Audit search visibility" },
+      { name: "btw", description: "Existing context" },
+    ]);
+    expect(commands.filter(({ name }) => name === "btw")).toHaveLength(1);
+    expect(
+      getComposerCommandCatalog([
+        { name: "skill:seo", description: "Audit search visibility", source: "skill" },
+      ]),
+    ).toEqual([
+      { name: "skill:seo", description: "Audit search visibility" },
+      { name: "btw", description: "Ask an ephemeral side question using the current session context" },
+    ]);
+  });
+
   it.each([
     { mode: "text", nested: false },
     { mode: "rpc-ui", nested: true },
@@ -181,6 +203,7 @@ describe("ompRemoteExtension", () => {
       sessionFile = join(directory, "main", "Worker.jsonl");
     }
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const intervals: Array<() => void> = [];
     const model = { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" };
     const setModel = vi.fn().mockResolvedValue(true);
     const setThinkingLevel = vi.fn();
@@ -219,7 +242,10 @@ describe("ompRemoteExtension", () => {
         getSessionName: () => "Test session",
         getSessionFile: () => sessionFile,
       },
-      setInterval: vi.fn(),
+      setInterval: vi.fn((callback: () => void) => {
+        intervals.push(callback);
+        return 0;
+      }),
       setTimeout: vi.fn(),
     };
     vi.stubGlobal("WebSocket", FakeWebSocket);
@@ -255,6 +281,9 @@ describe("ompRemoteExtension", () => {
         ],
       },
     });
+    expect(JSON.parse(socket.sent[0] ?? "").session.composerCommands).toEqual([
+      { name: "btw", description: "Ask an ephemeral side question using the current session context" },
+    ]);
     await handlers.get("message_update")?.(
       {
         message: {
@@ -271,6 +300,13 @@ describe("ompRemoteExtension", () => {
       event: "message_update",
       message: { text: "Working", streaming: true },
     });
+    expect(intervals).toHaveLength(1);
+    intervals[0]?.();
+    const heartbeat = JSON.parse(socket.sent.at(-1) ?? "");
+    expect(heartbeat.type).toBe("heartbeat");
+    expect(heartbeat.composerCommands).toEqual([
+      { name: "btw", description: "Ask an ephemeral side question using the current session context" },
+    ]);
 
     await socket.emit("message", {
       data: JSON.stringify({ requestId: "prompt-1", command: "prompt", text: "Prompt text" }),
