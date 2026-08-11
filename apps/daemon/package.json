@@ -17,7 +17,9 @@
     "@omp-remote/omp-rpc": "workspace:*",
     "@omp-remote/protocol": "workspace:*",
     "@omp-remote/sessions": "workspace:*",
+    "@types/web-push": "catalog:",
     "fastify": "catalog:",
+    "web-push": "catalog:",
     "ws": "catalog:",
     "zod": "catalog:"
   },

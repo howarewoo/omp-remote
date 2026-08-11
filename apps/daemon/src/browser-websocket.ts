@@ -11,6 +11,7 @@ import { SessionRegistry } from "@omp-remote/sessions/services";
 import { type FastifyInstance } from "fastify";
 import { WebSocket } from "ws";
 import { type AskInactivityTimeout, isAskResponseValid, resetAskInactivityTimeout } from "./rpc-ask.js";
+import { PushSubscriptionStore } from "./push-subscriptions.js";
 import { SavedWorkingDirectoryStore } from "./saved-working-directories.js";
 
 type PendingAsk = {
@@ -22,6 +23,7 @@ type PendingAsk = {
 type BrowserWebSocketDependencies = {
   browserSockets: Set<WebSocket>;
   pendingAskBySession: Map<string, PendingAsk>;
+  pushSubscriptions: PushSubscriptionStore;
   savedWorkingDirectories: SavedWorkingDirectoryStore;
   rpcSessions: Map<string, RpcSession>;
   extensionSockets: Map<string, WebSocket>;
@@ -44,6 +46,7 @@ type BrowserWebSocketDependencies = {
 export function registerBrowserWebSocketRoute(
   app: FastifyInstance,
   {
+    pushSubscriptions,
     browserSockets,
     pendingAskBySession,
     savedWorkingDirectories,
@@ -86,6 +89,54 @@ export function registerBrowserWebSocketRoute(
         }
       })();
       if (!command) return;
+      if (
+        command.type === "push_vapid_public_key" ||
+        command.type === "push_subscription_register" ||
+        command.type === "push_subscription_update" ||
+        command.type === "push_subscription_remove"
+      ) {
+        try {
+          if (command.type === "push_vapid_public_key")
+            sendToBrowser(socket, {
+              type: "command_result",
+              requestId: command.requestId,
+              outcome: {
+                status: "ok",
+                value: { type: "push_vapid_public_key", publicKey: pushSubscriptions.publicKey },
+              },
+            });
+          else {
+            if (command.type === "push_subscription_register")
+              await pushSubscriptions.register({
+                deviceId: command.deviceId,
+                subscription: command.subscription,
+                events: command.events,
+              });
+            else if (command.type === "push_subscription_update")
+              await pushSubscriptions.update({
+                deviceId: command.deviceId,
+                subscription: command.subscription,
+                events: command.events,
+              });
+            else await pushSubscriptions.remove({ deviceId: command.deviceId });
+            sendToBrowser(socket, {
+              type: "command_result",
+              requestId: command.requestId,
+              outcome: { status: "ok", value: { type: "void" } },
+            });
+          }
+        } catch (error) {
+          sendToBrowser(socket, {
+            type: "command_result",
+            requestId: command.requestId,
+            outcome: {
+              status: "error",
+              error: error instanceof Error ? error.message : "Push subscription could not be updated",
+            },
+          });
+        }
+        return;
+      }
 
       if (command.type === "save_working_directory" || command.type === "remove_working_directory") {
         try {

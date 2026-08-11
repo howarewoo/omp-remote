@@ -45,6 +45,7 @@ import {
   expireExtensionAsk,
 } from "./rpc-ask.js";
 import { SavedWorkingDirectoryStore } from "./saved-working-directories.js";
+import { PushSubscriptionStore } from "./push-subscriptions.js";
 import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
 import { collectSessionFileChanges } from "./session-file-changes.js";
 
@@ -80,6 +81,7 @@ const CatalogQuerySchema = z.object({
 const SessionParamsSchema = z.object({ sessionId: z.string().min(1) });
 
 const environment = EnvironmentSchema.parse(process.env);
+const pushSubscriptions = await PushSubscriptionStore.load();
 const savedWorkingDirectories = await SavedWorkingDirectoryStore.load();
 const sessionCatalog = new SessionCatalog(
   await resolveSessionRoots(homedir(), process.env.PI_CODING_AGENT_DIR),
@@ -236,6 +238,7 @@ registerBrowserWebSocketRoute(app, {
   browserSockets,
   pendingAskBySession,
   savedWorkingDirectories,
+  pushSubscriptions,
   rpcSessions,
   extensionSockets,
   registry,
