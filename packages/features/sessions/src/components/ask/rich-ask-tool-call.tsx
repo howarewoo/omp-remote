@@ -1,11 +1,19 @@
-import { Radio } from "@base-ui/react/radio";
-import { RadioGroup } from "@base-ui/react/radio-group";
 import type { AskRequest, AskResponse } from "@omp-remote/protocol";
-import { useLayoutEffect, useRef, useState } from "react";
-import { Badge } from "../ui/badge.js";
+import { useState } from "react";
 import { Button } from "../ui/button.js";
-import { Textarea } from "../ui/textarea.js";
-import { cn } from "../ui/utils.js";
+import {
+  Questionnaire,
+  QuestionnaireActions,
+  QuestionnaireChoice,
+  QuestionnaireChoices,
+  QuestionnaireError,
+  QuestionnaireItem,
+  QuestionnaireNext,
+  QuestionnairePrevious,
+  QuestionnaireProgress,
+  QuestionnaireSubmit,
+  QuestionnaireTitle,
+} from "../ui/questionnaire.js";
 import { renderSafeHttpText } from "../transcript/inline-transcript.js";
 import {
   askOptionHasLinks,
@@ -26,34 +34,66 @@ type RichAnswer = {
   selectedOptions: string[];
   customInput: string;
   note: string;
+  noteVisible: boolean;
 };
+
+function questionnaireItemName(questionIndex: number) {
+  return `ask-question-${questionIndex}`;
+}
+
+function questionnaireOptionValue(questionIndex: number, optionIndex: number) {
+  return `ask-option-${questionIndex}-${optionIndex}`;
+}
+
+function questionnaireOtherValue(questionIndex: number) {
+  return `ask-other-${questionIndex}`;
+}
+
+function selectedOptionLabels(
+  question: RichAskRequest["questions"][number],
+  questionIndex: number,
+  selectedValues: readonly string[],
+) {
+  return selectedValues.flatMap((value) => {
+    const optionIndex = question.options.findIndex(
+      (_option, index) => questionnaireOptionValue(questionIndex, index) === value,
+    );
+    return optionIndex === -1 ? [] : [question.options[optionIndex]?.label ?? ""];
+  });
+}
+
+function resizeAskTextarea(textarea: HTMLTextAreaElement) {
+  textarea.style.height = "auto";
+  const styles = globalThis.getComputedStyle?.(textarea);
+  const lineHeight = Number.parseFloat(styles?.lineHeight ?? "") || 24;
+  const padding =
+    (Number.parseFloat(styles?.paddingTop ?? "") || 0) +
+    (Number.parseFloat(styles?.paddingBottom ?? "") || 0);
+  const maxHeight = lineHeight * 6 + padding;
+  textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, lineHeight + padding), maxHeight)}px`;
+  textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+}
 
 export function RichAskToolCall({ request, connection, onRespond, onActivity }: RichAskToolCallProps) {
   const [answers, setAnswers] = useState<RichAnswer[]>(() =>
-    request.questions.map(() => ({ selectedOptions: [], customInput: "", note: "" })),
+    request.questions.map(() => ({ selectedOptions: [], customInput: "", note: "", noteVisible: false })),
   );
-  const [activeQuestionIndex, setActiveQuestionIndex] = useState(0);
   const [state, setState] = useState<"idle" | "sending">("idle");
   const [error, setError] = useState<string | null>(null);
-  const activeQuestionTitleRef = useRef<HTMLLegendElement | null>(null);
-  const hasRenderedQuestion = useRef(false);
   const sending = state === "sending";
+  const disabled = sending || connection !== "connected";
   const askId = `ask-answer-${encodeURIComponent(request.sessionId)}-${encodeURIComponent(request.requestId)}`;
   const questionCount = request.questions.length;
-  const lastQuestionIndex = Math.max(questionCount - 1, 0);
-  const boundedActiveQuestionIndex = Math.min(activeQuestionIndex, lastQuestionIndex);
-  const activeQuestion = request.questions[boundedActiveQuestionIndex];
-  const complete = request.questions.every(
-    (_question, index) =>
-      (answers[index]?.selectedOptions.length ?? 0) > 0 || Boolean(answers[index]?.customInput.trim()),
-  );
-
-  useLayoutEffect(() => {
-    if (hasRenderedQuestion.current) {
-      activeQuestionTitleRef.current?.focus();
-    }
-    hasRenderedQuestion.current = true;
-  }, [request.requestId, boundedActiveQuestionIndex]);
+  const items = request.questions.map((question, questionIndex) => ({
+    name: questionnaireItemName(questionIndex),
+    required: true,
+    choices: [
+      ...question.options.map((_option, optionIndex) => ({
+        value: questionnaireOptionValue(questionIndex, optionIndex),
+      })),
+      { value: questionnaireOtherValue(questionIndex) },
+    ],
+  }));
 
   const updateAnswer = (index: number, update: (answer: RichAnswer) => RichAnswer) => {
     setAnswers((current) => {
@@ -80,23 +120,39 @@ export function RichAskToolCall({ request, connection, onRespond, onActivity }: 
     }
   };
 
-  const submit = () =>
-    respond({
+  const submit = () => {
+    const valid = request.questions.every((question, index) => {
+      const answer = answers[index];
+      if (!answer) return false;
+      const selectedOptions = selectedOptionLabels(question, index, answer.selectedOptions);
+      return (
+        selectedOptions.length > 0 ||
+        (answer.selectedOptions.includes(questionnaireOtherValue(index)) &&
+          Boolean(answer.customInput.trim()))
+      );
+    });
+    if (!valid) return;
+    void respond({
       kind: "submit",
       results: request.questions.map((question, index) => {
-        const answer = answers[index] ?? { selectedOptions: [], customInput: "", note: "" };
+        const answer = answers[index] ?? {
+          selectedOptions: [],
+          customInput: "",
+          note: "",
+          noteVisible: false,
+        };
         return {
           id: question.id,
           question: question.question,
           options: question.options.map((option) => option.label),
           multi: question.multi ?? false,
-          selectedOptions: answer.selectedOptions,
+          selectedOptions: selectedOptionLabels(question, index, answer.selectedOptions),
           ...(answer.customInput.trim() ? { customInput: answer.customInput } : {}),
           ...(answer.note.trim() ? { note: answer.note } : {}),
         };
       }),
     });
-
+  };
   return (
     <article
       className="transcript-entry transcript-tool transcript-ask ask-rich"
@@ -115,255 +171,225 @@ export function RichAskToolCall({ request, connection, onRespond, onActivity }: 
       <strong className="ask-title" id={`${askId}-title`}>
         {questionCount === 1 ? "One question" : `${questionCount} questions`}
       </strong>
-      {questionCount > 1 ? (
-        <span className="ask-progress" aria-live="polite">
-          Question {boundedActiveQuestionIndex + 1} of {questionCount}
-        </span>
-      ) : null}
-      <div className="ask-question-list">
-        {activeQuestion ? (
-          <fieldset className="ask-question" key={activeQuestion.id}>
-            <legend
-              className="ask-question-title"
-              id={`${askId}-${boundedActiveQuestionIndex}-legend`}
-              ref={activeQuestionTitleRef}
-              tabIndex={-1}
-            >
-              {activeQuestion.header ? (
-                <span className="ask-question-header">
-                  {renderSafeHttpText(activeQuestion.header, "ask-rich-header")}
-                </span>
-              ) : null}
-              <span>{renderSafeHttpText(activeQuestion.question, "ask-rich-question")}</span>
-            </legend>
-            {activeQuestion.multi ? (
-              <div className="ask-options">
-                {activeQuestion.options.map((option, optionIndex) => {
-                  const answer = answers[boundedActiveQuestionIndex] ?? {
-                    selectedOptions: [],
-                    customInput: "",
-                    note: "",
-                  };
-                  const selected = answer.selectedOptions.includes(option.label);
-                  const toggleOption = () => {
-                    onActivity();
-                    updateAnswer(boundedActiveQuestionIndex, (current) => ({
-                      ...current,
-                      selectedOptions: selected
-                        ? current.selectedOptions.filter((label) => label !== option.label)
-                        : [...current.selectedOptions, option.label],
-                    }));
-                  };
-                  const optionKey = `${option.label}-${optionIndex}`;
-                  return askOptionHasLinks([option.label, option.description, option.preview]) ? (
-                    <div className="ask-option-row" key={optionKey}>
-                      <Button
-                        aria-label={option.label}
-                        aria-pressed={selected}
-                        className="ask-option ask-rich-option"
-                        disabled={sending || connection !== "connected"}
-                        onClick={toggleOption}
-                        type="button"
-                        variant={selected ? "default" : "outline"}
-                      >
-                        {renderAskOptionControlCopy({
-                          ...(option.description === undefined ? {} : { description: option.description }),
-                          keyPrefix: `ask-rich-multi-option-${optionIndex}`,
-                          label: option.label,
-                          ...(option.preview === undefined ? {} : { preview: option.preview }),
-                          recommended: activeQuestion.recommended === optionIndex,
-                        })}
-                      </Button>
-                      {renderAskOptionLinkContainer(
-                        [option.label, option.description, option.preview],
-                        `ask-rich-multi-option-${optionIndex}`,
-                      )}
-                    </div>
-                  ) : (
-                    <Button
-                      aria-pressed={selected}
-                      className="ask-option ask-rich-option"
-                      disabled={sending || connection !== "connected"}
-                      key={optionKey}
-                      onClick={toggleOption}
-                      type="button"
-                      variant={selected ? "default" : "outline"}
-                    >
-                      <span className="ask-option-copy">
-                        <span>
-                          {renderSafeHttpText(option.label, `ask-rich-multi-option-${optionIndex}:label`)}
-                          {activeQuestion.recommended === optionIndex ? <Badge>Recommended</Badge> : null}
-                        </span>
-                        {option.description ? (
-                          <span className="ask-option-description">
-                            {renderSafeHttpText(
-                              option.description,
-                              `ask-rich-multi-option-${optionIndex}:description`,
-                            )}
-                          </span>
-                        ) : null}
-                        {option.preview ? (
-                          <span className="ask-option-preview">
-                            {renderSafeHttpText(
-                              option.preview,
-                              `ask-rich-multi-option-${optionIndex}:preview`,
-                            )}
-                          </span>
-                        ) : null}
-                      </span>
-                    </Button>
-                  );
-                })}
-              </div>
-            ) : (
-              <RadioGroup
-                className="ask-options"
-                aria-labelledby={`${askId}-${boundedActiveQuestionIndex}-legend`}
-                name={`${askId}-${boundedActiveQuestionIndex}`}
-                value={answers[boundedActiveQuestionIndex]?.selectedOptions[0] ?? ""}
-                disabled={sending || connection !== "connected"}
-                onValueChange={(value) => {
-                  onActivity();
-                  updateAnswer(boundedActiveQuestionIndex, (current) => ({
+      <Questionnaire
+        aria-label={questionCount === 1 ? "Ask question" : "Ask questions"}
+        className="ask-questionnaire"
+        items={items}
+        noValidate={false}
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
+      >
+        {questionCount > 1 ? <QuestionnaireProgress /> : null}
+        {request.questions.map((question, questionIndex) => {
+          const answer = answers[questionIndex] ?? {
+            selectedOptions: [],
+            customInput: "",
+            note: "",
+            noteVisible: false,
+          };
+          const otherValue = questionnaireOtherValue(questionIndex);
+          const otherSelected = answer.selectedOptions.includes(otherValue);
+          const customId = `${askId}-${questionIndex}-custom`;
+          const noteId = `${askId}-${questionIndex}-note`;
+          const invalidOther = otherSelected && !answer.customInput.trim();
+
+          const toggleOption = (value: string, checked: boolean) => {
+            onActivity();
+            updateAnswer(questionIndex, (current) => {
+              if (question.multi) {
+                if (checked) {
+                  return {
                     ...current,
-                    selectedOptions: [value],
-                    customInput: "",
-                  }));
-                }}
-              >
-                {activeQuestion.options.map((option, optionIndex) => {
-                  const answer = answers[boundedActiveQuestionIndex] ?? {
-                    selectedOptions: [],
-                    customInput: "",
-                    note: "",
+                    selectedOptions: current.selectedOptions.includes(value)
+                      ? current.selectedOptions
+                      : [...current.selectedOptions, value],
                   };
-                  const selected = answer.selectedOptions.includes(option.label);
+                }
+                return {
+                  ...current,
+                  selectedOptions: current.selectedOptions.filter((option) => option !== value),
+                  ...(value === otherValue ? { customInput: "" } : {}),
+                };
+              }
+              return {
+                ...current,
+                selectedOptions: [value],
+                ...(value === otherValue ? {} : { customInput: "" }),
+              };
+            });
+          };
+
+          const updateTextarea = (
+            field: "customInput" | "note",
+            value: string,
+            element: HTMLTextAreaElement,
+          ) => {
+            resizeAskTextarea(element);
+            onActivity();
+            updateAnswer(questionIndex, (current) => ({
+              ...current,
+              [field]: value,
+              ...(field === "note" && value.trim() ? { noteVisible: true } : {}),
+            }));
+          };
+
+          return (
+            <QuestionnaireItem
+              disabled={disabled}
+              invalid={invalidOther}
+              key={questionnaireItemName(questionIndex)}
+              multiple={question.multi ?? false}
+              name={questionnaireItemName(questionIndex)}
+              required
+            >
+              <QuestionnaireTitle>
+                {question.header ? (
+                  <span className="ask-question-header">
+                    {renderSafeHttpText(question.header, `ask-rich-header-${questionIndex}`)}
+                  </span>
+                ) : null}
+                <span>{renderSafeHttpText(question.question, `ask-rich-question-${questionIndex}`)}</span>
+              </QuestionnaireTitle>
+              <QuestionnaireChoices>
+                {question.options.map((option, optionIndex) => {
                   const optionKey = `${option.label}-${optionIndex}`;
+                  const optionValue = questionnaireOptionValue(questionIndex, optionIndex);
+                  const selected = answer.selectedOptions.includes(optionValue);
                   const optionHasLinks = askOptionHasLinks([
                     option.label,
                     option.description,
                     option.preview,
                   ]);
-                  const radio = (
-                    <Radio.Root
-                      value={option.label}
-                      render={
-                        <button
-                          aria-label={option.label}
-                          type="button"
-                          data-slot="button"
-                          className={cn(
-                            "ui-button",
-                            selected ? "ui-button-default" : "ui-button-outline",
-                            "ui-button-size-default",
-                            "ask-option ask-rich-option",
-                          )}
-                        />
-                      }
+                  const choice = (
+                    <QuestionnaireChoice
+                      checked={selected}
+                      disabled={disabled}
                       key={optionKey}
+                      onChange={(event) => toggleOption(optionValue, event.target.checked)}
+                      value={optionValue}
                     >
                       {renderAskOptionControlCopy({
                         ...(option.description === undefined ? {} : { description: option.description }),
-                        keyPrefix: `ask-rich-radio-option-${optionIndex}`,
+                        keyPrefix: `ask-rich-questionnaire-option-${questionIndex}-${optionIndex}`,
                         label: option.label,
                         ...(option.preview === undefined ? {} : { preview: option.preview }),
-                        recommended: activeQuestion.recommended === optionIndex,
+                        recommended: question.recommended === optionIndex,
                       })}
-                    </Radio.Root>
+                    </QuestionnaireChoice>
                   );
                   return optionHasLinks ? (
                     <div className="ask-option-row" key={optionKey}>
-                      {radio}
+                      {choice}
                       {renderAskOptionLinkContainer(
                         [option.label, option.description, option.preview],
-                        `ask-rich-radio-option-${optionIndex}`,
+                        `ask-rich-questionnaire-option-${questionIndex}-${optionIndex}`,
                       )}
                     </div>
                   ) : (
-                    radio
+                    choice
                   );
                 })}
-              </RadioGroup>
-            )}
-            <label htmlFor={`${askId}-${boundedActiveQuestionIndex}-custom`}>Custom answer</label>
-            <Textarea
-              id={`${askId}-${boundedActiveQuestionIndex}-custom`}
-              className="ask-textarea"
-              value={answers[boundedActiveQuestionIndex]?.customInput ?? ""}
-              onChange={(event) => {
-                onActivity();
-                updateAnswer(boundedActiveQuestionIndex, (current) => ({
-                  ...current,
-                  selectedOptions: activeQuestion.multi ? current.selectedOptions : [],
-                  customInput: event.target.value,
-                }));
-              }}
-              disabled={sending || connection !== "connected"}
-              rows={2}
-            />
-            <label htmlFor={`${askId}-${boundedActiveQuestionIndex}-note`}>Note (optional)</label>
-            <Textarea
-              id={`${askId}-${boundedActiveQuestionIndex}-note`}
-              className="ask-textarea"
-              value={answers[boundedActiveQuestionIndex]?.note ?? ""}
-              onChange={(event) => {
-                onActivity();
-                updateAnswer(boundedActiveQuestionIndex, (current) => ({
-                  ...current,
-                  note: event.target.value,
-                }));
-              }}
-              disabled={sending || connection !== "connected"}
-              rows={2}
-            />
-          </fieldset>
-        ) : null}
-      </div>
-      <footer className="ask-actions ask-rich-actions">
-        <Button
-          type="button"
-          variant="ghost"
-          disabled={sending || connection !== "connected"}
-          onClick={() => void respond({ cancelled: true })}
-        >
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={sending || connection !== "connected"}
-          onClick={() => void respond({ kind: "chat" })}
-        >
-          Chat about this
-        </Button>
-        {questionCount > 1 ? (
+                <QuestionnaireChoice
+                  checked={otherSelected}
+                  disabled={disabled}
+                  onChange={(event) => toggleOption(otherValue, event.target.checked)}
+                  value={otherValue}
+                >
+                  <span className="ask-option-copy">
+                    <span>Other</span>
+                  </span>
+                </QuestionnaireChoice>
+                {otherSelected ? (
+                  <label className="ask-questionnaire-input-label" htmlFor={customId}>
+                    <span>Other answer</span>
+                    <textarea
+                      aria-invalid={invalidOther || undefined}
+                      className="ui-textarea ask-textarea"
+                      disabled={disabled}
+                      id={customId}
+                      onChange={(event) =>
+                        updateTextarea("customInput", event.target.value, event.currentTarget)
+                      }
+                      required
+                      rows={1}
+                      value={answer.customInput}
+                    />
+                  </label>
+                ) : null}
+              </QuestionnaireChoices>
+              <QuestionnaireError>
+                {invalidOther ? "Enter an answer for Other to continue." : undefined}
+              </QuestionnaireError>
+              {answer.noteVisible ? (
+                <label className="ask-questionnaire-note" htmlFor={noteId}>
+                  <span className="ask-questionnaire-note-label">Note (optional)</span>
+                  <textarea
+                    aria-label="Note (optional)"
+                    className="ui-textarea ask-textarea"
+                    disabled={disabled}
+                    id={noteId}
+                    onChange={(event) => updateTextarea("note", event.target.value, event.currentTarget)}
+                    rows={1}
+                    value={answer.note}
+                  />
+                  <Button
+                    className="ask-questionnaire-note-toggle"
+                    disabled={disabled}
+                    onClick={() => {
+                      onActivity();
+                      updateAnswer(questionIndex, (current) => ({
+                        ...current,
+                        note: "",
+                        noteVisible: false,
+                      }));
+                    }}
+                    type="button"
+                    variant="ghost"
+                  >
+                    Remove note
+                  </Button>
+                </label>
+              ) : (
+                <Button
+                  className="ask-questionnaire-note-toggle"
+                  disabled={disabled}
+                  onClick={() => {
+                    onActivity();
+                    updateAnswer(questionIndex, (current) => ({ ...current, noteVisible: true }));
+                  }}
+                  type="button"
+                  variant="ghost"
+                >
+                  Add note
+                </Button>
+              )}
+            </QuestionnaireItem>
+          );
+        })}
+        <QuestionnaireActions>
           <Button
+            disabled={sending || connection !== "connected"}
+            onClick={() => void respond({ cancelled: true })}
+            type="button"
+            variant="ghost"
+          >
+            Cancel
+          </Button>
+          <Button
+            disabled={sending || connection !== "connected"}
+            onClick={() => void respond({ kind: "chat" })}
             type="button"
             variant="outline"
-            disabled={boundedActiveQuestionIndex === 0 || sending || connection !== "connected"}
-            onClick={() => setActiveQuestionIndex((current) => Math.max(current - 1, 0))}
           >
-            Previous
+            Chat about this
           </Button>
-        ) : null}
-        {boundedActiveQuestionIndex < lastQuestionIndex ? (
-          <Button
-            type="button"
-            disabled={sending || connection !== "connected"}
-            onClick={() => setActiveQuestionIndex((current) => Math.min(current + 1, lastQuestionIndex))}
-          >
-            Next
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            disabled={sending || connection !== "connected" || !complete}
-            onClick={() => void submit()}
-          >
-            Submit answers
-          </Button>
-        )}
-      </footer>
+          <QuestionnairePrevious disabled={disabled} />
+          <QuestionnaireNext disabled={disabled} />
+          <QuestionnaireSubmit disabled={disabled}>Submit answers</QuestionnaireSubmit>
+        </QuestionnaireActions>
+      </Questionnaire>
       {error ? (
         <p className="form-error" role="alert">
           {error}
