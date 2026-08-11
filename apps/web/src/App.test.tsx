@@ -3,6 +3,42 @@ import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App.js";
 
+const appMocks = vi.hoisted(() => {
+  const sessionClient = {
+    sessions: [],
+    askRequests: [],
+    savedWorkingDirectories: [],
+    sessionsReady: true,
+    historyLoading: false,
+    hasMoreHistory: false,
+    connection: "connected",
+    error: null,
+    launch: vi.fn(),
+    saveWorkingDirectory: vi.fn(),
+    removeWorkingDirectory: vi.fn(),
+    command: vi.fn(),
+    abort: vi.fn(),
+    kill: vi.fn(),
+    setModel: vi.fn(),
+    setEffort: vi.fn(),
+    respondToAsk: vi.fn(),
+    askActivity: vi.fn(),
+    searchHistory: vi.fn(),
+    loadMoreHistory: vi.fn(),
+    loadTranscript: vi.fn(),
+    loadCost: vi.fn(),
+    loadSessionFileChanges: vi.fn(),
+    loadSessionBranchTopology: vi.fn(),
+    switchBranch: vi.fn(),
+    subscribeNotificationEvents: vi.fn(),
+    pushVapidPublicKey: vi.fn(),
+    registerPushSubscription: vi.fn(),
+    updatePushSubscription: vi.fn(),
+    removePushSubscription: vi.fn(),
+  };
+  return { sessionClient, useSessionNotifications: vi.fn() };
+});
+
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof ReactModule>();
   return {
@@ -16,29 +52,12 @@ vi.mock("react", async (importOriginal) => {
 });
 
 vi.mock("@omp-remote/session-client", () => ({
-  useSessionClient: () => ({
-    sessions: [],
-    askRequests: [],
-    sessionsReady: true,
-    hasMoreHistory: false,
-    connection: "connected",
-    error: null,
-    launch: vi.fn(),
-    command: vi.fn(),
-    abort: vi.fn(),
-    kill: vi.fn(),
-    searchHistory: vi.fn(),
-    loadMoreHistory: vi.fn(),
-    loadTranscript: vi.fn(),
-    loadSessionFileChanges: vi.fn(),
-    loadSessionBranchTopology: vi.fn(),
-    switchBranch: vi.fn(),
-  }),
+  useSessionClient: () => appMocks.sessionClient,
 }));
 
 vi.mock("@omp-remote/sessions/components", () => ({ Dashboard: vi.fn() }));
 vi.mock("./session-notifications.js", () => ({
-  useSessionNotifications: () => ({
+  useSessionNotifications: appMocks.useSessionNotifications.mockReturnValue({
     state: "enabled",
     preferences: { inputRequired: true, sessionIdle: true },
     error: null,
@@ -123,5 +142,16 @@ describe("App session URL state", () => {
     const [dashboard] = (App() as ReactElement<AppContentProps>).props.children;
     expect(dashboard.props.onLoadSessionBranchTopology).toBeTypeOf("function");
     expect(dashboard.props.onSwitchBranch).toBeTypeOf("function");
+  });
+
+  it("passes the session client transport and notification listener contract to the Push hook", () => {
+    vi.stubGlobal("window", {
+      location: new URL("https://app.test/"),
+      history: { replaceState: vi.fn() },
+    });
+
+    App();
+
+    expect(appMocks.useSessionNotifications).toHaveBeenLastCalledWith(appMocks.sessionClient);
   });
 });

@@ -5,6 +5,10 @@ import {
   type CommandResult,
   compareSessionsByCreation,
   type Effort,
+  type NotificationEvent,
+  type PushSubscriptionRegistration,
+  type PushSubscriptionRemoval,
+  type PushSubscriptionUpdate,
   ServerFrameSchema,
   type Session,
   SessionBranchTopologySchema,
@@ -22,15 +26,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 const RECONNECT_DELAY_MS = 1_500;
 const CATALOG_PAGE_SIZE = 100;
 const SWITCH_BRANCH_TIMEOUT_MS = 30_000;
+const PUSH_COMMAND_TIMEOUT_MS = 10_000;
+const MAX_SERVER_ERROR_LENGTH = 500;
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
 type SuccessfulCommandValue = Extract<CommandResult["outcome"], { status: "ok" }>["value"];
 type PendingCommand = {
   commandType: BrowserCommand["type"];
-  resolve: (value: string | undefined) => void;
+  resolve: (value: SuccessfulCommandValue) => void;
   reject: (error: Error) => void;
   timeoutId?: ReturnType<typeof globalThis.setTimeout>;
 };
+export type NotificationEventListener = (event: NotificationEvent) => void;
 
 export interface SessionClient {
   sessions: Session[];
@@ -41,6 +48,7 @@ export interface SessionClient {
   hasMoreHistory: boolean;
   connection: ConnectionState;
   error: string | null;
+  subscribeNotificationEvents(listener: NotificationEventListener): () => void;
   launch(cwd: string, resume: string | null): Promise<string>;
   saveWorkingDirectory(cwd: string): Promise<void>;
   removeWorkingDirectory(cwd: string): Promise<void>;
@@ -58,6 +66,10 @@ export interface SessionClient {
   switchBranch(sessionId: string, branch: string): Promise<void>;
   loadCost(sessionId: string): Promise<void>;
   loadTranscript(sessionId: string): Promise<void>;
+  pushVapidPublicKey(): Promise<string>;
+  registerPushSubscription(registration: PushSubscriptionRegistration): Promise<void>;
+  updatePushSubscription(update: PushSubscriptionUpdate): Promise<void>;
+  removePushSubscription(removal: PushSubscriptionRemoval): Promise<void>;
 }
 
 function clearPendingCommandTimeout(pending: PendingCommand): void {
@@ -69,11 +81,11 @@ export function sendBrowserCommand(
   pendingCommands: Map<string, PendingCommand>,
   frame: Exclude<BrowserCommand, { type: "ask_activity" }>,
   timeoutMs?: number,
-): Promise<string | undefined> {
+): Promise<SuccessfulCommandValue> {
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     return Promise.reject(new Error("The host is not connected"));
   }
-  return new Promise<string | undefined>((resolve, reject) => {
+  return new Promise<SuccessfulCommandValue>((resolve, reject) => {
     const pending: PendingCommand = { commandType: frame.type, resolve, reject };
     pendingCommands.set(frame.requestId, pending);
     if (timeoutMs !== undefined) {
@@ -93,9 +105,54 @@ export function sendBrowserCommand(
   });
 }
 
+export function boundedServerError(message: string | null | undefined, fallback: string): string {
+  const normalized = message?.trim();
+  if (!normalized) return fallback;
+  return normalized.length <= MAX_SERVER_ERROR_LENGTH
+    ? normalized
+    : `${normalized.slice(0, MAX_SERVER_ERROR_LENGTH - 1)}…`;
+}
+export function resolvePendingCommand(
+  pendingCommands: Map<string, PendingCommand>,
+  result: CommandResult,
+): boolean {
+  const pending = pendingCommands.get(result.requestId);
+  if (!pending) return false;
+  clearPendingCommandTimeout(pending);
+  pendingCommands.delete(result.requestId);
+  if (result.outcome.status === "error") {
+    pending.reject(new Error(boundedServerError(result.outcome.error, "The host rejected the command")));
+    return true;
+  }
+  try {
+    pending.resolve(commandResultValue(pending.commandType, result.outcome.value));
+  } catch (error) {
+    pending.reject(error instanceof Error ? error : new Error("The host returned an invalid command result"));
+  }
+  return true;
+}
+
+export function rejectPendingCommands(
+  pendingCommands: Map<string, PendingCommand>,
+  message = "Dashboard disconnected",
+): void {
+  for (const pending of pendingCommands.values()) {
+    clearPendingCommandTimeout(pending);
+    pending.reject(new Error(message));
+  }
+  pendingCommands.clear();
+}
+export function dispatchNotificationEvent(
+  listeners: ReadonlySet<NotificationEventListener>,
+  event: NotificationEvent,
+): void {
+  for (const listener of listeners) listener(event);
+}
+
 export function useSessionClient(): SessionClient {
   const socketRef = useRef<WebSocket | null>(null);
   const pendingRef = useRef(new Map<string, PendingCommand>());
+  const notificationListenersRef = useRef(new Set<NotificationEventListener>());
   const catalogRequestRef = useRef(0);
   const costRequestRef = useRef(0);
   const catalogAbortRef = useRef<AbortController | null>(null);
@@ -162,27 +219,16 @@ export function useSessionClient(): SessionClient {
         } else if (frame.type === "saved_working_directories") {
           setSavedWorkingDirectories(frame.savedWorkingDirectories);
         } else if (frame.type === "command_result") {
-          const pending = pendingRef.current.get(frame.requestId);
-          if (!pending) return;
-          clearPendingCommandTimeout(pending);
-          pendingRef.current.delete(frame.requestId);
-          if (frame.outcome.status === "error") {
-            pending.reject(new Error(frame.outcome.error ?? "The host rejected the command"));
-          } else {
-            try {
-              pending.resolve(commandResultValue(pending.commandType, frame.outcome.value));
-            } catch (error) {
-              pending.reject(
-                error instanceof Error ? error : new Error("The host returned an invalid command result"),
-              );
-            }
-          }
+          resolvePendingCommand(pendingRef.current, frame);
+        } else if (frame.type === "notification_event") {
+          dispatchNotificationEvent(notificationListenersRef.current, frame);
         } else if (frame.type === "error") {
-          setConnectionError(frame.message);
+          setConnectionError(boundedServerError(frame.message, "The host reported an error"));
         }
       });
       socket.addEventListener("close", () => {
         if (socketRef.current === socket) socketRef.current = null;
+        rejectPendingCommands(pendingRef.current);
         if (disposed) return;
         setConnection("disconnected");
         setAskRequests([]);
@@ -196,11 +242,7 @@ export function useSessionClient(): SessionClient {
       disposed = true;
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
       socketRef.current?.close();
-      for (const pending of pendingRef.current.values()) {
-        clearPendingCommandTimeout(pending);
-        pending.reject(new Error("Dashboard disconnected"));
-      }
-      pendingRef.current.clear();
+      rejectPendingCommands(pendingRef.current);
     };
   }, []);
 
@@ -364,9 +406,9 @@ export function useSessionClient(): SessionClient {
   );
   const launch = useCallback(
     (cwd: string, resume: string | null) =>
-      send({ type: "launch", requestId: crypto.randomUUID(), cwd, resume }).then((sessionId) => {
-        if (!sessionId) throw new Error("The host did not identify the launched session");
-        return sessionId;
+      send({ type: "launch", requestId: crypto.randomUUID(), cwd, resume }).then((value) => {
+        if (value.type !== "launch") throw new Error("The host did not identify the launched session");
+        return value.sessionId;
       }),
     [send],
   );
@@ -439,6 +481,58 @@ export function useSessionClient(): SessionClient {
     }
     return Promise.resolve();
   }, []);
+  const subscribeNotificationEvents = useCallback((listener: NotificationEventListener) => {
+    notificationListenersRef.current.add(listener);
+    return () => notificationListenersRef.current.delete(listener);
+  }, []);
+  const pushVapidPublicKey = useCallback(
+    () =>
+      send({ type: "push_vapid_public_key", requestId: crypto.randomUUID() }, PUSH_COMMAND_TIMEOUT_MS).then(
+        (value) => {
+          if (value.type !== "push_vapid_public_key") {
+            throw new Error("The host did not return its push public key");
+          }
+          return value.publicKey;
+        },
+      ),
+    [send],
+  );
+  const registerPushSubscription = useCallback(
+    (registration: PushSubscriptionRegistration) =>
+      sendVoid(
+        {
+          type: "push_subscription_register",
+          requestId: crypto.randomUUID(),
+          ...registration,
+        },
+        PUSH_COMMAND_TIMEOUT_MS,
+      ),
+    [sendVoid],
+  );
+  const updatePushSubscription = useCallback(
+    (update: PushSubscriptionUpdate) =>
+      sendVoid(
+        {
+          type: "push_subscription_update",
+          requestId: crypto.randomUUID(),
+          ...update,
+        },
+        PUSH_COMMAND_TIMEOUT_MS,
+      ),
+    [sendVoid],
+  );
+  const removePushSubscription = useCallback(
+    (removal: PushSubscriptionRemoval) =>
+      sendVoid(
+        {
+          type: "push_subscription_remove",
+          requestId: crypto.randomUUID(),
+          ...removal,
+        },
+        PUSH_COMMAND_TIMEOUT_MS,
+      ),
+    [sendVoid],
+  );
 
   const sessions = useMemo(() => {
     const merged = mergeSessions(
@@ -459,6 +553,7 @@ export function useSessionClient(): SessionClient {
     hasMoreHistory: historyNextOffset !== null,
     connection,
     error: historyError ?? connectionError,
+    subscribeNotificationEvents,
     launch,
     saveWorkingDirectory,
     removeWorkingDirectory,
@@ -476,6 +571,10 @@ export function useSessionClient(): SessionClient {
     loadSessionFileChanges: loadSessionFileChangesCallback,
     loadSessionBranchTopology: loadSessionBranchTopologyCallback,
     switchBranch,
+    pushVapidPublicKey,
+    registerPushSubscription,
+    updatePushSubscription,
+    removePushSubscription,
   };
 }
 export async function loadSessionCost(
@@ -550,13 +649,19 @@ export async function loadSessionFileChanges(
 export function commandResultValue(
   commandType: BrowserCommand["type"],
   value: SuccessfulCommandValue,
-): string | undefined {
+): SuccessfulCommandValue {
   if (commandType === "launch") {
     if (value.type !== "launch") throw new Error("The host did not identify the launched session");
-    return value.sessionId;
+    return value;
   }
-  if (value.type !== "void") throw new Error("The host returned a launch result for a different command");
-  return undefined;
+  if (commandType === "push_vapid_public_key") {
+    if (value.type !== "push_vapid_public_key") {
+      throw new Error("The host did not return its push public key");
+    }
+    return value;
+  }
+  if (value.type !== "void") throw new Error("The host returned a result for a different command");
+  return value;
 }
 
 export function sessionSourcesReady(liveSnapshotReady: boolean, baselineCatalogReady: boolean): boolean {

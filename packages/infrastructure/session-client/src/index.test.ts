@@ -1,8 +1,10 @@
-import type { AskRequest, Session } from "@omp-remote/protocol";
+import type { AskRequest, NotificationEvent, Session } from "@omp-remote/protocol";
 import { describe, expect, it, vi } from "vitest";
 import {
+  boundedServerError,
   createCatalogLoadCoordinator,
   commandResultValue,
+  dispatchNotificationEvent,
   loadSessionBranchTopology,
   loadSessionCost,
   loadSessionFileChanges,
@@ -11,6 +13,8 @@ import {
   removeAskRequest,
   sessionSourcesReady,
   sendBrowserCommand,
+  resolvePendingCommand,
+  rejectPendingCommands,
   upsertAskRequest,
   upsertTranscriptMessage,
 } from "./index.js";
@@ -44,15 +48,20 @@ const SESSION: Session = {
 };
 
 describe("commandResultValue", () => {
-  it("returns the created session ID only for a launch command", () => {
-    expect(commandResultValue("launch", { type: "launch", sessionId: "created-session" })).toBe(
-      "created-session",
-    );
-    expect(commandResultValue("session_command", { type: "void" })).toBeUndefined();
-  });
-
-  it("accepts the void result used by switch_branch", () => {
-    expect(commandResultValue("switch_branch", { type: "void" })).toBeUndefined();
+  it("returns only the response shape correlated to the request command", () => {
+    expect(commandResultValue("launch", { type: "launch", sessionId: "created-session" })).toEqual({
+      type: "launch",
+      sessionId: "created-session",
+    });
+    expect(
+      commandResultValue("push_vapid_public_key", {
+        type: "push_vapid_public_key",
+        publicKey: "BOrK6yGWP_i0T7XjsNwdpM5g2-OC-F2sJBuCMH9SF2kb8qRfdHVZb-tPPOXQqvI8LNkoHqO5sP8rv7glORQUsLs",
+      }),
+    ).toMatchObject({ type: "push_vapid_public_key" });
+    expect(commandResultValue("push_subscription_register", { type: "void" })).toEqual({
+      type: "void",
+    });
   });
 
   it("rejects a result belonging to a different command kind", () => {
@@ -60,11 +69,14 @@ describe("commandResultValue", () => {
       "The host did not identify the launched session",
     );
     expect(() =>
-      commandResultValue("save_working_directory", {
+      commandResultValue("push_subscription_update", {
         type: "launch",
         sessionId: "wrong-session",
       }),
-    ).toThrow("The host returned a launch result for a different command");
+    ).toThrow("The host returned a result for a different command");
+    expect(() => commandResultValue("push_vapid_public_key", { type: "void" })).toThrow(
+      "The host did not return its push public key",
+    );
   });
 });
 
@@ -97,6 +109,147 @@ describe("sendBrowserCommand", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("push browser commands", () => {
+  it("sends and resolves each correlated push transport command", async () => {
+    const send = vi.fn();
+    const socket = {
+      readyState: WebSocket.OPEN,
+      send,
+    } as unknown as WebSocket;
+    const pendingCommands = new Map();
+    const subscription = {
+      endpoint: "https://push.example/subscription",
+      keys: {
+        p256dh: "BOrK6yGWP_i0T7XjsNwdpM5g2-OC-F2sJBuCMH9SF2kb8qRfdHVZb-tPPOXQqvI8LNkoHqO5sP8rv7glORQUsLs",
+        auth: "AQIDBAUGBwgJCgsMDQ4PEA",
+      },
+    };
+    const frames = [
+      { type: "push_vapid_public_key", requestId: "push-key" },
+      {
+        type: "push_subscription_register",
+        requestId: "push-register",
+        deviceId: "device-1",
+        subscription,
+        events: { inputRequired: true, sessionIdle: false },
+      },
+      {
+        type: "push_subscription_update",
+        requestId: "push-update",
+        deviceId: "device-1",
+        subscription,
+        events: { inputRequired: false, sessionIdle: true },
+      },
+      { type: "push_subscription_remove", requestId: "push-remove", deviceId: "device-1" },
+    ] as const;
+    const results = frames.map((frame) => sendBrowserCommand(socket, pendingCommands, frame));
+
+    resolvePendingCommand(pendingCommands, {
+      type: "command_result",
+      requestId: "push-key",
+      outcome: {
+        status: "ok",
+        value: { type: "push_vapid_public_key", publicKey: subscription.keys.p256dh },
+      },
+    });
+    for (const requestId of ["push-register", "push-update", "push-remove"]) {
+      resolvePendingCommand(pendingCommands, {
+        type: "command_result",
+        requestId,
+        outcome: { status: "ok", value: { type: "void" } },
+      });
+    }
+
+    expect(send).toHaveBeenCalledTimes(4);
+    expect(send.mock.calls.map(([frame]) => JSON.parse(String(frame)))).toEqual(frames);
+    await expect(Promise.all(results)).resolves.toEqual([
+      { type: "push_vapid_public_key", publicKey: subscription.keys.p256dh },
+      { type: "void" },
+      { type: "void" },
+      { type: "void" },
+    ]);
+    expect(pendingCommands.size).toBe(0);
+  });
+  it("rejects every correlated promise immediately when the socket closes", async () => {
+    const socket = {
+      readyState: WebSocket.OPEN,
+      send: vi.fn(),
+    } as unknown as WebSocket;
+    const pendingCommands = new Map();
+    const first = sendBrowserCommand(socket, pendingCommands, {
+      type: "push_vapid_public_key",
+      requestId: "push-key",
+    });
+    const second = sendBrowserCommand(socket, pendingCommands, {
+      type: "push_subscription_remove",
+      requestId: "push-remove",
+      deviceId: "device-1",
+    });
+
+    rejectPendingCommands(pendingCommands);
+
+    await expect(first).rejects.toThrow("Dashboard disconnected");
+    await expect(second).rejects.toThrow("Dashboard disconnected");
+    expect(pendingCommands.size).toBe(0);
+  });
+
+  it("rejects a correlated push command with the bounded daemon error", async () => {
+    const socket = {
+      readyState: WebSocket.OPEN,
+      send: vi.fn(),
+    } as unknown as WebSocket;
+    const pendingCommands = new Map();
+    const request = sendBrowserCommand(socket, pendingCommands, {
+      type: "push_subscription_remove",
+      requestId: "push-remove-error",
+      deviceId: "device-1",
+    });
+    const daemonError = `private ${"x".repeat(1_000)}`;
+
+    expect(
+      resolvePendingCommand(pendingCommands, {
+        type: "command_result",
+        requestId: "push-remove-error",
+        outcome: { status: "error", error: daemonError },
+      }),
+    ).toBe(true);
+    const failure = await request.catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toHaveLength(500);
+    expect((failure as Error).message.endsWith("…")).toBe(true);
+  });
+});
+
+describe("server notification frames", () => {
+  const notification = {
+    type: "notification_event",
+    event: "inputRequired",
+    title: "Input required",
+    body: "Build is waiting for input.",
+    tag: "session-session-1-ask-1",
+    url: "/?session=session-1",
+  } satisfies NotificationEvent;
+
+  it("keeps listeners usable across transport reconnects until explicitly removed", () => {
+    const listener = vi.fn();
+    const listeners = new Set([listener]);
+    dispatchNotificationEvent(listeners, notification);
+    dispatchNotificationEvent(listeners, notification);
+    listeners.delete(listener);
+    dispatchNotificationEvent(listeners, notification);
+
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(listener).toHaveBeenLastCalledWith(notification);
+  });
+
+  it("bounds daemon errors before exposing them to callers", () => {
+    expect(boundedServerError(null, "The host rejected the command")).toBe("The host rejected the command");
+    const message = boundedServerError(`private ${"x".repeat(1_000)}`, "fallback");
+    expect(message).toHaveLength(500);
+    expect(message.endsWith("…")).toBe(true);
   });
 });
 

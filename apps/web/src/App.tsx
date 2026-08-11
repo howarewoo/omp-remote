@@ -16,7 +16,7 @@ function withRequestedSession(url: string | URL, sessionId: string): URL {
 
 export default function App() {
   const client = useSessionClient();
-  const notifications = useSessionNotifications(client.sessions, client.askRequests);
+  const notifications = useSessionNotifications(client);
   const [selectedSessionId, setSelectedSessionId] = useState(() => requestedSessionId(window.location.href));
   const onSelectedSessionChange = useCallback((sessionId: string) => {
     setSelectedSessionId(sessionId);

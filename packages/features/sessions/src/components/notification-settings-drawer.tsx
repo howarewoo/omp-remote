@@ -32,23 +32,29 @@ const EVENTS: readonly {
   {
     key: "inputRequired",
     label: "Input required",
-    description: "A main session is waiting for user input, including rich or legacy Ask requests.",
+    description: "The host reports that a main session is waiting for input, including an Ask request.",
   },
   {
     key: "sessionIdle",
     label: "Session idle",
-    description: "A running main session became idle.",
+    description: "The host reports that a running main session finished and became idle.",
   },
 ];
 
 function stateDescription(state: NotificationSettingsState, error: string | null): string {
   if (state === "blocked") {
-    return "Notifications are blocked. Allow them in your browser settings to turn these alerts on.";
+    return "Push notifications are blocked. Allow them in this browser or device settings, then reopen this panel.";
   }
-  if (state === "unsupported") return "This browser does not support notifications.";
-  if (state === "error") return error ?? "Notifications could not be enabled. Try again.";
-  if (state === "prompt") return "Choose an alert to request notification permission on this device.";
-  return "Choose which session events can alert you on this device.";
+  if (state === "unsupported") {
+    return "Push notifications require HTTPS and a supported installed PWA. On iPhone or iPad, add OMP Remote to the Home Screen and open it there.";
+  }
+  if (state === "error") {
+    return error ?? "The last notification change was not confirmed by the host. Try again.";
+  }
+  if (state === "prompt") {
+    return "Turn on an alert to enable Web Push on this device. Permission is requested only after you choose.";
+  }
+  return "Choose which host-reported events this device receives. Preferences stay independent.";
 }
 
 export function NotificationSettingsDrawer({
@@ -68,7 +74,9 @@ export function NotificationSettingsDrawer({
         <DrawerHeader className="notification-settings-header">
           <div>
             <DrawerTitle>Notification settings</DrawerTitle>
-            <DrawerDescription>{stateDescription(state, error)}</DrawerDescription>
+            <DrawerDescription aria-live="polite" role={state === "error" ? "alert" : undefined}>
+              {stateDescription(state, error)}
+            </DrawerDescription>
           </div>
           <DrawerClose
             render={
@@ -84,10 +92,11 @@ export function NotificationSettingsDrawer({
               <div className="notification-settings-row" key={event.key}>
                 <div>
                   <strong>{event.label}</strong>
-                  <p>{event.description}</p>
+                  <p id={`notification-event-${event.key}-description`}>{event.description}</p>
                 </div>
                 <Switch
                   aria-label={`${event.label} notifications`}
+                  aria-describedby={`notification-event-${event.key}-description`}
                   checked={preferences[event.key]}
                   disabled={disabled}
                   onCheckedChange={(checked) => void onToggleEvent(event.key, checked)}
