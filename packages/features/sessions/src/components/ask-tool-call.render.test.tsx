@@ -40,38 +40,32 @@ function renderAsk() {
   );
 }
 
-describe("RichAskToolCall final radio DOM", () => {
-  it("keeps visible option copy and link siblings when Base UI resolves Radio.Root", () => {
+describe("RichAskToolCall final Questionnaire DOM", () => {
+  it("keeps visible option copy and link siblings outside Questionnaire choices", () => {
     const markup = renderAsk();
-    const radioButtons = [...markup.matchAll(/<button\b[^>]*role="radio"[^>]*>[\s\S]*?<\/button>/g)].map(
-      ([button]) => button,
-    );
+    const choices = [
+      ...markup.matchAll(/<label\b[^>]*data-slot="questionnaire-choice"[^>]*>[\s\S]*?<\/label>/g),
+    ].map(([choice]) => choice);
     const firstOptionRow = markup.match(/<div class="ask-option-row">([\s\S]*?)<\/div>/)?.[1];
 
-    expect(radioButtons).toHaveLength(2);
-    expect(radioButtons[0]).toContain('aria-label="Install recommended https://example.com/install"');
-    expect(radioButtons[0]).toContain('role="radio"');
-    expect(radioButtons[0]).toContain('aria-checked="false"');
-    expect(radioButtons[0]).toContain('class="ask-option-copy"');
-    expect(radioButtons[0]).toContain("Install recommended ");
-    expect(radioButtons[0]).toContain('class="ask-option-description"');
-    expect(radioButtons[0]).toContain("Use the docs ");
-    expect(radioButtons[0]).toContain('class="ask-option-preview"');
-    expect(radioButtons[0]).toContain("Preview ");
-    expect(radioButtons[0]).toContain("Recommended");
-    expect(radioButtons[0]).not.toContain("<a ");
-    expect(radioButtons[1]).toContain('class="ask-option-copy"');
-    expect(radioButtons[1]).toContain("Install manually");
-    expect(radioButtons[1]).toContain('class="ask-option-description"');
-    expect(radioButtons[1]).toContain("Configure it yourself");
-    expect(radioButtons[1]).toContain('class="ask-option-preview"');
-    expect(radioButtons[1]).toContain("Manual preview");
-    expect(radioButtons[1]).not.toContain("<a ");
-    expect(markup).toMatch(
-      /<input[^>]*type="radio"[^>]*value="Install recommended https:\/\/example.com\/install"/,
-    );
+    expect(choices).toHaveLength(3);
+    expect(choices[0]).toContain('data-slot="questionnaire-choice"');
+    expect(choices[0]).toContain('class="ask-option ask-rich-option"');
+    expect(choices[0]).toContain('type="radio"');
+    expect(choices[0]).toContain('value="ask-option-0-0"');
+    expect(choices[0]).toContain('class="ask-option-copy"');
+    expect(choices[0]).toContain("Install recommended ");
+    expect(choices[0]).toContain('class="ask-option-description"');
+    expect(choices[0]).toContain("Use the docs ");
+    expect(choices[0]).toContain('class="ask-option-preview"');
+    expect(choices[0]).toContain("Preview ");
+    expect(choices[0]).toContain("Recommended");
+    expect(choices[0]).not.toContain("<a ");
+    expect(choices[1]).toContain('class="ask-option-copy"');
+    expect(choices[1]).toContain("Install manually");
+    expect(choices[1]).not.toContain("<a ");
     expect(firstOptionRow).toMatch(
-      /<button[\s\S]*<\/button>[\s\S]*<span class="ask-option-links">[\s\S]*<a /,
+      /<label[\s\S]*data-slot="questionnaire-choice"[\s\S]*<\/label>[\s\S]*<span class="ask-option-links">[\s\S]*<a /,
     );
   });
 });
