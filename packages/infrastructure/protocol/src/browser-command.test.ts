@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BrowserCommandSchema,
+  NotificationEventSchema,
   PushEventPreferencesSchema,
   PushSubscriptionSchema,
   SessionBranchTopologySchema,
@@ -218,6 +219,40 @@ describe("push protocol", () => {
     expect(() =>
       PushSubscriptionSchema.parse({ ...subscription, keys: { ...subscription.keys, auth: "bad" } }),
     ).toThrow();
+  });
+});
+
+describe("notification event protocol", () => {
+  const event = {
+    type: "notification_event" as const,
+    event: "inputRequired" as const,
+    title: "Input required" as const,
+    body: "Build is waiting for input.",
+    tag: "session-session-1-ask-ask-1",
+    url: "/?session=session-1",
+  };
+
+  it("accepts the strict same-origin envelope", () => {
+    expect(NotificationEventSchema.parse(event)).toEqual(event);
+  });
+
+  it.each(["https://remote.example/?session=session-1", "//remote.example/?session=session-1", "/\\remote"])(
+    "rejects cross-origin notification paths: %s",
+    (url) => {
+      expect(() => NotificationEventSchema.parse({ ...event, url })).toThrow();
+    },
+  );
+
+  it("rejects unknown fields and mismatched event text", () => {
+    expect(() => NotificationEventSchema.parse({ ...event, extra: true })).toThrow();
+    expect(() =>
+      NotificationEventSchema.parse({ ...event, event: "sessionIdle", title: "Input required" }),
+    ).toThrow();
+  });
+
+  it("rejects unbounded notification text and tags", () => {
+    expect(() => NotificationEventSchema.parse({ ...event, body: "x".repeat(1_001) })).toThrow();
+    expect(() => NotificationEventSchema.parse({ ...event, tag: "x".repeat(257) })).toThrow();
   });
 });
 

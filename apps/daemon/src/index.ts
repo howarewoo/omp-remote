@@ -9,6 +9,7 @@ import { type RpcSession } from "@omp-remote/omp-rpc";
 import {
   type AskRequest,
   type AskResponse,
+  type NotificationEvent,
   type Session,
   type TranscriptMessage,
   type ServerFrame,
@@ -45,7 +46,12 @@ import {
   expireExtensionAsk,
 } from "./rpc-ask.js";
 import { SavedWorkingDirectoryStore } from "./saved-working-directories.js";
-import { PushSubscriptionStore } from "./push-subscriptions.js";
+import {
+  createBestEffortPushSender,
+  PushDeliveryError,
+  PushSubscriptionStore,
+} from "./push-subscriptions.js";
+import { NotificationEventTracker } from "./notification-events.js";
 import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
 import { collectSessionFileChanges } from "./session-file-changes.js";
 
@@ -82,6 +88,8 @@ const SessionParamsSchema = z.object({ sessionId: z.string().min(1) });
 
 const environment = EnvironmentSchema.parse(process.env);
 const pushSubscriptions = await PushSubscriptionStore.load();
+const pushSender = createBestEffortPushSender(pushSubscriptions);
+const notificationTracker = new NotificationEventTracker();
 const savedWorkingDirectories = await SavedWorkingDirectoryStore.load();
 const sessionCatalog = new SessionCatalog(
   await resolveSessionRoots(homedir(), process.env.PI_CODING_AGENT_DIR),
@@ -250,7 +258,6 @@ registerBrowserWebSocketRoute(app, {
   refreshRpcState,
   clearPendingAsk,
   expirePendingAsk,
-  sendExtensionAskUnavailable,
   originAllowed,
   logger,
 });
@@ -260,7 +267,6 @@ registerExtensionWebSocketRoute(app, {
   pendingAskBySession,
   sessionCatalog,
   registry,
-  browserSockets,
   registerExtensionSession,
   ignoreCatalogReconciliationFailure,
   sanitizeExtensionSession,
@@ -289,7 +295,12 @@ if (existsSync(webDist)) {
   });
 }
 
-registry.subscribe((event) => broadcast(event));
+registry.subscribe((event) => {
+  broadcast(event);
+  for (const notification of notificationTracker.observeSessions(registry.list())) {
+    dispatchNotification(notification);
+  }
+});
 await app.listen({ host: environment.OMP_REMOTE_HOST, port: environment.OMP_REMOTE_PORT });
 logger.info("OMP Remote daemon listening", {
   host: environment.OMP_REMOTE_HOST,
@@ -323,11 +334,9 @@ function syncCatalogSession(catalogSession: Session): void {
 function sendToBrowser(socket: WebSocket, frame: ServerFrame): void {
   reportBrowserBackpressure(sendBrowserFrame(socket, frame));
 }
-
 function broadcast(frame: ServerFrame): void {
   reportBrowserBackpressure(broadcastBrowserFrame(browserSockets, frame));
 }
-
 function setPendingAsk(request: AskRequest, source: "rpc" | "extension"): void {
   const previous = pendingAskBySession.get(request.sessionId);
   if (previous?.source === "extension") {
@@ -339,6 +348,9 @@ function setPendingAsk(request: AskRequest, source: "rpc" | "extension"): void {
   );
   pendingAskBySession.set(request.sessionId, { request, source, timeout });
   broadcast({ type: "ask_request", request });
+  for (const notification of notificationTracker.observeAsk(request)) {
+    dispatchNotification(notification);
+  }
 }
 
 function clearPendingAsk(sessionId: string, requestId?: string): void {
@@ -346,6 +358,7 @@ function clearPendingAsk(sessionId: string, requestId?: string): void {
   if (!pending || (requestId !== undefined && pending.request.requestId !== requestId)) return;
   clearAskInactivityTimeout(pending.timeout);
   pendingAskBySession.delete(sessionId);
+  notificationTracker.clearAsk(sessionId, pending.request.requestId);
   broadcast({
     type: "ask_cancelled",
     sessionId,
@@ -381,6 +394,17 @@ function sendExtensionAskUnavailable(sessionId: string, requestId: string): void
   if (socket?.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ command: "ask_unavailable", requestId }));
   }
+}
+
+function dispatchNotification(notification: NotificationEvent): void {
+  broadcast(notification);
+  const payload = JSON.stringify(notification);
+  void pushSender.send(notification.event, payload).catch((error: unknown) => {
+    logger.warn("Session notification delivery failed", {
+      event: notification.event,
+      failures: error instanceof PushDeliveryError ? error.failures.length : 1,
+    });
+  });
 }
 
 function reportBrowserBackpressure(result: BrowserFrameDeliveryResult): void {
