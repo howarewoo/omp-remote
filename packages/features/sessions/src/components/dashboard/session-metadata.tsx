@@ -14,7 +14,7 @@ interface TodoMetadata {
 
 export interface SessionMetadataProps {
   session: Session;
-  canSwitchBranch: boolean;
+  canViewBranches: boolean;
   modelLabel: string;
   configurationPending: string | null;
   fileChangesMetadata: string;
@@ -28,7 +28,7 @@ export interface SessionMetadataProps {
 
 export function SessionMetadata({
   session,
-  canSwitchBranch,
+  canViewBranches,
   modelLabel,
   configurationPending,
   fileChangesMetadata,
@@ -45,12 +45,12 @@ export function SessionMetadata({
         <div className="session-branch-metadata">
           <dt>Branch</dt>
           <dd>
-            {canSwitchBranch ? (
+            {canViewBranches ? (
               <Button
                 className="session-branch-trigger"
                 type="button"
                 variant="ghost"
-                aria-label={`Switch branch. Current branch ${session.branch}`}
+                aria-label={`Open branch viewer. Current branch ${session.branch}`}
                 onClick={onOpenBranchSelector}
               >
                 <span className="session-branch-value" title={session.branch}>

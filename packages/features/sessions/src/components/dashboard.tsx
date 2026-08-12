@@ -218,12 +218,14 @@ function DashboardContent({
       null,
     [mainSessions, selectedSessionId, sessionSections],
   );
-  const canSwitchSelectedSessionBranch =
+  const canViewSelectedSessionBranches =
     selectedSession !== null &&
     selectedSession.branch !== null &&
     selectedSession.source !== "history" &&
     selectedSession.connected &&
-    connection === "connected" &&
+    connection === "connected";
+  const canSwitchSelectedSessionBranch =
+    canViewSelectedSessionBranches &&
     (selectedSession.status === "idle" || selectedSession.status === "waiting");
   const resetBranchSelector = useCallback(() => {
     branchRequestGenerationRef.current += 1;
@@ -245,7 +247,7 @@ function DashboardContent({
         resetBranchSelector();
         return;
       }
-      if (!selectedSession || !canSwitchSelectedSessionBranch) return;
+      if (!selectedSession || !canViewSelectedSessionBranches) return;
       if (branchSelectorSessionIdRef.current === selectedSession.id) return;
 
       branchLoadAbortRef.current?.abort();
@@ -296,7 +298,7 @@ function DashboardContent({
     },
     [
       branchCheckoutPending,
-      canSwitchSelectedSessionBranch,
+      canViewSelectedSessionBranches,
       onLoadSessionBranchTopology,
       resetBranchSelector,
       selectedSession,
@@ -777,7 +779,7 @@ function DashboardContent({
             })}
             {SessionMetadata({
               session: selectedSession,
-              canSwitchBranch: canSwitchSelectedSessionBranch,
+              canViewBranches: canViewSelectedSessionBranches,
               modelLabel: currentModelOption?.name ?? selectedSession.model?.split("/").at(-1) ?? "Default",
               configurationPending,
               fileChangesMetadata: sessionFileChangesMetadata,
