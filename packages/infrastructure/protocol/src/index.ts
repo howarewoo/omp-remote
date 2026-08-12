@@ -562,6 +562,82 @@ export const SessionFileChangesResponseSchema = z
     }
   });
 
+const Base64UrlKeySchema = z
+  .string()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/, "Expected unpadded base64url")
+  .refine((value) => {
+    const padded = value
+      .replace(/-/g, "+")
+      .replace(/_/g, "/")
+      .padEnd(Math.ceil(value.length / 4) * 4, "=");
+    try {
+      atob(padded);
+      return true;
+    } catch {
+      return false;
+    }
+  }, "Expected valid base64url");
+function base64UrlKeyOfBytes(byteLength: number) {
+  return Base64UrlKeySchema.refine((value) => {
+    const padded = value
+      .replace(/-/g, "+")
+      .replace(/_/g, "/")
+      .padEnd(Math.ceil(value.length / 4) * 4, "=");
+    try {
+      return atob(padded).length === byteLength;
+    } catch {
+      return false;
+    }
+  }, `Expected a ${byteLength}-byte base64url key`);
+}
+export const PushEventPreferencesSchema = z
+  .object({ inputRequired: z.boolean(), sessionIdle: z.boolean() })
+  .strict();
+export const PushSubscriptionSchema = z
+  .object({
+    endpoint: z
+      .string()
+      .trim()
+      .min(1)
+      .max(2048)
+      .refine((endpoint) => {
+        try {
+          return new URL(endpoint).protocol === "https:";
+        } catch {
+          return false;
+        }
+      }, "Push subscription endpoint must use HTTPS"),
+    keys: z.object({ p256dh: base64UrlKeyOfBytes(65), auth: base64UrlKeyOfBytes(16) }).strict(),
+  })
+  .strict();
+export const PushVapidPublicKeySchema = base64UrlKeyOfBytes(65);
+const PushDeviceIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .refine(
+    (deviceId) => new TextEncoder().encode(deviceId).byteLength <= 128,
+    "Device id exceeds the supported UTF-8 byte limit",
+  );
+export const PushSubscriptionRegistrationSchema = z
+  .object({
+    deviceId: PushDeviceIdSchema,
+    subscription: PushSubscriptionSchema,
+    events: PushEventPreferencesSchema,
+  })
+  .strict();
+export const PushSubscriptionUpdateSchema = PushSubscriptionRegistrationSchema;
+export const PushSubscriptionRemovalSchema = z.object({ deviceId: PushDeviceIdSchema }).strict();
+export const PushVapidPublicKeyResponseSchema = z.object({ publicKey: PushVapidPublicKeySchema }).strict();
+export type PushEventPreferences = z.infer<typeof PushEventPreferencesSchema>;
+export type PushSubscription = z.infer<typeof PushSubscriptionSchema>;
+export type PushSubscriptionRegistration = z.infer<typeof PushSubscriptionRegistrationSchema>;
+export type PushSubscriptionUpdate = z.infer<typeof PushSubscriptionUpdateSchema>;
+export type PushSubscriptionRemoval = z.infer<typeof PushSubscriptionRemovalSchema>;
+
 const CommandTextSchema = z.string().trim().min(1).max(100_000);
 
 export const BrowserCommandSchema = z.union([
@@ -631,6 +707,32 @@ export const BrowserCommandSchema = z.union([
       askRequestId: z.string().min(1),
     })
     .strict(),
+  z.object({ type: z.literal("push_vapid_public_key"), requestId: z.string().min(1) }).strict(),
+  z
+    .object({
+      type: z.literal("push_subscription_register"),
+      requestId: z.string().min(1),
+      deviceId: PushDeviceIdSchema,
+      subscription: PushSubscriptionSchema,
+      events: PushEventPreferencesSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("push_subscription_update"),
+      requestId: z.string().min(1),
+      deviceId: PushDeviceIdSchema,
+      subscription: PushSubscriptionSchema,
+      events: PushEventPreferencesSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("push_subscription_remove"),
+      requestId: z.string().min(1),
+      deviceId: PushDeviceIdSchema,
+    })
+    .strict(),
 ]);
 
 export const CommandResultSchema = z.object({
@@ -641,6 +743,7 @@ export const CommandResultSchema = z.object({
       status: z.literal("ok"),
       value: z.discriminatedUnion("type", [
         z.object({ type: z.literal("launch"), sessionId: z.string().min(1) }),
+        z.object({ type: z.literal("push_vapid_public_key"), publicKey: PushVapidPublicKeySchema }),
         z.object({ type: z.literal("void") }),
       ]),
     }),

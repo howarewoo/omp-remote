@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { BrowserCommandSchema, SessionBranchTopologySchema } from "./index.js";
+import {
+  BrowserCommandSchema,
+  PushEventPreferencesSchema,
+  PushSubscriptionSchema,
+  SessionBranchTopologySchema,
+} from "./index.js";
 
 describe("BrowserCommandSchema", () => {
   it("accepts RPC launch requests", () => {
@@ -183,6 +188,35 @@ describe("BrowserCommandSchema", () => {
         command: "prompt",
         text: " ",
       }),
+    ).toThrow();
+  });
+});
+
+describe("push protocol", () => {
+  const subscription = {
+    endpoint: "https://push.example.test/send/device",
+    keys: { p256dh: "A".repeat(87), auth: "A".repeat(22) },
+  };
+  it("accepts bounded registration and rejects unknown events", () => {
+    expect(
+      BrowserCommandSchema.parse({
+        type: "push_subscription_register",
+        requestId: "push-1",
+        deviceId: "device-1",
+        subscription,
+        events: { inputRequired: true, sessionIdle: false },
+      }),
+    ).toMatchObject({ type: "push_subscription_register" });
+    expect(() =>
+      PushEventPreferencesSchema.parse({ inputRequired: true, sessionIdle: false, extra: true }),
+    ).toThrow();
+  });
+  it("rejects non-HTTPS endpoints and malformed keys", () => {
+    expect(() =>
+      PushSubscriptionSchema.parse({ ...subscription, endpoint: "http://push.example.test" }),
+    ).toThrow();
+    expect(() =>
+      PushSubscriptionSchema.parse({ ...subscription, keys: { ...subscription.keys, auth: "bad" } }),
     ).toThrow();
   });
 });
