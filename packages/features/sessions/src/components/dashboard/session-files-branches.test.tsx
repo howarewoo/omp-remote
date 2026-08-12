@@ -83,18 +83,18 @@ describe("dashboard session branch selector", () => {
   it.each([
     ["idle RPC", { source: "rpc", status: "idle", connected: true }],
     ["waiting extension", { source: "extension", status: "waiting", connected: true }],
-  ] as const)("offers the ghost trigger for an eligible %s session", (_label, sessionState) => {
+    ["running", { source: "rpc", status: "running", connected: true }],
+  ] as const)("offers the ghost viewer trigger for a connected %s session", (_label, sessionState) => {
     const session: Session = { ...BASE_SESSION, ...sessionState };
     const output = renderControlledDashboard(composerDashboardProps(session));
 
     expect(branchTrigger(output)?.props).toMatchObject({
       variant: "ghost",
-      "aria-label": `Switch branch. Current branch ${session.branch}`,
+      "aria-label": `Open branch viewer. Current branch ${session.branch}`,
     });
   });
 
   it.each([
-    ["running", { status: "running" }],
     ["disconnected", { status: "disconnected", connected: false }],
     ["historical", { source: "history", status: "history", connected: false }],
   ] as const)("shows Branch without an interactive trigger for a %s session", (_label, sessionState) => {
@@ -208,6 +208,32 @@ describe("dashboard session branch selector", () => {
     });
   });
 
+  it("opens the viewer while running without allowing checkout", async () => {
+    const onLoadSessionBranchTopology = vi.fn().mockResolvedValue(TOPOLOGY);
+    const onSwitchBranch = vi.fn();
+    const runningSession: Session = { ...BASE_SESSION, status: "running" };
+    const props = {
+      ...composerDashboardProps(runningSession),
+      onLoadSessionBranchTopology,
+      onSwitchBranch,
+    };
+    let output = renderControlledDashboard(props);
+
+    (branchTrigger(output)?.props.onClick as (() => void) | undefined)?.();
+    await settlePromises();
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+
+    expect(onLoadSessionBranchTopology).toHaveBeenCalledWith(runningSession.id, expect.any(AbortSignal));
+    expect(branchSelector(output).props).toMatchObject({
+      open: true,
+      running: true,
+      topology: TOPOLOGY,
+    });
+
+    branchSelector(output).props.onSelectBranch("feature/sibling");
+    expect(onSwitchBranch).not.toHaveBeenCalled();
+  });
+
   it("keeps the drawer open and disables checkout if the session starts running", async () => {
     const props = {
       ...composerDashboardProps(),
@@ -224,7 +250,7 @@ describe("dashboard session branch selector", () => {
     output = renderControlledDashboard(runningProps, { preserveState: true });
 
     expect(branchSelector(output).props).toMatchObject({ open: true, running: true });
-    expect(branchTrigger(output)).toBeUndefined();
+    expect(branchTrigger(output)).toBeDefined();
   });
 
   it("closes stale topology when the live session branch changes outside the selector", async () => {
