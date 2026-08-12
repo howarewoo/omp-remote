@@ -2,7 +2,7 @@
 
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { once } from "node:events";
-import { access, chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -60,6 +60,7 @@ function session(id: string, cwd: string, status: Session["status"] = "idle"): S
     capabilities: [],
     messages: [],
     sessionPath: null,
+    parentSessionId: null,
     activeSubagents: [],
     skillCommands: [],
   };
@@ -124,6 +125,19 @@ beforeAll(async () => {
   const historyDirectory = await mkdtemp(join(tmpdir(), "omp-remote-empty-history-"));
   temporaryDirectories.push(historyDirectory);
   const rpcFixture = join(historyDirectory, "rpc-fixture.cjs");
+  const rpcSessionPath = join(historyDirectory, "sessions", "integration", "rpc-integration.jsonl");
+  await mkdir(dirname(rpcSessionPath), { recursive: true });
+  await writeFile(
+    rpcSessionPath,
+    `${JSON.stringify({
+      type: "session",
+      version: 3,
+      id: "rpc-integration",
+      timestamp: new Date().toISOString(),
+      cwd: "/tmp",
+      title: "RPC integration",
+    })}\n`,
+  );
   await writeFile(
     rpcFixture,
     `#!/usr/bin/env node

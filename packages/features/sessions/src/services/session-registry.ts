@@ -169,6 +169,7 @@ function cloneSessionPatch(patch: SessionPatch): Partial<Omit<Session, "id" | "m
   if (patch.lastActivity !== undefined) clone.lastActivity = patch.lastActivity;
   if (patch.capabilities !== undefined) clone.capabilities = [...patch.capabilities];
   if (patch.sessionPath !== undefined) clone.sessionPath = patch.sessionPath;
+  if (patch.parentSessionId !== undefined) clone.parentSessionId = patch.parentSessionId;
   if (patch.activeSubagents !== undefined) {
     clone.activeSubagents = patch.activeSubagents.map((subagent) => ({ ...subagent }));
   }

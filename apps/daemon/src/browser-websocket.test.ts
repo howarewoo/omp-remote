@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
 import { type AskRequest, ServerFrameSchema, type Session } from "@omp-remote/protocol";
+import { describe, expect, it, vi } from "vitest";
 import type { WebSocket } from "ws";
 import { MAX_BROWSER_BUFFERED_BYTES } from "./browser-broadcast.js";
 import {
@@ -49,8 +49,10 @@ describe("browser WebSocket snapshot", () => {
       skillCommands: [],
     };
 
-    expect(browserSnapshotSessions([base, { ...base, id: "offline", connected: false }])).toEqual([
+    const child = { ...base, id: "child", parentSessionId: "missing-parent" };
+    expect(browserSnapshotSessions([base, child, { ...base, id: "offline", connected: false }])).toEqual([
       { ...base, messages: [] },
+      { ...child, messages: [] },
     ]);
   });
 

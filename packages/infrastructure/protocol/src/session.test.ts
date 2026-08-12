@@ -4,6 +4,7 @@ import {
   ExtensionFrameSchema,
   ExtensionHeartbeatSchema,
   ExtensionRegisterSchema,
+  filterMainSessions,
   ServerFrameSchema,
   SessionCatalogPageSchema,
   SessionCostResponseSchema,
@@ -12,7 +13,6 @@ import {
   SessionPatchSchema,
   SessionSchema,
   SessionTranscriptResponseSchema,
-  filterMainSessions,
 } from "./index.js";
 
 describe("historical session schemas", () => {
@@ -243,6 +243,76 @@ describe("historical session schemas", () => {
       "session-unrelated-directory",
       "session-null-path-root",
     ]);
+  });
+
+  it("uses explicit child topology even when the parent object is absent", () => {
+    const connectedChild = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-child",
+      source: "extension",
+      status: "waiting",
+      connected: true,
+      parentSessionId: "session-parent",
+      sessionPath: null,
+    });
+    const explicitRoot = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-root",
+      parentSessionId: null,
+    });
+
+    expect(filterMainSessions([connectedChild]).map((session) => session.id)).toEqual([]);
+    expect(filterMainSessions([explicitRoot, connectedChild]).map((session) => session.id)).toEqual([
+      "session-root",
+    ]);
+  });
+
+  it("uses canonical direct parent IDs for grandchildren", () => {
+    const grandchild = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-grandchild",
+      parentSessionId: "session-child",
+      sessionPath: null,
+    });
+
+    expect(filterMainSessions([grandchild]).map((session) => session.id)).toEqual([]);
+  });
+
+  it("lets explicit topology override the legacy loaded-set fallback", () => {
+    const explicitRoot = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-explicit-root",
+      parentSessionId: null,
+      activeSubagents: [
+        {
+          id: "session-explicit-child",
+          name: "Child",
+          lastActivity: historicalSession.lastActivity,
+        },
+      ],
+    });
+    const explicitChild = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-explicit-child",
+      parentSessionId: "session-explicit-root",
+      sessionPath: "/home/user/.omp/agent/sessions/project/child.jsonl",
+    });
+    const pathRoot = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-path-root",
+      parentSessionId: null,
+      sessionPath: "/home/user/.omp/agent/sessions/project/path-root.jsonl",
+    });
+    const pathChild = SessionSchema.parse({
+      ...historicalSession,
+      id: "session-path-child",
+      parentSessionId: "session-path-root",
+      sessionPath: "/home/user/.omp/agent/sessions/project/path-root/child.jsonl",
+    });
+
+    expect(
+      filterMainSessions([explicitRoot, explicitChild, pathRoot, pathChild]).map((session) => session.id),
+    ).toEqual(["session-explicit-root", "session-path-root"]);
   });
 
   it("validates bounded catalog pages", () => {

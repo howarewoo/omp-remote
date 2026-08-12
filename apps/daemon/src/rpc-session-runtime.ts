@@ -1,19 +1,8 @@
-import { type Logger } from "@omp-remote/observability";
-import { RpcSession } from "@omp-remote/omp-rpc";
-import {
-  type AskRequest,
-  type Session,
-  type SessionModelOption,
-  type TranscriptMessage,
-} from "@omp-remote/protocol";
-import { SessionRegistry } from "@omp-remote/sessions/services";
-import { createReadImageResolver, resolveAgentBlobDirectory, SessionCatalog } from "./session-catalog.js";
-import {
-  materializeReadImages,
-  normalizeRawMessage,
-  normalizeSkillCommands,
-  ToolCallTracker,
-} from "./message-normalizer.js";
+import type { Logger } from "@omp-remote/observability";
+import { type RpcFrame, RpcSession } from "@omp-remote/omp-rpc";
+import type { AskRequest, Session, SessionModelOption, TranscriptMessage } from "@omp-remote/protocol";
+import type { SessionRegistry } from "@omp-remote/sessions/services";
+import { waitForCatalogTopology } from "./catalog-reconciliation.js";
 import {
   RpcAvailableCommandsResponseSchema,
   RpcAvailableCommandsUpdateSchema,
@@ -23,7 +12,18 @@ import {
   RpcStateResponseSchema,
 } from "./daemon-schemas.js";
 import { resolveGitBranch } from "./git-branch.js";
+import {
+  materializeReadImages,
+  normalizeRawMessage,
+  normalizeSkillCommands,
+  ToolCallTracker,
+} from "./message-normalizer.js";
 import { normalizeRpcAskEvent } from "./rpc-ask.js";
+import {
+  createReadImageResolver,
+  resolveAgentBlobDirectory,
+  type SessionCatalog,
+} from "./session-catalog.js";
 
 const MAX_MESSAGES = 200;
 
@@ -62,7 +62,7 @@ export function createRpcSessionRuntime({
     let messageSequence = 0;
     let activeMessageId: string | undefined;
     const toolCallTracker = new ToolCallTracker();
-    rpc.subscribe((frame) => {
+    const handleRpcFrame = (frame: RpcFrame): void => {
       if (!sessionId) return;
       const askEvent = normalizeRpcAskEvent(sessionId, frame);
       if (askEvent?.type === "request") {
@@ -107,16 +107,57 @@ export function createRpcSessionRuntime({
         if (message) registry.appendMessage(sessionId, message);
         if (parsed.data.type === "message_end") activeMessageId = undefined;
       }
+    };
+    const processExited = Promise.withResolvers<void>();
+    let processHasExited = false;
+    const frameReplay = createDeferredRpcFrameReplay(handleRpcFrame);
+    const unsubscribe = rpc.subscribe((frame) => {
+      if (frame.type === "process_exit") {
+        processHasExited = true;
+        processExited.resolve();
+      }
+      frameReplay.accept(frame);
     });
+    const disposeUnregisteredRpc = async (): Promise<void> => {
+      unsubscribe();
+      frameReplay.dispose();
+      if (!processHasExited) await rpc.terminate().catch(() => {});
+    };
 
-    const stateResponse = RpcStateResponseSchema.parse(await rpc.start());
+    const stateResponse = await (async () => {
+      try {
+        return RpcStateResponseSchema.parse(await rpc.start());
+      } catch (error) {
+        await disposeUnregisteredRpc();
+        throw error;
+      }
+    })();
     sessionId = stateResponse.data.sessionId;
-    if (!sessionId) throw new Error("OMP RPC did not return a session ID");
+    if (!sessionId) {
+      await disposeUnregisteredRpc();
+      throw new Error("OMP RPC did not return a session ID");
+    }
     sessionBlobDirectory = stateResponse.data.sessionFile
       ? resolveAgentBlobDirectory(stateResponse.data.sessionFile)
       : undefined;
     const contextPercent = normalizePercent(stateResponse.data.contextUsage?.percent);
-    const catalogSession = sessionCatalog.get(sessionId);
+    let catalogSession: Session | undefined;
+    try {
+      catalogSession = await waitForCatalogTopology(
+        requestCatalogReconciliation,
+        () => sessionCatalog.get(sessionId!),
+        processExited.promise,
+        waitForCatalogRetry,
+        () => processHasExited,
+      );
+    } catch (error) {
+      await disposeUnregisteredRpc();
+      throw error;
+    }
+    if (!catalogSession) {
+      await disposeUnregisteredRpc();
+      throw new Error("OMP RPC exited before session topology was resolved");
+    }
     const [skillCommands, availableModels] = await Promise.all([
       loadRpcSkillCommands(sessionId, rpc),
       loadRpcModelOptions(sessionId, rpc),
@@ -145,13 +186,19 @@ export function createRpcSessionRuntime({
       capabilities: ["prompt", "steer", "follow_up", "abort", "kill", "resume", "model", "effort"],
       messages: [],
       sessionPath: stateResponse.data.sessionFile ?? null,
+      ...(catalogSession?.parentSessionId !== undefined
+        ? { parentSessionId: catalogSession.parentSessionId }
+        : {}),
       activeSubagents: catalogSession?.activeSubagents ?? [],
       skillCommands,
     };
-    rpcSessions.set(sessionId, rpc);
+    if (processHasExited) {
+      await disposeUnregisteredRpc();
+      throw new Error("OMP RPC exited before session registration completed");
+    }
     registry.upsert(session);
-    void requestCatalogReconciliation();
-
+    rpcSessions.set(sessionId, rpc);
+    const hydratedRawMessages: unknown[] = [];
     try {
       const messagesResponse = RpcMessagesResponseSchema.parse(await rpc.request({ type: "get_messages" }));
       const messages = Array.isArray(messagesResponse.data)
@@ -172,9 +219,12 @@ export function createRpcSessionRuntime({
       for (const { raw, message } of retained) {
         const materialized = resolveImage ? materializeReadImages(message, raw, resolveImage) : message;
         registry.appendMessage(sessionId, materialized);
+        hydratedRawMessages.push(raw);
       }
     } catch (error) {
       logger.error("Could not load initial OMP transcript", error, { sessionId });
+    } finally {
+      frameReplay.register(hydratedRawMessages);
     }
     return registry.get(sessionId) ?? session;
   }
@@ -230,7 +280,137 @@ export function createRpcSessionRuntime({
   return { launchRpcSession, refreshRpcState };
 }
 
+function waitForCatalogRetry(): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, 100);
+  return promise;
+}
+
 function normalizePercent(percent: number | undefined): number | null {
   if (percent === undefined || !Number.isFinite(percent)) return null;
   return Math.max(0, Math.min(100, percent <= 1 ? percent * 100 : percent));
+}
+
+export interface DeferredRpcFrameReplay {
+  accept(frame: RpcFrame): void;
+  register(hydratedRawMessages: readonly unknown[]): void;
+  dispose(): void;
+}
+
+export function createDeferredRpcFrameReplay(applyFrame: (frame: RpcFrame) => void): DeferredRpcFrameReplay {
+  let registered = false;
+  let replaying = false;
+  const deferredFrames: RpcFrame[] = [];
+
+  return {
+    accept(frame) {
+      if (!registered || replaying) {
+        deferredFrames.push(frame);
+        return;
+      }
+      applyFrame(frame);
+    },
+    register(hydratedRawMessages) {
+      if (registered) return;
+      registered = true;
+      replaying = true;
+      const hydrationBoundary = deferredFrames.length;
+      const skippedFrameIndexes = getHydratedOverlapFrameIndexes(
+        deferredFrames,
+        hydrationBoundary,
+        hydratedRawMessages,
+      );
+      for (let index = 0; index < deferredFrames.length; index += 1) {
+        if (index >= hydrationBoundary || !skippedFrameIndexes.has(index)) {
+          applyFrame(deferredFrames[index]!);
+        }
+      }
+      deferredFrames.length = 0;
+      replaying = false;
+    },
+    dispose() {
+      registered = true;
+      deferredFrames.length = 0;
+      replaying = false;
+    },
+  };
+}
+
+function getHydratedOverlapFrameIndexes(
+  frames: readonly RpcFrame[],
+  hydrationBoundary: number,
+  hydratedRawMessages: readonly unknown[],
+): Set<number> {
+  const hydratedMessageCounts = new Map<string, number>();
+  for (const message of hydratedRawMessages) {
+    const key = getRpcMessageHydrationKey(message);
+    if (key) hydratedMessageCounts.set(key, (hydratedMessageCounts.get(key) ?? 0) + 1);
+  }
+
+  const skippedFrameIndexes = new Set<number>();
+  let activeSequence: number[] | undefined;
+  let orphanUpdates = false;
+  for (let index = 0; index < hydrationBoundary; index += 1) {
+    const parsed = RpcMessageFrameSchema.safeParse(frames[index]);
+    if (!parsed.success) continue;
+    if (parsed.data.type === "message_start") {
+      activeSequence = [index];
+      orphanUpdates = false;
+      continue;
+    }
+    if (parsed.data.type === "message_update") {
+      if (activeSequence) activeSequence.push(index);
+      else orphanUpdates = true;
+      continue;
+    }
+    if (activeSequence) {
+      activeSequence.push(index);
+      consumeHydratedSequence(
+        parsed.data.message,
+        activeSequence,
+        hydratedMessageCounts,
+        skippedFrameIndexes,
+      );
+      activeSequence = undefined;
+      orphanUpdates = false;
+    } else if (orphanUpdates) {
+      orphanUpdates = false;
+    } else {
+      consumeHydratedSequence(parsed.data.message, [index], hydratedMessageCounts, skippedFrameIndexes);
+    }
+  }
+  return skippedFrameIndexes;
+}
+
+function consumeHydratedSequence(
+  completedRawMessage: unknown,
+  frameIndexes: readonly number[],
+  hydratedMessageCounts: Map<string, number>,
+  skippedFrameIndexes: Set<number>,
+): void {
+  const key = getRpcMessageHydrationKey(completedRawMessage);
+  if (!key) return;
+  const count = hydratedMessageCounts.get(key) ?? 0;
+  if (count === 0) return;
+  if (count === 1) hydratedMessageCounts.delete(key);
+  else hydratedMessageCounts.set(key, count - 1);
+  for (const index of frameIndexes) skippedFrameIndexes.add(index);
+}
+
+function getRpcMessageHydrationKey(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const message = raw as Record<string, unknown>;
+  if (typeof message.id === "string" || typeof message.role !== "string") return undefined;
+  const normalized = normalizeRawMessage(raw, false, "rpc-hydration-key");
+  if (!normalized) return undefined;
+  const timestamp =
+    typeof message.timestamp === "string" || typeof message.timestamp === "number" ? message.timestamp : null;
+  return JSON.stringify([
+    "idless",
+    normalized.role,
+    timestamp,
+    normalized.text,
+    normalized.toolName ?? null,
+    normalized.presentation,
+  ]);
 }

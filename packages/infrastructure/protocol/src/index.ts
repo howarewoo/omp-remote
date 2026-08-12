@@ -301,6 +301,7 @@ export const SessionSchema = z.object({
   capabilities: z.array(SessionCapabilitySchema),
   messages: z.array(TranscriptMessageSchema),
   sessionPath: z.string().min(1).nullable(),
+  parentSessionId: z.string().min(1).nullable().optional(),
   costSummary: SessionCostSummarySchema.optional(),
   activeSubagents: z.array(ActiveSubagentSchema).default([]),
   skillCommands: z.array(SkillCommandSchema).default([]),
@@ -957,15 +958,23 @@ export function getMainSessionIds(sessions: readonly Session[]): Set<string> {
   const mainSessionIds = new Set<string>();
   const subagentIds = new Set<string>();
   const sessionPaths = new Set<string>();
+  const explicitTopologyById = new Map<string, string | null>();
 
   for (const session of sessions) {
-    mainSessionIds.add(session.id);
+    if (session.parentSessionId !== undefined) explicitTopologyById.set(session.id, session.parentSessionId);
     if (session.sessionPath?.endsWith(".jsonl")) sessionPaths.add(session.sessionPath);
     for (const subagent of session.activeSubagents) subagentIds.add(subagent.id);
   }
-  for (const subagentId of subagentIds) mainSessionIds.delete(subagentId);
   for (const session of sessions) {
-    if (hasSessionPathAncestor(session.sessionPath, sessionPaths)) mainSessionIds.delete(session.id);
+    const explicitParentSessionId = explicitTopologyById.get(session.id);
+    if (explicitTopologyById.has(session.id)) {
+      if (explicitParentSessionId === null) mainSessionIds.add(session.id);
+      continue;
+    }
+    mainSessionIds.add(session.id);
+    if (subagentIds.has(session.id) || hasSessionPathAncestor(session.sessionPath, sessionPaths)) {
+      mainSessionIds.delete(session.id);
+    }
   }
 
   return mainSessionIds;

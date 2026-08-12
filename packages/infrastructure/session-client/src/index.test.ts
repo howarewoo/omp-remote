@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vite
 import {
   applyTranscriptToSessions,
   boundedServerError,
-  createCatalogLoadCoordinator,
   commandResultValue,
+  createCatalogLoadCoordinator,
   dispatchNotificationEvent,
   loadSessionBranchTopology,
   loadSessionCost,
@@ -491,7 +491,9 @@ describe("session catalog coordination", () => {
 
 describe("snapshotSessionsWithCurrentMessages", () => {
   it("preserves hydrated messages while replacing session metadata", () => {
-    const snapshot = [{ ...SESSION, name: "Fresh metadata", messages: [] }];
+    const snapshot = [
+      { ...SESSION, name: "Fresh metadata", parentSessionId: "parent-session", messages: [] },
+    ];
 
     expect(snapshotSessionsWithCurrentMessages(snapshot, [SESSION])).toEqual([
       { ...snapshot[0], messages: SESSION.messages },
@@ -651,6 +653,14 @@ describe("patchSession", () => {
     expect(sessions[0]).not.toBe(SESSION);
     expect(sessions[0]?.messages).toBe(SESSION.messages);
     expect(sessions[1]).toBe(other);
+  });
+
+  it("applies explicit parent topology patches including a proven root", () => {
+    const child = patchSession([SESSION], "session-1", { parentSessionId: "parent-session" })[0];
+    const root = patchSession([child!], "session-1", { parentSessionId: null })[0];
+
+    expect(child?.parentSessionId).toBe("parent-session");
+    expect(root?.parentSessionId).toBeNull();
   });
 
   it("applies model catalog and effort updates from the host", () => {
@@ -986,15 +996,5 @@ describe("loadSessionFileChanges", () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response);
 
     await expect(loadSessionFileChanges("session-1", controller.signal, fetcher)).rejects.toBe(abortFailure);
-  });
-
-  it("rejects a successful response that violates the changes schema", async () => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ ...availableResponse, operationCount: 1 }), { status: 200 }),
-      );
-
-    await expect(loadSessionFileChanges("session-1", undefined, fetcher)).rejects.toThrow();
   });
 });

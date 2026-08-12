@@ -1,5 +1,5 @@
+import type { AskRequest, Session } from "@omp-remote/protocol";
 import { describe, expect, it } from "vitest";
-import { type AskRequest, type Session } from "@omp-remote/protocol";
 import { findNotificationEvents, NotificationEventTracker } from "./notification-events.js";
 
 const baseSession: Session = {
@@ -91,6 +91,23 @@ describe("findNotificationEvents", () => {
         [session({ status: "waiting", source: "history", connected: true })],
       ),
     ).toEqual([]);
+  });
+
+  it("keeps parent-absent children silent while explicit-null roots remain eligible", () => {
+    const child = session({
+      id: "explicit-child",
+      parentSessionId: "missing-parent",
+      sessionPath: null,
+      status: "running",
+    });
+    const waitingChild = { ...child, status: "waiting" as const };
+    const explicitRoot = session({ id: "explicit-root", parentSessionId: null, status: "running" });
+    const waitingRoot = { ...explicitRoot, status: "waiting" as const };
+
+    expect(findNotificationEvents([child], [waitingChild])).toEqual([]);
+    expect(findNotificationEvents([explicitRoot], [waitingRoot])).toEqual([
+      expect.objectContaining({ event: "inputRequired", tag: "session-explicit-root-waiting" }),
+    ]);
   });
 });
 

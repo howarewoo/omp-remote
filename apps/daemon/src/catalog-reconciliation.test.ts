@@ -1,12 +1,19 @@
+import type { RpcFrame } from "@omp-remote/omp-rpc";
 import type { Session } from "@omp-remote/protocol";
-import { describe, expect, it, vi } from "vitest";
 import { SessionRegistry } from "@omp-remote/sessions/services";
-import type { CatalogDiff } from "./session-catalog.js";
+import { describe, expect, it, vi } from "vitest";
 import {
   createCatalogReconciler,
+  createDeferredRegistrationReplay,
   createReconciledSessionRegistrar,
+  createRegistrationGenerationQueue,
   getCatalogSessionMetadataPatch,
+  registerDeferredSession,
+  resolveReconciledSession,
+  waitForCatalogTopology,
 } from "./catalog-reconciliation.js";
+import { createDeferredRpcFrameReplay } from "./rpc-session-runtime.js";
+import type { CatalogDiff } from "./session-catalog.js";
 
 const ROOT_SESSION: Session = {
   id: "session-root",
@@ -65,10 +72,276 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function replayRpcFrames(frames: readonly RpcFrame[], hydratedRawMessages: readonly unknown[]): RpcFrame[] {
+  const applied: RpcFrame[] = [];
+  const replay = createDeferredRpcFrameReplay((frame) => applied.push(frame));
+  for (const frame of frames) replay.accept(frame);
+  replay.register(hydratedRawMessages);
+  return applied;
+}
+
 function updateParentActivity(registry: Map<string, Session>, session: Session): void {
   const current = registry.get(session.id);
   if (current) registry.set(session.id, { ...current, activeSubagents: session.activeSubagents });
 }
+
+describe("createRegistrationGenerationQueue", () => {
+  it("lets a newer session registration supersede an unresolved predecessor", async () => {
+    const firstRegistration = deferred<boolean>();
+    const secondRegistration = deferred<boolean>();
+    const currentChecks = new Map<string, () => boolean>();
+    const applied: string[] = [];
+    const queue = createRegistrationGenerationQueue<string, string>(
+      async (sessionId, isCurrent) => {
+        currentChecks.set(sessionId, isCurrent);
+        return sessionId === "session-old"
+          ? await firstRegistration.promise
+          : await secondRegistration.promise;
+      },
+      (frame) => {
+        applied.push(frame);
+      },
+    );
+
+    const oldResult = queue.register("session-old");
+    const oldFrame = queue.accept("old-heartbeat");
+    const newResult = queue.register("session-new");
+    const newFrame = queue.accept("new-heartbeat");
+
+    expect(currentChecks.get("session-old")?.()).toBe(false);
+    secondRegistration.resolve(true);
+    await expect(newResult).resolves.toBe(true);
+    await newFrame;
+    expect(applied).toEqual(["new-heartbeat"]);
+
+    firstRegistration.resolve(true);
+    await expect(oldResult).resolves.toBe(false);
+    await oldFrame;
+    expect(applied).toEqual(["new-heartbeat"]);
+  });
+
+  it("discards application frames queued behind registration after close", async () => {
+    const registration = deferred<boolean>();
+    const applied: string[] = [];
+    const queue = createRegistrationGenerationQueue<string, string>(
+      async () => await registration.promise,
+      (frame) => {
+        applied.push(frame);
+      },
+    );
+
+    const registrationResult = queue.register("session-closing");
+    const queuedFrame = queue.accept("event-after-close");
+    queue.close();
+    registration.resolve(true);
+
+    await expect(registrationResult).resolves.toBe(false);
+    await queuedFrame;
+    expect(applied).toEqual([]);
+  });
+});
+
+describe("deferred RPC frame replay", () => {
+  it("retains pre-registration frames and replays them once in arrival order", () => {
+    const applied: string[] = [];
+    const replay = createDeferredRegistrationReplay<string>((frame) => applied.push(frame));
+
+    replay.accept("agent_start");
+    replay.accept("message_start");
+    replay.accept("message_end");
+    expect(applied).toEqual([]);
+
+    replay.register();
+    expect(applied).toEqual(["agent_start", "message_start", "message_end"]);
+
+    replay.accept("agent_end");
+    replay.register();
+    expect(applied).toEqual(["agent_start", "message_start", "message_end", "agent_end"]);
+  });
+
+  it("drops a complete start/update/end history overlap as one unit", () => {
+    const overlap = {
+      role: "assistant",
+      content: "Hydrated exactly once",
+      timestamp: "2026-07-30T12:00:00.000Z",
+    };
+    const processFrame = { type: "agent_start" };
+    const stateFrame = { type: "available_commands_update", commands: [] };
+    const frames = [
+      { type: "message_start", message: { ...overlap, content: "" } },
+      processFrame,
+      { type: "message_update", message: { ...overlap, content: "Hydrated" } },
+      stateFrame,
+      { type: "message_end", message: overlap },
+    ];
+
+    expect(replayRpcFrames(frames, [overlap])).toEqual([processFrame, stateFrame]);
+  });
+
+  it("consumes one hydrated occurrence and retains an identical later message", () => {
+    const overlap = {
+      role: "assistant",
+      content: "Repeated",
+      timestamp: "2026-07-30T12:00:00.000Z",
+    };
+    const first = { type: "message_end", message: overlap, occurrence: 1 };
+    const second = { type: "message_end", message: { ...overlap }, occurrence: 2 };
+
+    expect(replayRpcFrames([first, second], [overlap])).toEqual([second]);
+  });
+
+  it("retains distinct messages newer than the hydrated transcript", () => {
+    const overlap = {
+      role: "assistant",
+      content: "Hydrated exactly once",
+      timestamp: "2026-07-30T12:00:00.000Z",
+    };
+    const newer = {
+      role: "assistant",
+      content: "Arrived after the history snapshot",
+      timestamp: "2026-07-30T12:00:01.000Z",
+    };
+    const overlapFrame = { type: "message_end", message: overlap };
+    const newerFrame = { type: "message_end", message: newer };
+
+    expect(replayRpcFrames([overlapFrame, newerFrame], [overlap])).toEqual([newerFrame]);
+  });
+
+  it("replays every buffered frame when transcript hydration fails", () => {
+    const message = {
+      role: "assistant",
+      content: "Available only from buffered frames",
+      timestamp: "2026-07-30T12:00:00.000Z",
+    };
+    const frames = [
+      { type: "message_start", message: { ...message, content: "" } },
+      { type: "message_update", message: { ...message, content: "Available" } },
+      { type: "message_end", message },
+    ];
+
+    expect(replayRpcFrames(frames, [])).toEqual(frames);
+  });
+
+  it("replays incomplete message sequences without consuming hydrated overlap", () => {
+    const message = {
+      role: "assistant",
+      content: "Hydrated message",
+      timestamp: "2026-07-30T12:00:00.000Z",
+    };
+    const startedOnly = [
+      { type: "message_start", message: { ...message, content: "" } },
+      { type: "message_update", message },
+      { type: "agent_end" },
+    ];
+    const endedOnly = [
+      { type: "message_update", message },
+      { type: "message_end", message },
+    ];
+
+    expect(replayRpcFrames(startedOnly, [message])).toEqual(startedOnly);
+    expect(replayRpcFrames(endedOnly, [message])).toEqual(endedOnly);
+  });
+
+  it("discards retained frames when an unregistered transport is disposed", () => {
+    const applied: string[] = [];
+    const replay = createDeferredRegistrationReplay<string>((frame) => applied.push(frame));
+
+    replay.accept("process_exit");
+    replay.dispose();
+    replay.register();
+
+    expect(applied).toEqual([]);
+  });
+});
+
+describe("resolveReconciledSession", () => {
+  it("defers an explicit live payload while the catalog entry remains topologically unknown", () => {
+    const liveSession = { ...WORKER_SESSION, parentSessionId: ROOT_SESSION.id };
+    const catalogSession = { ...WORKER_SESSION };
+
+    expect(resolveReconciledSession(liveSession, catalogSession)).toBeUndefined();
+  });
+
+  it("constructs registration metadata only from explicit catalog topology", () => {
+    const liveSession = {
+      ...WORKER_SESSION,
+      createdAt: "2026-07-30T12:05:00.000Z",
+      activeSubagents: [],
+    };
+    const catalogSession = {
+      ...WORKER_SESSION,
+      createdAt: ROOT_SESSION.createdAt,
+      parentSessionId: ROOT_SESSION.id,
+      activeSubagents: [ACTIVE_WORKER],
+    };
+
+    expect(resolveReconciledSession(liveSession, catalogSession)).toEqual({
+      ...liveSession,
+      createdAt: ROOT_SESSION.createdAt,
+      parentSessionId: ROOT_SESSION.id,
+      activeSubagents: [ACTIVE_WORKER],
+    });
+  });
+});
+
+describe("registration lifecycle", () => {
+  it("stops retrying when the extension socket closes", async () => {
+    let current = true;
+    const socketClosed = deferred<void>();
+    const registerSession = vi.fn(async () => false);
+    const registration = registerDeferredSession(
+      WORKER_SESSION,
+      registerSession,
+      () => current,
+      () => socketClosed.promise,
+    );
+    await Promise.resolve();
+
+    current = false;
+    socketClosed.resolve();
+
+    await expect(registration).resolves.toBe(false);
+    expect(registerSession).toHaveBeenCalledOnce();
+  });
+
+  it("does not publish a payload closed during reconciliation", async () => {
+    let current = true;
+    const reconciliation = deferred<void>();
+    const registerSession = vi.fn();
+    const register = createReconciledSessionRegistrar({
+      registerSession,
+      requestCatalogReconciliation: () => reconciliation.promise,
+      resolveSession: (session) => ({ ...session, parentSessionId: ROOT_SESSION.id }),
+    });
+    const registration = register(WORKER_SESSION, () => current);
+
+    current = false;
+    reconciliation.resolve();
+
+    await expect(registration).resolves.toBe(false);
+    expect(registerSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("waitForCatalogTopology", () => {
+  it("terminates a pending topology wait when the RPC process exits", async () => {
+    let exited = false;
+    const reconciliation = deferred<void>();
+    const processExited = deferred<void>();
+    const wait = waitForCatalogTopology(
+      () => reconciliation.promise,
+      () => undefined,
+      processExited.promise,
+      () => Promise.resolve(),
+      () => exited,
+    );
+
+    exited = true;
+    processExited.resolve();
+
+    await expect(wait).resolves.toBeUndefined();
+  });
+});
 
 describe("getCatalogSessionMetadataPatch", () => {
   it.each([null, "Stale RPC title"])(
@@ -104,6 +377,24 @@ describe("getCatalogSessionMetadataPatch", () => {
   it("avoids a patch when reconciled metadata is unchanged", () => {
     expect(getCatalogSessionMetadataPatch(ROOT_SESSION, { ...ROOT_SESSION })).toBeNull();
   });
+
+  it("reconciles explicit child topology without changing extension metadata ownership", () => {
+    const liveChild: Session = {
+      ...ROOT_SESSION,
+      id: "session-child",
+      name: "Extension child",
+      sessionPath: "/work/.omp/session/Child.jsonl",
+    };
+    const catalogChild: Session = {
+      ...liveChild,
+      parentSessionId: "session-parent",
+      name: "Catalog child",
+    };
+
+    expect(getCatalogSessionMetadataPatch(liveChild, catalogChild)).toEqual({
+      parentSessionId: "session-parent",
+    });
+  });
 });
 
 describe("createCatalogReconciler", () => {
@@ -121,13 +412,34 @@ describe("createCatalogReconciler", () => {
     });
 
     const reconciliation = register(WORKER_SESSION);
-    expect(registry.get(WORKER_SESSION.id)?.messages).toEqual(WORKER_SESSION.messages);
+    expect(registry.get(WORKER_SESSION.id)).toBeUndefined();
     await Promise.resolve();
     expect(refresh).toHaveBeenCalledOnce();
     await reconciliation;
 
     expect(registry.get(ROOT_SESSION.id)?.activeSubagents).toEqual([ACTIVE_WORKER]);
     expect(registry.get(WORKER_SESSION.id)?.messages).toEqual(WORKER_SESSION.messages);
+  });
+
+  it("replays deferred registration with the original live payload once topology is proven", async () => {
+    const registerSession = vi.fn();
+    let parentSessionId: string | undefined;
+    const register = createReconciledSessionRegistrar({
+      registerSession,
+      requestCatalogReconciliation: vi.fn(async () => {}),
+      resolveSession: (session) => (parentSessionId ? { ...session, parentSessionId } : undefined),
+    });
+
+    expect(await register(WORKER_SESSION)).toBe(false);
+    expect(registerSession).not.toHaveBeenCalled();
+
+    parentSessionId = ROOT_SESSION.id;
+    expect(await register(WORKER_SESSION)).toBe(true);
+    expect(registerSession).toHaveBeenCalledOnce();
+    expect(registerSession).toHaveBeenCalledWith({
+      ...WORKER_SESSION,
+      parentSessionId: ROOT_SESSION.id,
+    });
   });
 
   it("coalesces overlapping requests while preserving ordered trailing refreshes", async () => {
