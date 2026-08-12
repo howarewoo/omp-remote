@@ -184,6 +184,39 @@ afterAll(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { force: true, recursive: true })));
 });
 
+describe("session transcript fallback integration", () => {
+  it("serves an exact live-registry transcript when catalog history is absent", async () => {
+    const repository = await createRepository();
+    const live = await registerExtension({
+      ...session("transcript-live-fallback", repository),
+      messages: [
+        {
+          id: "live-message",
+          role: "assistant",
+          text: "Live transcript",
+          timestamp: "2026-08-01T00:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      ],
+    });
+
+    const response = await fetch(
+      `http://127.0.0.1:${daemonPort}/api/sessions/transcript-live-fallback/transcript`,
+    );
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      sessionId: "transcript-live-fallback",
+      messages: [{ id: "live-message", text: "Live transcript" }],
+    });
+    const missingResponse = await fetch(
+      `http://127.0.0.1:${daemonPort}/api/sessions/unrelated-missing-session/transcript`,
+    );
+    expect(missingResponse.status).toBe(404);
+    live.close();
+  });
+});
+
 describe("session branch daemon integration", () => {
   it("serves live topology and rejects detached or missing sessions", async () => {
     const repository = await createRepository();

@@ -1,6 +1,7 @@
 import type { AskRequest, NotificationEvent, Session } from "@omp-remote/protocol";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
+  applyTranscriptToSessions,
   boundedServerError,
   createCatalogLoadCoordinator,
   commandResultValue,
@@ -8,16 +9,38 @@ import {
   loadSessionBranchTopology,
   loadSessionCost,
   loadSessionFileChanges,
+  loadSessionTranscript,
+  mergeTranscriptMessages,
   overlaySessionCosts,
   patchSession,
-  removeAskRequest,
-  sessionSourcesReady,
-  sendBrowserCommand,
-  resolvePendingCommand,
   rejectPendingCommands,
+  removeAskRequest,
+  resolvePendingCommand,
+  sendBrowserCommand,
+  snapshotSessionsWithCurrentMessages,
   upsertAskRequest,
   upsertTranscriptMessage,
+  useSessionClient,
 } from "./index.js";
+
+const hookHarness = vi.hoisted(() => ({
+  effects: [] as Array<() => undefined | (() => void)>,
+  stateSetters: [] as Mock[],
+}));
+
+vi.mock("react", () => ({
+  useCallback: <T>(callback: T) => callback,
+  useEffect: (effect: () => undefined | (() => void)) => {
+    hookHarness.effects.push(effect);
+  },
+  useMemo: <T>(factory: () => T) => factory(),
+  useRef: <T>(initialValue: T) => ({ current: initialValue }),
+  useState: <T>(initialValue: T) => {
+    const setter = vi.fn();
+    hookHarness.stateSetters.push(setter);
+    return [initialValue, setter] as const;
+  },
+}));
 
 const SESSION: Session = {
   id: "session-1",
@@ -46,6 +69,138 @@ const SESSION: Session = {
   activeSubagents: [],
   skillCommands: [],
 };
+
+class FakeWebSocket extends EventTarget {
+  static readonly OPEN = 1;
+  static readonly CLOSED = 3;
+  static instances: FakeWebSocket[] = [];
+  readyState = 0;
+  readonly send = vi.fn();
+  readonly close = vi.fn(() => {
+    if (this.readyState === FakeWebSocket.CLOSED) return;
+    this.readyState = FakeWebSocket.CLOSED;
+    this.dispatchEvent(new Event("close"));
+  });
+
+  constructor(readonly url: string) {
+    super();
+    FakeWebSocket.instances.push(this);
+  }
+
+  open(): void {
+    this.readyState = FakeWebSocket.OPEN;
+    this.dispatchEvent(new Event("open"));
+  }
+
+  message(frame: unknown): void {
+    const event = new Event("message");
+    Object.defineProperty(event, "data", {
+      value: typeof frame === "string" ? frame : JSON.stringify(frame),
+    });
+    this.dispatchEvent(event);
+  }
+}
+
+class FakeBrowserTarget extends EventTarget {
+  readonly location = { protocol: "http:", host: "localhost:4387" };
+  visibilityState: DocumentVisibilityState = "visible";
+  readonly setTimeout = (callback: TimerHandler, timeout?: number) =>
+    globalThis.setTimeout(callback, timeout) as unknown as number;
+  readonly clearTimeout = (timer: number) => globalThis.clearTimeout(timer);
+}
+
+const SNAPSHOT_FRAME = {
+  type: "snapshot",
+  sessions: [],
+  askRequests: [],
+  savedWorkingDirectories: [],
+} as const;
+
+describe("session WebSocket lifecycle", () => {
+  let browserTarget: FakeBrowserTarget;
+  let documentTarget: FakeBrowserTarget;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    hookHarness.effects.length = 0;
+    hookHarness.stateSetters.length = 0;
+    FakeWebSocket.instances = [];
+    browserTarget = new FakeBrowserTarget();
+    documentTarget = new FakeBrowserTarget();
+    vi.stubGlobal("window", browserTarget);
+    vi.stubGlobal("document", documentTarget);
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("stays connecting and starts the ten-second snapshot deadline only after open", () => {
+    useSessionClient();
+    const cleanup = hookHarness.effects[0]?.();
+    const socket = FakeWebSocket.instances[0];
+    const connectionSetter = hookHarness.stateSetters[10];
+    if (!socket || !connectionSetter) throw new Error("Expected the connection effect to create a socket");
+
+    vi.advanceTimersByTime(10_000);
+    expect(socket.close).not.toHaveBeenCalled();
+    socket.open();
+    expect(connectionSetter).not.toHaveBeenCalledWith("connected");
+    vi.advanceTimersByTime(9_999);
+    expect(socket.close).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(socket.close).toHaveBeenCalledOnce();
+    expect(connectionSetter).toHaveBeenLastCalledWith("disconnected");
+    cleanup?.();
+  });
+
+  it("coalesces recovery, rejects pending work, ignores stale callbacks, and cleans up", async () => {
+    const client = useSessionClient();
+    const cleanup = hookHarness.effects[0]?.();
+    const firstSocket = FakeWebSocket.instances[0];
+    const connectionSetter = hookHarness.stateSetters[10];
+    if (!firstSocket || !connectionSetter)
+      throw new Error("Expected the connection effect to create a socket");
+
+    firstSocket.open();
+    firstSocket.message(SNAPSHOT_FRAME);
+    const pendingCommand = client.command("session-1", "prompt", "continue");
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+    browserTarget.dispatchEvent(new Event("pageshow"));
+    browserTarget.dispatchEvent(new Event("online"));
+    await Promise.resolve();
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    await expect(pendingCommand).rejects.toThrow("Dashboard disconnected");
+
+    const connectedCalls = connectionSetter.mock.calls.filter(([state]) => state === "connected").length;
+    firstSocket.message(SNAPSHOT_FRAME);
+    expect(connectionSetter.mock.calls.filter(([state]) => state === "connected")).toHaveLength(
+      connectedCalls,
+    );
+    const replacementSocket = FakeWebSocket.instances[1];
+    if (!replacementSocket) throw new Error("Expected one replacement socket");
+    browserTarget.dispatchEvent(new Event("online"));
+    await Promise.resolve();
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    replacementSocket.open();
+    replacementSocket.message(SNAPSHOT_FRAME);
+    replacementSocket.message("{");
+    expect(replacementSocket.close).toHaveBeenCalledOnce();
+
+    cleanup?.();
+    browserTarget.dispatchEvent(new Event("pageshow"));
+    await Promise.resolve();
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    const callsAfterCleanup = connectionSetter.mock.calls.length;
+    const strictModeCleanup = hookHarness.effects[0]?.();
+    firstSocket.dispatchEvent(new Event("error"));
+    firstSocket.message(SNAPSHOT_FRAME);
+    expect(connectionSetter).toHaveBeenCalledTimes(callsAfterCleanup + 1);
+    strictModeCleanup?.();
+  });
+});
 
 describe("commandResultValue", () => {
   it("returns only the response shape correlated to the request command", () => {
@@ -253,13 +408,7 @@ describe("server notification frames", () => {
   });
 });
 
-describe("session readiness", () => {
-  it("waits for both the live snapshot and baseline catalog", () => {
-    expect(sessionSourcesReady(true, false)).toBe(false);
-    expect(sessionSourcesReady(false, true)).toBe(false);
-    expect(sessionSourcesReady(true, true)).toBe(true);
-  });
-
+describe("session catalog coordination", () => {
   it("does not let an early search cancel or bypass the cached baseline", async () => {
     let finishBaseline: (() => void) | undefined;
     let baselineLoads = 0;
@@ -337,6 +486,81 @@ describe("session readiness", () => {
     resolveSecond?.();
     await secondAttempt;
     expect(coordinator.loadBaseline()).toBe(secondAttempt);
+  });
+});
+
+describe("snapshotSessionsWithCurrentMessages", () => {
+  it("preserves hydrated messages while replacing session metadata", () => {
+    const snapshot = [{ ...SESSION, name: "Fresh metadata", messages: [] }];
+
+    expect(snapshotSessionsWithCurrentMessages(snapshot, [SESSION])).toEqual([
+      { ...snapshot[0], messages: SESSION.messages },
+    ]);
+  });
+});
+
+describe("applyTranscriptToSessions", () => {
+  it("hydrates the target, clears other history transcripts, and preserves live transcripts", () => {
+    const target = { ...SESSION, source: "history" as const, id: "target", messages: [] };
+    const otherHistory = { ...SESSION, source: "history" as const, id: "other-history" };
+    const otherLive = { ...SESSION, id: "other-live" };
+
+    const result = applyTranscriptToSessions([target, otherHistory, otherLive], {
+      sessionId: target.id,
+      messages: SESSION.messages,
+    });
+
+    expect(result[0]?.messages).toEqual(SESSION.messages);
+    expect(result[1]?.messages).toEqual([]);
+    expect(result[2]?.messages).toEqual(SESSION.messages);
+  });
+});
+
+describe("mergeTranscriptMessages", () => {
+  it("keeps current live versions by identity and appends current-only updates", () => {
+    const hydrated = [
+      {
+        id: "one",
+        role: "assistant" as const,
+        text: "old",
+        timestamp: "2026-08-01T00:00:00.000Z",
+        streaming: false,
+        presentation: "text" as const,
+      },
+      {
+        id: "two",
+        role: "assistant" as const,
+        text: "server",
+        timestamp: "2026-08-01T00:00:01.000Z",
+        streaming: false,
+        presentation: "text" as const,
+      },
+    ];
+    const live = [
+      {
+        id: "one",
+        role: "assistant" as const,
+        text: "newer live",
+        timestamp: "2026-08-01T00:00:02.000Z",
+        streaming: true,
+        presentation: "text" as const,
+      },
+      {
+        id: "three",
+        role: "tool" as const,
+        text: "live-only",
+        timestamp: "2026-08-01T00:00:03.000Z",
+        streaming: false,
+        presentation: "text" as const,
+      },
+    ];
+
+    expect(mergeTranscriptMessages(hydrated, live).map((message) => message.id)).toEqual([
+      "one",
+      "two",
+      "three",
+    ]);
+    expect(mergeTranscriptMessages(hydrated, live)[0]).toEqual(live[0]);
   });
 });
 
@@ -537,6 +761,20 @@ describe("remote ask request state", () => {
 
     expect(removeAskRequest([newerRequest], "session-1", "ask-1")).toEqual([newerRequest]);
     expect(removeAskRequest([newerRequest], "session-1", "ask-2")).toEqual([]);
+  });
+});
+
+describe("loadSessionTranscript", () => {
+  it("rejects a transcript returned for a different session", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ sessionId: "session-2", messages: [] }), {
+        status: 200,
+      }),
+    );
+
+    await expect(loadSessionTranscript("session-1", undefined, fetcher)).rejects.toThrow(
+      "Session transcript response did not match the request",
+    );
   });
 });
 

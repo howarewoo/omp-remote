@@ -520,7 +520,13 @@ function DashboardContent({
   }, [onLoadCost, selectedCostSessionId]);
 
   useEffect(() => {
-    if (selectedSession?.source !== "history" || loadedTranscriptIdRef.current === selectedSession.id) return;
+    if (
+      !selectedSession ||
+      (selectedSession.source !== "history" &&
+        (!selectedSession.connected || selectedSession.messages.length > 0)) ||
+      loadedTranscriptIdRef.current === selectedSession.id
+    )
+      return;
     const sessionId = selectedSession.id;
     loadedTranscriptIdRef.current = sessionId;
     setTranscriptLoadingId(sessionId);

@@ -33,9 +33,33 @@ describe("browser frame delivery", () => {
     });
   });
 
+  it.each([
+    ["below", MAX_BROWSER_BUFFERED_BYTES - Buffer.byteLength("😀", "utf8") - 1, true],
+    ["equal to", MAX_BROWSER_BUFFERED_BYTES - Buffer.byteLength("😀", "utf8"), false],
+    ["above", MAX_BROWSER_BUFFERED_BYTES - Buffer.byteLength("😀", "utf8") + 1, false],
+  ] as const)(
+    "%s the UTF-8 byte cap admits only payloads whose resulting buffer remains below it",
+    (_boundary, bufferedAmount, accepted) => {
+      const payload = "😀";
+      const peer = makePeer(WebSocket.OPEN, bufferedAmount);
+      const serialize = vi.fn(() => payload);
+
+      const result = sendBrowserFrame(peer.peer, { type: "event" }, serialize);
+
+      expect(peer.send).toHaveBeenCalledTimes(accepted ? 1 : 0);
+      expect(peer.terminate).toHaveBeenCalledTimes(accepted ? 0 : 1);
+      expect(serialize).toHaveBeenCalledOnce();
+      expect(result).toEqual({
+        sent: accepted ? 1 : 0,
+        terminated: accepted ? 0 : 1,
+        maxRejectedBufferedBytes: accepted ? 0 : bufferedAmount,
+      });
+    },
+  );
+
   it("sends one serialized payload to every healthy peer while terminating lagging peers and ignoring non-open peers", () => {
     const firstHealthy = makePeer();
-    const secondHealthy = makePeer(WebSocket.OPEN, MAX_BROWSER_BUFFERED_BYTES - 1);
+    const secondHealthy = makePeer(WebSocket.OPEN, MAX_BROWSER_BUFFERED_BYTES - 1024);
     const lagging = makePeer(WebSocket.OPEN, MAX_BROWSER_BUFFERED_BYTES + 11);
     const mostLagging = makePeer(WebSocket.OPEN, MAX_BROWSER_BUFFERED_BYTES + 29);
     const closing = makePeer(WebSocket.CLOSING, MAX_BROWSER_BUFFERED_BYTES + 100);
