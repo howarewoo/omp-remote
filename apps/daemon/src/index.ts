@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
 import { createLogger } from "@omp-remote/observability";
-import { type RpcSession } from "@omp-remote/omp-rpc";
+import type { RpcSession } from "@omp-remote/omp-rpc";
 import {
   type AskRequest,
   type AskResponse,
@@ -163,16 +163,20 @@ app.get("/api/sessions", async (request, reply) => {
 
 app.get("/api/sessions/:sessionId/transcript", async (request, reply) => {
   const params = SessionParamsSchema.safeParse(request.params);
-  if (!params.success || !sessionCatalog.get(params.data.sessionId)) {
+  if (!params.success) return reply.code(404).send({ error: "Session history was not found" });
+  const sessionId = params.data.sessionId;
+  const catalogSession = sessionCatalog.get(sessionId);
+  const liveSession = registry.get(sessionId);
+  if (!catalogSession && !liveSession) {
     return reply.code(404).send({ error: "Session history was not found" });
   }
   try {
     return SessionTranscriptResponseSchema.parse({
-      sessionId: params.data.sessionId,
-      messages: await sessionCatalog.transcript(params.data.sessionId),
+      sessionId,
+      messages: catalogSession ? await sessionCatalog.transcript(sessionId) : (liveSession?.messages ?? []),
     });
   } catch (error) {
-    logger.error("Could not read OMP session transcript", error, { sessionId: params.data.sessionId });
+    logger.error("Could not read OMP session transcript", error, { sessionId });
     return reply.code(500).send({ error: "Session history could not be read" });
   }
 });

@@ -224,6 +224,27 @@ describe("controlled dashboard selection", () => {
     expect(onSelectedSessionChange).toHaveBeenCalledWith("session-1");
   });
 
+  it("keeps a connected metadata-only session selected while hydrating it once", () => {
+    const onLoadTranscript = vi.fn(() => new Promise<void>(() => undefined));
+    const props = {
+      ...composerDashboardProps({ ...BASE_SESSION, messages: [] }),
+      onLoadTranscript,
+    };
+
+    const output = renderControlledDashboard(props);
+    renderControlledDashboard(props, { preserveState: true });
+
+    const selectedSidebarSession = findElements(
+      output,
+      (element) => element.props.className === "session-item session-item-selected",
+    )[0];
+    expect(findHostText(output, "h1")).toBe(BASE_SESSION.name);
+    expect(selectedSidebarSession?.props["aria-label"]).toBe("Bootstrap, Idle");
+    expect(textContent(output)).toContain("Host connected");
+    expect(onLoadTranscript).toHaveBeenCalledOnce();
+    expect(onLoadTranscript).toHaveBeenCalledWith(BASE_SESSION.id);
+  });
+
   it("loads cost for the viewed session as selection changes", () => {
     const onLoadCost = vi.fn().mockResolvedValue(undefined);
     const secondSession = { ...BASE_SESSION, id: "session-2", name: "Second session" };

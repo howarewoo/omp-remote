@@ -18,12 +18,14 @@ import {
   type SessionCostResponse,
   type SessionPatch,
   SessionTranscriptResponseSchema,
+  type SessionTranscriptResponse,
   type SessionFileChangesResponse,
   SessionFileChangesResponseSchema,
 } from "@omp-remote/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const RECONNECT_DELAY_MS = 1_500;
+const INITIAL_SNAPSHOT_DEADLINE_MS = 10_000;
 const CATALOG_PAGE_SIZE = 100;
 const SWITCH_BRANCH_TIMEOUT_MS = 30_000;
 const PUSH_COMMAND_TIMEOUT_MS = 10_000;
@@ -38,6 +40,28 @@ type PendingCommand = {
   timeoutId?: ReturnType<typeof globalThis.setTimeout>;
 };
 export type NotificationEventListener = (event: NotificationEvent) => void;
+export function createConnectionFreshnessTracker() {
+  let snapshotReceived = false;
+  let recoveryInFlight = false;
+  return {
+    markConnectionStarted(): void {
+      snapshotReceived = false;
+    },
+    hasSnapshot(): boolean {
+      return snapshotReceived;
+    },
+    markSnapshotReceived(): void {
+      snapshotReceived = true;
+      recoveryInFlight = false;
+    },
+    beginRecovery(): boolean {
+      if (recoveryInFlight) return false;
+      recoveryInFlight = true;
+      snapshotReceived = false;
+      return true;
+    },
+  };
+}
 
 export interface SessionClient {
   sessions: Session[];
@@ -157,6 +181,7 @@ export function useSessionClient(): SessionClient {
   const costRequestRef = useRef(0);
   const catalogAbortRef = useRef<AbortController | null>(null);
   const transcriptAbortRef = useRef<AbortController | null>(null);
+  const transcriptRequestRef = useRef(0);
   const costAbortRef = useRef<AbortController | null>(null);
   const costSummaryBySessionRef = useRef(new Map<string, Session["costSummary"] | null>());
   const [liveSessions, setLiveSessions] = useState<Session[]>([]);
@@ -176,33 +201,69 @@ export function useSessionClient(): SessionClient {
   useEffect(() => {
     let disposed = false;
     let reconnectTimer: number | undefined;
+    let snapshotDeadline: number | undefined;
+    let generation = 0;
+    let activeSocket: WebSocket | null = null;
+    const freshness = createConnectionFreshnessTracker();
 
+    const clearSnapshotDeadline = () => {
+      if (snapshotDeadline !== undefined) window.clearTimeout(snapshotDeadline);
+      snapshotDeadline = undefined;
+    };
+    const isCurrent = (socket: WebSocket, socketGeneration: number) =>
+      !disposed && generation === socketGeneration && activeSocket === socket;
+    const invalidateCurrentSocket = (socket: WebSocket | null) => {
+      if (socket !== null && activeSocket !== socket) return;
+      activeSocket = null;
+      generation += 1;
+      clearSnapshotDeadline();
+      if (socketRef.current === socket) socketRef.current = null;
+    };
     const connect = () => {
       if (disposed) return;
+      if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
+      reconnectTimer = undefined;
       setConnection("connecting");
       setLiveSessionsReady(false);
+      freshness.markConnectionStarted();
+      const socketGeneration = ++generation;
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const socket = new WebSocket(`${protocol}//${window.location.host}/ws`);
+      activeSocket = socket;
       socketRef.current = socket;
+      clearSnapshotDeadline();
       socket.addEventListener("open", () => {
-        setConnection("connected");
-        setConnectionError(null);
+        if (!isCurrent(socket, socketGeneration)) return;
+        clearSnapshotDeadline();
+        snapshotDeadline = window.setTimeout(() => {
+          if (!isCurrent(socket, socketGeneration) || freshness.hasSnapshot()) return;
+          setConnectionError(
+            "The host did not provide an initial snapshot. Reconnect to restore the dashboard.",
+          );
+          socket.close();
+        }, INITIAL_SNAPSHOT_DEADLINE_MS);
       });
       socket.addEventListener("message", (event) => {
+        if (!isCurrent(socket, socketGeneration)) return;
         const frame = (() => {
           try {
             return ServerFrameSchema.parse(JSON.parse(String(event.data)));
           } catch {
             setConnectionError("The host sent an unreadable update. Reconnect to restore the dashboard.");
+            socket.close();
             return null;
           }
         })();
         if (!frame) return;
         if (frame.type === "snapshot") {
-          setLiveSessions(frame.sessions);
+          clearSnapshotDeadline();
+          freshness.markSnapshotReceived();
+          setLiveSessions((current) => snapshotSessionsWithCurrentMessages(frame.sessions, current));
           setAskRequests(frame.askRequests);
           setSavedWorkingDirectories(frame.savedWorkingDirectories);
           setLiveSessionsReady(true);
+          setConnection("connected");
+          setConnectionError(null);
         } else if (frame.type === "session_upsert") {
           setLiveSessions((current) => upsertSession(current, frame.session));
         } else if (frame.type === "session_update") {
@@ -227,27 +288,57 @@ export function useSessionClient(): SessionClient {
         }
       });
       socket.addEventListener("close", () => {
-        if (socketRef.current === socket) socketRef.current = null;
+        if (!isCurrent(socket, socketGeneration)) return;
+        invalidateCurrentSocket(socket);
         rejectPendingCommands(pendingRef.current);
         if (disposed) return;
+        freshness.markConnectionStarted();
+        setLiveSessionsReady(false);
         setConnection("disconnected");
         setAskRequests([]);
         reconnectTimer = window.setTimeout(connect, RECONNECT_DELAY_MS);
       });
-      socket.addEventListener("error", () => socket.close());
+      socket.addEventListener("error", () => {
+        if (isCurrent(socket, socketGeneration)) socket.close();
+      });
     };
-
+    const replaceWhenFreshnessUnproved = () => {
+      if (disposed || !freshness.beginRecovery()) return;
+      queueMicrotask(() => {
+        if (disposed) return;
+        if (freshness.hasSnapshot()) return;
+        const previousSocket = activeSocket;
+        invalidateCurrentSocket(previousSocket);
+        rejectPendingCommands(pendingRef.current);
+        previousSocket?.close();
+        connect();
+      });
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") replaceWhenFreshnessUnproved();
+    };
+    const onPageShow = () => replaceWhenFreshnessUnproved();
+    const onOnline = () => replaceWhenFreshnessUnproved();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pageshow", onPageShow);
+    window.addEventListener("online", onOnline);
     connect();
     return () => {
       disposed = true;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pageshow", onPageShow);
+      window.removeEventListener("online", onOnline);
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer);
-      socketRef.current?.close();
+      const socket = activeSocket;
+      invalidateCurrentSocket(socket);
+      socket?.close();
       rejectPendingCommands(pendingRef.current);
     };
   }, []);
 
   useEffect(
     () => () => {
+      transcriptRequestRef.current += 1;
       transcriptAbortRef.current?.abort();
       costAbortRef.current?.abort();
     },
@@ -310,28 +401,18 @@ export function useSessionClient(): SessionClient {
   }, [historyLoading, historyNextOffset, historyQuery, historySessionsReady, loadCatalogPage]);
 
   const loadTranscript = useCallback(async (sessionId: string) => {
+    const requestNumber = ++transcriptRequestRef.current;
     transcriptAbortRef.current?.abort();
     const abortController = new AbortController();
     transcriptAbortRef.current = abortController;
     setHistoryError(null);
     try {
-      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/transcript`, {
-        signal: abortController.signal,
-      });
-      if (!response.ok) throw new Error(`Session transcript request failed (${response.status})`);
-      const transcript = SessionTranscriptResponseSchema.parse(await response.json());
-      const applyTranscript = (sessions: Session[]) =>
-        sessions.map((session) => {
-          if (session.id === transcript.sessionId) return { ...session, messages: transcript.messages };
-          if (session.source === "history" && session.messages.length > 0) {
-            return { ...session, messages: [] };
-          }
-          return session;
-        });
-      setHistorySessions(applyTranscript);
-      setLiveSessions(applyTranscript);
+      const transcript = await loadSessionTranscript(sessionId, abortController.signal);
+      if (requestNumber !== transcriptRequestRef.current || abortController.signal.aborted) return;
+      setHistorySessions((sessions) => applyTranscriptToSessions(sessions, transcript));
+      setLiveSessions((sessions) => applyTranscriptToSessions(sessions, transcript));
     } catch (error) {
-      if (abortController.signal.aborted) return;
+      if (abortController.signal.aborted || requestNumber !== transcriptRequestRef.current) return;
       const message = error instanceof Error ? error.message : "Session transcript could not be loaded";
       setHistoryError(message);
       throw error;
@@ -577,6 +658,22 @@ export function useSessionClient(): SessionClient {
     removePushSubscription,
   };
 }
+export async function loadSessionTranscript(
+  sessionId: string,
+  signal?: AbortSignal,
+  fetcher: typeof fetch = fetch,
+): Promise<SessionTranscriptResponse> {
+  const response = await fetcher(
+    `/api/sessions/${encodeURIComponent(sessionId)}/transcript`,
+    signal ? { signal } : {},
+  );
+  if (!response.ok) throw new Error(`Session transcript request failed (${response.status})`);
+  const result = SessionTranscriptResponseSchema.parse(await response.json());
+  if (result.sessionId !== sessionId)
+    throw new Error("Session transcript response did not match the request");
+  return result;
+}
+
 export async function loadSessionCost(
   sessionId: string,
   signal?: AbortSignal,
@@ -727,6 +824,47 @@ function sessionMatchesQuery(session: Session, query: string): boolean {
   return [session.id, session.name, session.cwd, session.sessionPath]
     .filter((value): value is string => typeof value === "string")
     .some((value) => value.toLocaleLowerCase().includes(normalizedQuery));
+}
+export function snapshotSessionsWithCurrentMessages(
+  snapshotSessions: Session[],
+  currentSessions: Session[],
+): Session[] {
+  const currentMessagesById = new Map(
+    currentSessions
+      .filter((session) => session.messages.length > 0)
+      .map((session) => [session.id, session.messages]),
+  );
+  return snapshotSessions.map((session) => ({
+    ...session,
+    messages: currentMessagesById.get(session.id) ?? session.messages,
+  }));
+}
+
+export function applyTranscriptToSessions(
+  sessions: Session[],
+  transcript: SessionTranscriptResponse,
+): Session[] {
+  return sessions.map((session) => {
+    if (session.id === transcript.sessionId) {
+      return { ...session, messages: mergeTranscriptMessages(transcript.messages, session.messages) };
+    }
+    return session.source === "history" && session.messages.length > 0
+      ? { ...session, messages: [] }
+      : session;
+  });
+}
+
+export function mergeTranscriptMessages(
+  serverMessages: Session["messages"],
+  currentMessages: Session["messages"],
+): Session["messages"] {
+  const currentById = new Map(currentMessages.map((message) => [message.id, message]));
+  const merged = serverMessages.map((message) => currentById.get(message.id) ?? message);
+  const serverIds = new Set(serverMessages.map((message) => message.id));
+  for (const message of currentMessages) {
+    if (!serverIds.has(message.id)) merged.push(message);
+  }
+  return merged.slice(-200);
 }
 
 export function upsertTranscriptMessage(

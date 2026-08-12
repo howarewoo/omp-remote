@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { type AskRequest } from "@omp-remote/protocol";
-import { type WebSocket } from "ws";
+import { type AskRequest, ServerFrameSchema, type Session } from "@omp-remote/protocol";
+import type { WebSocket } from "ws";
+import { MAX_BROWSER_BUFFERED_BYTES } from "./browser-broadcast.js";
 import {
+  browserSnapshotSessions,
   pendingAskRequestsForBrowserSnapshot,
   removeBrowserSocket,
   respondToPendingAsk,
@@ -16,6 +18,92 @@ const pendingAsk: AskRequest = {
   initialValue: null,
   expiresAt: null,
 };
+
+describe("browser WebSocket snapshot", () => {
+  it("sends only connected sessions with bounded metadata", () => {
+    const base: Session = {
+      id: "live",
+      source: "extension",
+      name: "Live",
+      cwd: "/tmp/live",
+      branch: "main",
+      status: "idle",
+      connected: true,
+      model: null,
+      contextPercent: null,
+      createdAt: "2026-08-01T00:00:00.000Z",
+      lastActivity: "2026-08-01T00:00:00.000Z",
+      capabilities: [],
+      messages: [
+        {
+          id: "message",
+          role: "user",
+          text: "private",
+          timestamp: "2026-08-01T00:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      ],
+      sessionPath: null,
+      activeSubagents: [],
+      skillCommands: [],
+    };
+
+    expect(browserSnapshotSessions([base, { ...base, id: "offline", connected: false }])).toEqual([
+      { ...base, messages: [] },
+    ]);
+  });
+
+  it("turns an oversized transcript snapshot into a parseable bounded frame without dropping other state", () => {
+    const oversizedSession: Session = {
+      id: "oversized",
+      source: "extension",
+      name: "Oversized",
+      cwd: "/tmp/oversized",
+      branch: "main",
+      status: "running",
+      connected: true,
+      model: null,
+      contextPercent: null,
+      createdAt: "2026-08-01T00:00:00.000Z",
+      lastActivity: "2026-08-01T00:00:00.000Z",
+      capabilities: [],
+      messages: [
+        {
+          id: "large-message",
+          role: "assistant",
+          text: "x".repeat(MAX_BROWSER_BUFFERED_BYTES + 1),
+          timestamp: "2026-08-01T00:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      ],
+      sessionPath: null,
+      activeSubagents: [],
+      skillCommands: [],
+    };
+    const original = JSON.stringify({
+      type: "snapshot",
+      sessions: [oversizedSession],
+      askRequests: [pendingAsk],
+      savedWorkingDirectories: ["/tmp/work"],
+    });
+    const bounded = JSON.stringify({
+      type: "snapshot",
+      sessions: browserSnapshotSessions([oversizedSession]),
+      askRequests: [pendingAsk],
+      savedWorkingDirectories: ["/tmp/work"],
+    });
+
+    expect(Buffer.byteLength(original, "utf8")).toBeGreaterThan(MAX_BROWSER_BUFFERED_BYTES);
+    expect(Buffer.byteLength(bounded, "utf8")).toBeLessThan(MAX_BROWSER_BUFFERED_BYTES);
+    expect(ServerFrameSchema.parse(JSON.parse(bounded))).toMatchObject({
+      sessions: [{ id: oversizedSession.id, messages: [] }],
+      askRequests: [pendingAsk],
+      savedWorkingDirectories: ["/tmp/work"],
+    });
+  });
+});
 
 describe("browser WebSocket Ask lifecycle", () => {
   it("retains an admitted extension Ask when the last browser disconnects for reconnect", () => {

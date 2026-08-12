@@ -1,5 +1,5 @@
-import { type Logger } from "@omp-remote/observability";
-import { type RpcFrame, type RpcSession } from "@omp-remote/omp-rpc";
+import type { Logger } from "@omp-remote/observability";
+import type { RpcFrame, RpcSession } from "@omp-remote/omp-rpc";
 import {
   type AskRequest,
   type BrowserCommand,
@@ -7,12 +7,12 @@ import {
   type ServerFrame,
   type Session,
 } from "@omp-remote/protocol";
-import { SessionRegistry } from "@omp-remote/sessions/services";
-import { type FastifyInstance } from "fastify";
+import type { SessionRegistry } from "@omp-remote/sessions/services";
+import type { FastifyInstance } from "fastify";
 import { WebSocket } from "ws";
 import { type AskInactivityTimeout, isAskResponseValid, resetAskInactivityTimeout } from "./rpc-ask.js";
-import { PushSubscriptionStore } from "./push-subscriptions.js";
-import { SavedWorkingDirectoryStore } from "./saved-working-directories.js";
+import type { PushSubscriptionStore } from "./push-subscriptions.js";
+import type { SavedWorkingDirectoryStore } from "./saved-working-directories.js";
 
 type PendingAsk = {
   request: AskRequest;
@@ -27,6 +27,10 @@ export function pendingAskRequestsForBrowserSnapshot(
   pendingAskBySession: ReadonlyMap<string, Pick<PendingAsk, "request">>,
 ): AskRequest[] {
   return [...pendingAskBySession.values()].map(({ request }) => request);
+}
+
+export function browserSnapshotSessions(sessions: readonly Session[]): Session[] {
+  return sessions.filter((session) => session.connected).map((session) => ({ ...session, messages: [] }));
 }
 
 type BrowserWebSocketDependencies = {
@@ -129,7 +133,7 @@ export function registerBrowserWebSocketRoute(
     browserSockets.add(socket);
     sendToBrowser(socket, {
       type: "snapshot",
-      sessions: registry.list(),
+      sessions: browserSnapshotSessions(registry.list()),
       askRequests: pendingAskRequestsForBrowserSnapshot(pendingAskBySession),
       savedWorkingDirectories: savedWorkingDirectories.list(),
     });
