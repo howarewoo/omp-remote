@@ -36,9 +36,20 @@ When setup finishes, it prints the private `https://...ts.net` dashboard URL. OM
 
 1. Open Tailscale on your phone and make sure it is connected.
 2. Open the dashboard URL from setup in Safari or Chrome.
-3. Optional: install it like an app. On iPhone, use **Share → Add to Home Screen**. On Android, open the browser menu and choose **Install app** or **Add to Home screen**.
+3. Optional: install it like an app. On iPhone or iPad, use **Share → Add to Home Screen**, then open OMP Remote from its Home Screen icon. On Android, open the browser menu and choose **Install app** or **Add to Home screen**.
+4. In OMP Remote, open **Notification settings** and turn on each alert you want on this device. The browser asks for permission only after you enable an alert.
 
 Start a new OMP terminal session after setup and it will appear in the dashboard automatically. The dashboard works over Wi-Fi or mobile data from anywhere, as long as the host computer is awake, online, running OMP Remote, and connected to Tailscale.
+
+### Installed PWA notifications
+
+Web Push requires a secure context, so use the private `https://...ts.net` URL printed by setup rather than an HTTP address. On iOS and iPadOS, Web Push works only from an installed Home Screen PWA; an ordinary Safari tab cannot subscribe. Each browser or installed PWA is a separate device and must be enabled once after this update. Enabling one device never enables another, and **Input required** and **Session idle** remain independent choices.
+
+Notification delivery is best effort. The host computer must be awake with the OMP Remote daemon running and online, and both the host and receiving device need network access. A delayed or missing notification does not change session state; reopen the dashboard to see the authoritative status.
+
+OMP Remote has no notification relay or account service. The daemon stores each enabled device's push endpoint, encryption keys, and preferences locally in `~/.omp/remote/push-subscriptions.json`. Notification text is encrypted for the browser push service, but that service still handles delivery metadata; notification previews can also expose the session name and status on the receiving device's lock screen. Disable both alerts on a device to remove only that device's daemon registration and browser subscription.
+
+The same local file also holds the daemon's VAPID signing key. If it is deleted, lost, or replaced, existing browser subscriptions cannot receive notifications under the new key. Open **Notification settings**, turn the device's alerts off, then enable the desired alerts again. Restoring an older installation or preference-only browser state also requires this one-time, per-device re-enable; OMP Remote does not silently request permission or create a subscription.
 
 ## Comparison with OMP mobile options
 

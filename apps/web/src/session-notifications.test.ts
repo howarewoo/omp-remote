@@ -1,470 +1,643 @@
-import type { AskRequest, Session } from "@omp-remote/protocol";
-import type * as ReactModule from "react";
+import type { NotificationEvent, PushSubscription as PushSubscriptionPayload } from "@omp-remote/protocol";
 import type { Mock } from "vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  findSessionNotifications,
+  changePushPreference,
+  createNotificationOperationQueue,
+  deliverForegroundNotification,
+  isPushNotificationSupported,
   NOTIFICATION_PREFERENCES_STORAGE_KEY,
+  NOTIFICATION_PREFERENCES_VERSION,
   readNotificationPreferences,
-  useSessionNotifications,
-  writeNotificationPreferences,
+  reconcilePushNotifications,
+  SESSION_NOTIFICATION_OPTIONS,
+  type SessionNotificationClient,
+  vapidPublicKeyBytes,
+  writeNotificationRegistration,
 } from "./session-notifications.js";
 
-const notificationHook = vi.hoisted(() => ({
-  previousSessions: { current: null as readonly Session[] | null },
-  previousAskRequests: { current: null as readonly never[] | null },
-  seenAskRequests: { current: new Map<string, never>() },
-  refIndex: 0,
-  stateIndex: 0,
-  setters: [] as Mock[],
-}));
+const PUBLIC_KEY = "BOrK6yGWP_i0T7XjsNwdpM5g2-OC-F2sJBuCMH9SF2kb8qRfdHVZb-tPPOXQqvI8LNkoHqO5sP8rv7glORQUsLs";
+const SUBSCRIPTION_JSON: PushSubscriptionPayload = {
+  endpoint: "https://push.example/subscription",
+  keys: {
+    p256dh: PUBLIC_KEY,
+    auth: "AQIDBAUGBwgJCgsMDQ4PEA",
+  },
+};
+const BROWSER_SUBSCRIPTION_JSON = {
+  ...SUBSCRIPTION_JSON,
+  expirationTime: null,
+};
+const NOTIFICATION = {
+  type: "notification_event",
+  event: "inputRequired",
+  title: "Input required",
+  body: "Build is waiting for input.",
+  tag: "session-session-1-ask-1",
+  url: "/?session=session-1",
+} satisfies NotificationEvent;
 
-vi.mock("react", async (importOriginal) => {
-  const actual = await importOriginal<typeof ReactModule>();
+type SubscriptionMock = PushSubscription & { unsubscribe: Mock; toJSON: Mock };
+type ClientMock = SessionNotificationClient & {
+  pushVapidPublicKey: Mock;
+  registerPushSubscription: Mock;
+  updatePushSubscription: Mock;
+  removePushSubscription: Mock;
+};
+
+function subscriptionMock(): SubscriptionMock {
   return {
-    ...actual,
-    useCallback: <T extends (...args: never[]) => unknown>(callback: T) => callback,
-    useEffect: (effect: Parameters<typeof actual.useEffect>[0]) => void effect(),
-    useRef: () => {
-      const refs = [
-        notificationHook.previousSessions,
-        notificationHook.previousAskRequests,
-        notificationHook.seenAskRequests,
-      ];
-      const ref = refs[notificationHook.refIndex % refs.length];
-      notificationHook.refIndex += 1;
-      return ref;
-    },
-    useState: () => {
-      const browserPermission =
-        typeof window !== "undefined" && window.Notification ? String(window.Notification.permission) : "";
-      const initialPreferences =
-        browserPermission === "prompt"
-          ? { inputRequired: false, sessionIdle: false }
-          : { inputRequired: true, sessionIdle: true };
-      const values = ["enabled", initialPreferences, null] as const;
-      const value = values[notificationHook.stateIndex % values.length];
-      notificationHook.stateIndex += 1;
-      const setter = vi.fn((update: unknown) => {
-        if (typeof update === "function") (update as (value: unknown) => unknown)(value);
-      });
-      notificationHook.setters.push(setter);
-      return [value, setter];
-    },
+    unsubscribe: vi.fn().mockResolvedValue(true),
+    toJSON: vi.fn(() => BROWSER_SUBSCRIPTION_JSON),
+  } as unknown as SubscriptionMock;
+}
+function clientMock(): ClientMock {
+  return {
+    connection: "connected",
+    subscribeNotificationEvents: vi.fn(() => vi.fn()),
+    pushVapidPublicKey: vi.fn().mockResolvedValue(PUBLIC_KEY),
+    registerPushSubscription: vi.fn().mockResolvedValue(undefined),
+    updatePushSubscription: vi.fn().mockResolvedValue(undefined),
+    removePushSubscription: vi.fn().mockResolvedValue(undefined),
   };
-});
-
-const BASE_SESSION: Session = {
-  id: "session-1",
-  source: "extension",
-  name: "Notification work",
-  cwd: "/work/omp-remote",
-  branch: "change/session-notifications",
-  status: "running",
-  connected: true,
-  model: "openai/gpt-5.6",
-  contextPercent: 12,
-  createdAt: "2026-07-30T12:00:00.000Z",
-  lastActivity: "2026-07-30T12:01:00.000Z",
-  capabilities: ["prompt", "steer", "follow_up", "abort"],
-  messages: [],
-  sessionPath: "/work/.omp/session.jsonl",
-  activeSubagents: [],
-  skillCommands: [],
-};
-
-const WORKER_SESSION: Session = {
-  ...BASE_SESSION,
-  id: "session-worker",
-  name: "NotificationWorker",
-  sessionPath: "/work/.omp/session/NotificationWorker.jsonl",
-};
-
-const ACTIVE_WORKER = {
-  id: WORKER_SESSION.id,
-  name: "NotificationWorker",
-  lastActivity: WORKER_SESSION.lastActivity,
-};
-
-describe("findSessionNotifications", () => {
-  it("notifies when a running session becomes idle", () => {
-    expect(findSessionNotifications([BASE_SESSION], [{ ...BASE_SESSION, status: "idle" }])).toEqual([
-      {
-        title: "Session idle",
-        body: "Notification work finished and is idle.",
-        tag: "session-session-1-idle",
-        url: "/?session=session-1",
-      },
-    ]);
-  });
-
-  it("notifies whenever a connected session starts waiting for input", () => {
-    expect(findSessionNotifications([BASE_SESSION], [{ ...BASE_SESSION, status: "waiting" }])).toEqual([
-      {
-        title: "Input required",
-        body: "Notification work is waiting for input.",
-        tag: "session-session-1-waiting",
-        url: "/?session=session-1",
-      },
-    ]);
-  });
-
-  it("does not notify for a nested worker before active membership is synchronized", () => {
-    expect(
-      findSessionNotifications(
-        [BASE_SESSION, WORKER_SESSION],
-        [BASE_SESSION, { ...WORKER_SESSION, status: "idle" }],
-      ),
-    ).toEqual([]);
-  });
-
-  it("does not notify for a nested worker after active membership clears", () => {
-    const parentWithWorker = { ...BASE_SESSION, activeSubagents: [ACTIVE_WORKER] };
-
-    expect(
-      findSessionNotifications(
-        [parentWithWorker, WORKER_SESSION],
-        [BASE_SESSION, { ...WORKER_SESSION, status: "waiting" }],
-      ),
-    ).toEqual([]);
-  });
-
-  it("does not notify for a nested worker when its parent is absent from one snapshot", () => {
-    expect(
-      findSessionNotifications([BASE_SESSION, WORKER_SESSION], [{ ...WORKER_SESSION, status: "waiting" }]),
-    ).toEqual([]);
-    expect(
-      findSessionNotifications([WORKER_SESSION], [BASE_SESSION, { ...WORKER_SESSION, status: "waiting" }]),
-    ).toEqual([]);
-  });
-
-  it("keeps parent notifications while suppressing its nested worker", () => {
-    expect(
-      findSessionNotifications(
-        [BASE_SESSION, WORKER_SESSION],
-        [
-          { ...BASE_SESSION, status: "idle" },
-          { ...WORKER_SESSION, status: "waiting" },
-        ],
-      ),
-    ).toEqual([
-      {
-        title: "Session idle",
-        body: "Notification work finished and is idle.",
-        tag: "session-session-1-idle",
-        url: "/?session=session-1",
-      },
-    ]);
-  });
-
-  it("encodes reserved and Unicode session ID characters exactly once", () => {
-    const session = { ...BASE_SESSION, id: "team/a?b=c & café%done" };
-
-    expect(findSessionNotifications([session], [{ ...session, status: "waiting" }])[0]?.url).toBe(
-      "/?session=team%2Fa%3Fb%3Dc+%26+caf%C3%A9%25done",
-    );
-  });
-
-  it("does not notify for snapshots, repeated states, new sessions, history, or disconnected sessions", () => {
-    expect(findSessionNotifications(null, [BASE_SESSION])).toEqual([]);
-    expect(findSessionNotifications([BASE_SESSION], [BASE_SESSION])).toEqual([]);
-    expect(
-      findSessionNotifications([BASE_SESSION], [{ ...BASE_SESSION, id: "new-session", status: "waiting" }]),
-    ).toEqual([]);
-    expect(
-      findSessionNotifications(
-        [{ ...BASE_SESSION, source: "history" }],
-        [{ ...BASE_SESSION, source: "history", status: "idle" }],
-      ),
-    ).toEqual([]);
-    expect(
-      findSessionNotifications(
-        [{ ...BASE_SESSION, connected: false }],
-        [{ ...BASE_SESSION, connected: false, status: "idle" }],
-      ),
-    ).toEqual([]);
-  });
-
-  it("falls back to the working directory when a session has no name", () => {
-    const unnamed = { ...BASE_SESSION, name: null };
-    expect(findSessionNotifications([unnamed], [{ ...unnamed, status: "waiting" }])[0]?.body).toBe(
-      "/work/omp-remote is waiting for input.",
-    );
-  });
-});
-
-const RICH_ASK = {
-  sessionId: BASE_SESSION.id,
-  requestId: "rich-ask",
-  kind: "select",
-  title: "Choose",
-  options: ["A", "B"],
-  initialValue: null,
-  expiresAt: null,
-} satisfies AskRequest;
-
-const LEGACY_ASK = {
-  sessionId: BASE_SESSION.id,
-  title: "Legacy question",
-  message: "Continue?",
-} as unknown as AskRequest;
-
-describe("Ask discovery and preference persistence", () => {
-  it("deduplicates rich and legacy identities without alerting on initial snapshots", () => {
-    expect(findSessionNotifications(null, [BASE_SESSION], [], [RICH_ASK])).toEqual([]);
-    expect(findSessionNotifications([BASE_SESSION], [BASE_SESSION], [], [RICH_ASK])).toHaveLength(1);
-    expect(findSessionNotifications([BASE_SESSION], [BASE_SESSION], [RICH_ASK], [RICH_ASK])).toEqual([]);
-    expect(findSessionNotifications([BASE_SESSION], [BASE_SESSION], [], [LEGACY_ASK])).toHaveLength(1);
-    expect(findSessionNotifications([BASE_SESSION], [BASE_SESSION], [LEGACY_ASK], [LEGACY_ASK])).toEqual([]);
-  });
-
-  it("collapses an Ask and waiting transition while preserving main-session filtering", () => {
-    expect(
-      findSessionNotifications([BASE_SESSION], [{ ...BASE_SESSION, status: "waiting" }], [], [RICH_ASK]),
-    ).toHaveLength(1);
-    expect(
-      findSessionNotifications(
-        [BASE_SESSION, WORKER_SESSION],
-        [
-          { ...BASE_SESSION, status: "waiting" },
-          { ...WORKER_SESSION, status: "waiting" },
-        ],
-        [],
-        [{ ...RICH_ASK, sessionId: WORKER_SESSION.id }],
-      ),
-    ).toHaveLength(1);
-    expect(
-      findSessionNotifications(
-        [{ ...BASE_SESSION, source: "history" }],
-        [{ ...BASE_SESSION, source: "history" }],
-        [],
-        [RICH_ASK],
-      ),
-    ).toEqual([]);
-    expect(
-      findSessionNotifications(
-        [{ ...BASE_SESSION, connected: false }],
-        [{ ...BASE_SESSION, connected: false }],
-        [],
-        [RICH_ASK],
-      ),
-    ).toEqual([]);
-  });
-
-  it("defaults missing granted storage on once and keeps invalid records off", () => {
-    let stored: string | null = null;
-    vi.stubGlobal("window", {
-      localStorage: {
-        getItem: () => stored,
-        setItem: (_key: string, value: string) => {
-          stored = value;
-        },
-      },
-    });
-    writeNotificationPreferences({ inputRequired: true, sessionIdle: false });
-    expect(readNotificationPreferences()).toEqual({ inputRequired: true, sessionIdle: false });
-    stored = JSON.stringify({ version: 999, events: { inputRequired: true, sessionIdle: true } });
-    expect(readNotificationPreferences()).toBeNull();
-    expect(NOTIFICATION_PREFERENCES_STORAGE_KEY).toContain("notification-preferences");
-    vi.unstubAllGlobals();
-  });
-});
-function resetNotificationHook(): void {
-  notificationHook.previousSessions.current = null;
-  notificationHook.previousAskRequests.current = null;
-  notificationHook.seenAskRequests.current.clear();
-  notificationHook.refIndex = 0;
-  notificationHook.stateIndex = 0;
-  notificationHook.setters.length = 0;
 }
 
-function setupPermission(
-  permission: NotificationPermission | "prompt",
-  requestPermission: Mock = vi.fn().mockResolvedValue(permission === "prompt" ? "granted" : permission),
-  initialStored: string | null = null,
-): {
-  notification: typeof Notification;
-  getStored(): { events: { inputRequired: boolean; sessionIdle: boolean } } | null;
-  resync(): void;
-} {
-  let stored: string | null = initialStored;
-  let visibilityHandler: (() => void) | undefined;
+interface BrowserSetup {
+  permission?: NotificationPermission;
+  requestPermission?: Mock;
+  secure?: boolean;
+  subscription?: SubscriptionMock | null;
+  stored?: string | null;
+  setItemFailure?: Error | null;
+}
+
+function setupBrowser({
+  permission = "granted",
+  requestPermission = vi.fn().mockResolvedValue("granted"),
+  secure = true,
+  subscription = null,
+  stored = null,
+  setItemFailure = null,
+}: BrowserSetup = {}) {
+  let storage = stored;
+  const subscribed = subscriptionMock();
+  const getSubscription = vi.fn().mockResolvedValue(subscription);
+  const subscribe = vi.fn().mockResolvedValue(subscribed);
+  const showNotification = vi.fn().mockResolvedValue(undefined);
+  const pushManager = { getSubscription, subscribe };
+  const registration = { pushManager, showNotification } as unknown as ServiceWorkerRegistration;
   const notification = { permission, requestPermission } as unknown as typeof Notification;
+  const localStorage = {
+    getItem: vi.fn(() => storage),
+    setItem: vi.fn((_key: string, value: string) => {
+      if (setItemFailure) throw setItemFailure;
+      storage = value;
+    }),
+  };
   vi.stubGlobal("window", {
+    isSecureContext: secure,
     Notification: notification,
-    localStorage: {
-      getItem: () => stored,
-      setItem: (_key: string, value: string) => {
-        stored = value;
-      },
-    },
+    PushManager: class PushManagerMock {},
+    crypto: { randomUUID: () => "device-generated" },
+    localStorage,
   });
   vi.stubGlobal("Notification", notification);
-  vi.stubGlobal("document", {
-    addEventListener: (_event: string, handler: () => void) => {
-      visibilityHandler = handler;
-    },
-    removeEventListener: vi.fn(),
-  });
+  vi.stubGlobal("navigator", { serviceWorker: { ready: Promise.resolve(registration) } });
+  vi.stubGlobal("crypto", { randomUUID: () => "device-generated" });
   return {
-    notification,
-    getStored: () => (stored ? JSON.parse(stored) : null),
-    resync: () => visibilityHandler?.(),
+    getStored: () => storage,
+    getSubscription,
+    localStorage,
+    registration,
+    requestPermission,
+    showNotification,
+    subscribe,
+    subscribed,
   };
 }
 
-describe("notification permission transitions", () => {
-  afterEach(() => {
-    resetNotificationHook();
-    vi.unstubAllGlobals();
+function storedRegistration(events = { inputRequired: true, sessionIdle: false }): string {
+  return JSON.stringify({
+    version: NOTIFICATION_PREFERENCES_VERSION,
+    deviceId: "device-existing",
+    vapidPublicKey: PUBLIC_KEY,
+    events,
+  });
+}
+
+function deferredPromise<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("Push support and per-device storage", () => {
+  it("requires a secure context, Notifications, service workers, and PushManager", () => {
+    setupBrowser({ secure: false });
+    expect(isPushNotificationSupported()).toBe(false);
+    setupBrowser();
+    expect(isPushNotificationSupported()).toBe(true);
   });
 
-  it("requests permission and persists only the selected event after a grant", async () => {
-    resetNotificationHook();
-    const requestPermission = vi.fn().mockResolvedValue("granted");
-    const browser = setupPermission("prompt", requestPermission);
-    const notifications = useSessionNotifications([BASE_SESSION]);
-    await notifications.toggleEvent("sessionIdle", true);
-    expect(requestPermission).toHaveBeenCalledOnce();
-    expect(browser.getStored()?.events).toEqual({ inputRequired: false, sessionIdle: true });
-  });
-
-  it("clears stored events on denial, blocked, unsupported, and thrown request", async () => {
-    const denied = setupPermission("prompt", vi.fn().mockResolvedValue("denied"));
-    await useSessionNotifications([BASE_SESSION]).toggleEvent("inputRequired", true);
-    expect(denied.getStored()?.events).toEqual({ inputRequired: false, sessionIdle: false });
-
-    resetNotificationHook();
-    const blocked = setupPermission("denied");
-    await useSessionNotifications([BASE_SESSION]).toggleEvent("inputRequired", true);
-    expect(blocked.getStored()?.events).toEqual({ inputRequired: false, sessionIdle: false });
-
-    resetNotificationHook();
-    let unsupportedStored: string | null = null;
-    vi.stubGlobal("window", {
-      localStorage: {
-        getItem: () => null,
-        setItem: (_key: string, value: string) => {
-          unsupportedStored = value;
-        },
-      },
+  it("keeps preference-only version 1 records off until this device is explicitly re-enabled", () => {
+    setupBrowser({
+      stored: JSON.stringify({
+        version: 1,
+        events: { inputRequired: true, sessionIdle: true },
+      }),
     });
-    await useSessionNotifications([BASE_SESSION]).toggleEvent("inputRequired", true);
-    expect(unsupportedStored ? JSON.parse(unsupportedStored).events : null).toEqual({
-      inputRequired: false,
-      sessionIdle: false,
-    });
-    expect(notificationHook.setters[1]).toHaveBeenCalled();
-
-    resetNotificationHook();
-    const thrown = setupPermission("prompt", vi.fn().mockRejectedValue(new Error("denied by browser")));
-    await useSessionNotifications([BASE_SESSION]).toggleEvent("inputRequired", true);
-    expect(thrown.getStored()?.events).toEqual({ inputRequired: false, sessionIdle: false });
-    expect(notificationHook.setters[2]).toHaveBeenCalledWith("Could not enable notifications. Try again.");
+    expect(readNotificationPreferences()).toBeNull();
   });
 
-  it("retries a thrown request and resynchronizes stored preferences on visibility", async () => {
-    const requestPermission = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("temporary"))
-      .mockResolvedValue("granted");
-    const browser = setupPermission("prompt", requestPermission);
-    const notifications = useSessionNotifications([BASE_SESSION]);
-    await notifications.toggleEvent("inputRequired", true);
-    await notifications.toggleEvent("inputRequired", true);
-    expect(requestPermission).toHaveBeenCalledTimes(2);
-    expect(browser.getStored()?.events).toEqual({ inputRequired: true, sessionIdle: false });
-
-    resetNotificationHook();
-    const resync = setupPermission("denied");
-    writeNotificationPreferences({ inputRequired: false, sessionIdle: true });
-    useSessionNotifications([BASE_SESSION]);
-    const mutableNotification = resync.notification as { permission: NotificationPermission };
-    mutableNotification.permission = "granted";
-    resync.resync();
-    expect(notificationHook.setters[1]).toHaveBeenCalledWith({ inputRequired: false, sessionIdle: true });
-    resetNotificationHook();
-    const invalid = setupPermission(
-      "granted",
-      undefined,
-      JSON.stringify({ version: 999, events: { inputRequired: true, sessionIdle: true } }),
+  it("persists only the current typed event preferences with its device and VAPID identity", () => {
+    const browser = setupBrowser();
+    expect(
+      writeNotificationRegistration({
+        version: NOTIFICATION_PREFERENCES_VERSION,
+        deviceId: "device-1",
+        vapidPublicKey: PUBLIC_KEY,
+        events: { inputRequired: true, sessionIdle: false },
+      }),
+    ).toBe(true);
+    expect(readNotificationPreferences()).toEqual({ inputRequired: true, sessionIdle: false });
+    expect(JSON.parse(browser.getStored() ?? "null")).toEqual({
+      version: 2,
+      deviceId: "device-1",
+      vapidPublicKey: PUBLIC_KEY,
+      events: { inputRequired: true, sessionIdle: false },
+    });
+    expect(browser.localStorage.setItem).toHaveBeenCalledWith(
+      NOTIFICATION_PREFERENCES_STORAGE_KEY,
+      expect.any(String),
     );
-    useSessionNotifications([BASE_SESSION]);
-    invalid.resync();
-    expect(notificationHook.setters[1]).toHaveBeenCalledWith({ inputRequired: false, sessionIdle: false });
+  });
 
-    resetNotificationHook();
-    const missing = setupPermission("granted");
-    useSessionNotifications([BASE_SESSION]);
-    missing.resync();
-    expect(notificationHook.setters[1]).toHaveBeenCalledWith({ inputRequired: true, sessionIdle: true });
-    expect(missing.getStored()?.events).toEqual({ inputRequired: true, sessionIdle: true });
+  it("converts the daemon base64url key to the exact 65-byte application server key", () => {
+    const bytes = vapidPublicKeyBytes(PUBLIC_KEY);
+    expect(bytes).toBeInstanceOf(Uint8Array);
+    expect(bytes).toHaveLength(65);
+    expect(() => vapidPublicKeyBytes("too-short")).toThrow("invalid push public key");
   });
 });
 
-describe("direct Notification fallback", () => {
-  afterEach(() => {
-    notificationHook.previousSessions.current = null;
-    notificationHook.previousAskRequests.current = null;
-    notificationHook.seenAskRequests.current.clear();
-    notificationHook.refIndex = 0;
-    notificationHook.stateIndex = 0;
-    vi.unstubAllGlobals();
+describe("explicit Push lifecycle", () => {
+  it("reports unsupported and denied states without requesting or subscribing", async () => {
+    const unsupportedBrowser = setupBrowser({ secure: false });
+    const unsupportedClient = clientMock();
+    await expect(changePushPreference(unsupportedClient, "inputRequired", true)).resolves.toMatchObject({
+      state: "unsupported",
+      preferences: { inputRequired: false, sessionIdle: false },
+    });
+    expect(unsupportedBrowser.subscribe).not.toHaveBeenCalled();
+
+    setupBrowser({ permission: "denied" });
+    const deniedClient = clientMock();
+    await expect(changePushPreference(deniedClient, "inputRequired", true)).resolves.toMatchObject({
+      state: "blocked",
+      preferences: { inputRequired: false, sessionIdle: false },
+    });
+    expect(deniedClient.pushVapidPublicKey).not.toHaveBeenCalled();
   });
 
-  it("closes, navigates to the encoded session URL, and focuses the app window", async () => {
-    let browserNotification:
-      | {
-          close: Mock;
-          onclick: ((event: Event) => void) | null;
-        }
-      | undefined;
-    let href = "https://app.test/?view=compact";
-    const location = {
-      get href() {
-        return href;
-      },
-      set href(url: string) {
-        href = new URL(url, href).href;
-      },
-      assign(url: string) {
-        this.href = url;
-      },
-    };
-    const focus = vi.fn();
-    const notificationConstructor = vi.fn();
-    class NotificationMock {
-      static permission = "granted";
-      static requestPermission = vi.fn();
-      close = vi.fn();
-      onclick: ((event: Event) => void) | null = null;
+  it("requests permission, waits for the ready worker, subscribes, and registers only the selected event", async () => {
+    const requestPermission = vi.fn().mockResolvedValue("granted");
+    const browser = setupBrowser({ permission: "default", requestPermission });
+    const client = clientMock();
 
-      constructor() {
-        notificationConstructor();
-        browserNotification = this;
-      }
-    }
-    vi.stubGlobal("window", { Notification: NotificationMock, location, focus });
-    vi.stubGlobal("document", {
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
+    const result = await changePushPreference(client, "sessionIdle", true);
+
+    expect(requestPermission).toHaveBeenCalledOnce();
+    expect(client.pushVapidPublicKey).toHaveBeenCalledOnce();
+    expect(browser.subscribe).toHaveBeenCalledWith({
+      userVisibleOnly: true,
+      applicationServerKey: expect.any(Uint8Array),
     });
-    vi.stubGlobal("Notification", NotificationMock);
-    vi.stubGlobal("navigator", {
-      serviceWorker: { getRegistration: vi.fn().mockResolvedValue(undefined) },
+    expect(client.registerPushSubscription).toHaveBeenCalledWith({
+      deviceId: "device-generated",
+      subscription: SUBSCRIPTION_JSON,
+      events: { inputRequired: false, sessionIdle: true },
+    });
+    expect(result).toEqual({
+      state: "enabled",
+      preferences: { inputRequired: false, sessionIdle: true },
+      error: null,
+    });
+  });
+
+  it("updates independent preferences without creating a second browser subscription", async () => {
+    const subscription = subscriptionMock();
+    const browser = setupBrowser({ subscription, stored: storedRegistration() });
+    const client = clientMock();
+
+    const result = await changePushPreference(client, "sessionIdle", true);
+
+    expect(browser.subscribe).not.toHaveBeenCalled();
+    expect(client.registerPushSubscription).not.toHaveBeenCalled();
+    expect(client.updatePushSubscription).toHaveBeenCalledWith({
+      deviceId: "device-existing",
+      subscription: SUBSCRIPTION_JSON,
+      events: { inputRequired: true, sessionIdle: true },
+    });
+    expect(result.preferences).toEqual({ inputRequired: true, sessionIdle: true });
+  });
+
+  it("updates the daemon when one event remains, then removes and unsubscribes only this device", async () => {
+    const subscription = subscriptionMock();
+    setupBrowser({
+      subscription,
+      stored: storedRegistration({ inputRequired: true, sessionIdle: true }),
+    });
+    const client = clientMock();
+
+    const oneRemaining = await changePushPreference(client, "inputRequired", false);
+    expect(client.updatePushSubscription).toHaveBeenCalledWith(
+      expect.objectContaining({ events: { inputRequired: false, sessionIdle: true } }),
+    );
+    expect(client.removePushSubscription).not.toHaveBeenCalled();
+    expect(subscription.unsubscribe).not.toHaveBeenCalled();
+    expect(oneRemaining.state).toBe("enabled");
+
+    const disabled = await changePushPreference(client, "sessionIdle", false);
+    expect(client.removePushSubscription).toHaveBeenCalledWith({ deviceId: "device-existing" });
+    expect(subscription.unsubscribe).toHaveBeenCalledOnce();
+    expect(disabled).toEqual({
+      state: "prompt",
+      preferences: { inputRequired: false, sessionIdle: false },
+      error: null,
+    });
+  });
+
+  it("preserves the remaining fallback preference when a partial disable finds no subscription", async () => {
+    setupBrowser({
+      stored: storedRegistration({ inputRequired: true, sessionIdle: true }),
+    });
+    const client = clientMock();
+
+    const result = await changePushPreference(client, "inputRequired", false);
+
+    expect(client.removePushSubscription).toHaveBeenCalledWith({ deviceId: "device-existing" });
+    expect(result).toEqual({
+      state: "prompt",
+      preferences: { inputRequired: false, sessionIdle: true },
+      error: null,
+    });
+    expect(readNotificationPreferences()).toEqual({ inputRequired: false, sessionIdle: true });
+  });
+
+  it("shows a bounded error and never reports enabled when daemon registration fails", async () => {
+    const browser = setupBrowser();
+    const client = clientMock();
+    client.registerPushSubscription.mockRejectedValue(new Error(`host refused ${"x".repeat(700)}`));
+
+    const result = await changePushPreference(client, "inputRequired", true);
+
+    expect(result.state).toBe("error");
+    expect(result.preferences).toEqual({ inputRequired: false, sessionIdle: false });
+    expect(result.error).toHaveLength(500);
+    expect(browser.subscribed.unsubscribe).toHaveBeenCalledOnce();
+    expect(browser.getStored()).toBeNull();
+  });
+
+  it("cleans up a newly registered subscription when local persistence fails", async () => {
+    const browser = setupBrowser({ setItemFailure: new Error("storage unavailable") });
+    const client = clientMock();
+
+    const result = await changePushPreference(client, "inputRequired", true);
+
+    expect(result.state).toBe("error");
+    expect(client.registerPushSubscription).toHaveBeenCalledOnce();
+    expect(client.removePushSubscription).toHaveBeenCalledWith({ deviceId: "device-generated" });
+    expect(browser.subscribed.unsubscribe).toHaveBeenCalledOnce();
+    expect(browser.getStored()).toBeNull();
+  });
+
+  it("rolls an existing daemon update back when local persistence fails", async () => {
+    const subscription = subscriptionMock();
+    setupBrowser({
+      subscription,
+      stored: storedRegistration(),
+      setItemFailure: new Error("storage unavailable"),
+    });
+    const client = clientMock();
+
+    const result = await changePushPreference(client, "sessionIdle", true);
+
+    expect(result.state).toBe("error");
+    expect(client.updatePushSubscription.mock.calls.map(([update]) => update.events)).toEqual([
+      { inputRequired: true, sessionIdle: true },
+      { inputRequired: true, sessionIdle: false },
+    ]);
+    expect(subscription.unsubscribe).not.toHaveBeenCalled();
+  });
+
+  it("rolls a partial disable back and reports rollback failure when compensation fails", async () => {
+    const subscription = subscriptionMock();
+    setupBrowser({
+      subscription,
+      stored: storedRegistration({ inputRequired: true, sessionIdle: true }),
+      setItemFailure: new Error("storage unavailable"),
+    });
+    const client = clientMock();
+    client.updatePushSubscription
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("rollback unavailable"));
+
+    const result = await changePushPreference(client, "inputRequired", false);
+
+    expect(result.state).toBe("error");
+    expect(result.error).toContain("Host rollback failed: rollback unavailable");
+    expect(client.updatePushSubscription.mock.calls.map(([update]) => update.events)).toEqual([
+      { inputRequired: false, sessionIdle: true },
+      { inputRequired: true, sessionIdle: true },
+    ]);
+  });
+});
+
+describe("notification operation serialization", () => {
+  it("serializes rapid independent toggles and commits snapshots in operation order", async () => {
+    const subscription = subscriptionMock();
+    setupBrowser({
+      subscription,
+      stored: storedRegistration({ inputRequired: false, sessionIdle: false }),
+    });
+    const client = clientMock();
+    const firstUpdate = deferredPromise<void>();
+    client.updatePushSubscription.mockImplementationOnce(() => firstUpdate.promise);
+    const queue = createNotificationOperationQueue();
+    const commits: Array<{ inputRequired: boolean; sessionIdle: boolean }> = [];
+
+    const first = queue.run(
+      () => changePushPreference(client, "inputRequired", true),
+      (snapshot) => commits.push(snapshot.preferences),
+    );
+    const second = queue.run(
+      () => changePushPreference(client, "sessionIdle", true),
+      (snapshot) => commits.push(snapshot.preferences),
+    );
+
+    await vi.waitFor(() => expect(client.updatePushSubscription).toHaveBeenCalledTimes(1));
+    expect(client.updatePushSubscription.mock.calls[0]?.[0].events).toEqual({
+      inputRequired: true,
+      sessionIdle: false,
+    });
+    firstUpdate.resolve(undefined);
+    await Promise.all([first, second]);
+
+    expect(client.updatePushSubscription.mock.calls.map(([update]) => update.events)).toEqual([
+      { inputRequired: true, sessionIdle: false },
+      { inputRequired: true, sessionIdle: true },
+    ]);
+    expect(commits).toEqual([
+      { inputRequired: true, sessionIdle: false },
+      { inputRequired: true, sessionIdle: true },
+    ]);
+  });
+
+  it("queues a toggle behind in-flight reconciliation", async () => {
+    const subscription = subscriptionMock();
+    setupBrowser({ subscription, stored: storedRegistration() });
+    const client = clientMock();
+    const registration = deferredPromise<void>();
+    client.registerPushSubscription.mockImplementationOnce(() => registration.promise);
+    const queue = createNotificationOperationQueue();
+    const commits: Array<{ inputRequired: boolean; sessionIdle: boolean }> = [];
+
+    const reconcile = queue.run(
+      () => reconcilePushNotifications(client),
+      (snapshot) => commits.push(snapshot.preferences),
+    );
+    const toggle = queue.run(
+      () => changePushPreference(client, "sessionIdle", true),
+      (snapshot) => commits.push(snapshot.preferences),
+    );
+
+    await vi.waitFor(() => expect(client.registerPushSubscription).toHaveBeenCalledOnce());
+    expect(client.updatePushSubscription).not.toHaveBeenCalled();
+    registration.resolve(undefined);
+    await Promise.all([reconcile, toggle]);
+
+    expect(client.updatePushSubscription).toHaveBeenCalledWith(
+      expect.objectContaining({ events: { inputRequired: true, sessionIdle: true } }),
+    );
+    expect(commits).toEqual([
+      { inputRequired: true, sessionIdle: false },
+      { inputRequired: true, sessionIdle: true },
+    ]);
+  });
+
+  it("continues with the next operation after a failure", async () => {
+    const queue = createNotificationOperationQueue();
+    const commit = vi.fn();
+    const failed = queue.run(() => Promise.reject(new Error("failed operation")), commit);
+    const nextSnapshot = {
+      state: "prompt",
+      preferences: { inputRequired: false, sessionIdle: false },
+      error: null,
+    } as const;
+    const next = queue.run(() => Promise.resolve(nextSnapshot), commit);
+
+    await expect(failed).rejects.toThrow("failed operation");
+    await expect(next).resolves.toEqual(nextSnapshot);
+    expect(commit).toHaveBeenCalledOnce();
+    expect(commit).toHaveBeenCalledWith(nextSnapshot);
+  });
+});
+
+describe("reload reconciliation", () => {
+  it("re-registers an existing local subscription without silently subscribing", async () => {
+    const subscription = subscriptionMock();
+    const browser = setupBrowser({ subscription, stored: storedRegistration() });
+    const client = clientMock();
+
+    const result = await reconcilePushNotifications(client);
+
+    expect(browser.subscribe).not.toHaveBeenCalled();
+    expect(client.registerPushSubscription).toHaveBeenCalledWith({
+      deviceId: "device-existing",
+      subscription: SUBSCRIPTION_JSON,
+      events: { inputRequired: true, sessionIdle: false },
+    });
+    expect(result.state).toBe("enabled");
+  });
+
+  it("does not create or register a subscription when local state is missing", async () => {
+    const browser = setupBrowser();
+    const client = clientMock();
+
+    const result = await reconcilePushNotifications(client);
+
+    expect(browser.subscribe).not.toHaveBeenCalled();
+    expect(client.registerPushSubscription).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      state: "prompt",
+      preferences: { inputRequired: false, sessionIdle: false },
+      error: null,
+    });
+  });
+
+  it("preserves opted-in fallback after removing stale daemon state for a missing subscription", async () => {
+    const browser = setupBrowser({ stored: storedRegistration() });
+    const client = clientMock();
+
+    const result = await reconcilePushNotifications(client);
+    const delivery = await deliverForegroundNotification(NOTIFICATION, result.preferences);
+
+    expect(client.removePushSubscription).toHaveBeenCalledWith({ deviceId: "device-existing" });
+    expect(client.registerPushSubscription).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      state: "prompt",
+      preferences: { inputRequired: true, sessionIdle: false },
+      error: null,
+    });
+    expect(readNotificationPreferences()).toEqual({ inputRequired: true, sessionIdle: false });
+    expect(delivery).toBe("shown");
+    expect(browser.showNotification).toHaveBeenCalledOnce();
+  });
+
+  it("cleans up a known device when notification permission resets", async () => {
+    const subscription = subscriptionMock();
+    setupBrowser({ permission: "default", subscription, stored: storedRegistration() });
+    const client = clientMock();
+
+    const result = await reconcilePushNotifications(client);
+
+    expect(client.removePushSubscription).toHaveBeenCalledWith({ deviceId: "device-existing" });
+    expect(subscription.unsubscribe).toHaveBeenCalledOnce();
+    expect(client.registerPushSubscription).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      state: "prompt",
+      preferences: { inputRequired: true, sessionIdle: false },
+      error: null,
+    });
+  });
+
+  it("unsubscribes an orphan subscription when its local record is invalid", async () => {
+    const subscription = subscriptionMock();
+    setupBrowser({
+      subscription,
+      stored: JSON.stringify({
+        version: 1,
+        events: { inputRequired: true, sessionIdle: true },
+      }),
+    });
+    const client = clientMock();
+
+    const result = await reconcilePushNotifications(client);
+
+    expect(subscription.unsubscribe).toHaveBeenCalledOnce();
+    expect(client.removePushSubscription).not.toHaveBeenCalled();
+    expect(client.registerPushSubscription).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      state: "prompt",
+      preferences: { inputRequired: false, sessionIdle: false },
+      error: null,
+    });
+  });
+
+  it("removes an all-events-off subscription instead of reporting enabled", async () => {
+    const subscription = subscriptionMock();
+    setupBrowser({
+      subscription,
+      stored: storedRegistration({ inputRequired: false, sessionIdle: false }),
+    });
+    const client = clientMock();
+
+    const result = await reconcilePushNotifications(client);
+
+    expect(client.removePushSubscription).toHaveBeenCalledWith({ deviceId: "device-existing" });
+    expect(subscription.unsubscribe).toHaveBeenCalledOnce();
+    expect(client.registerPushSubscription).not.toHaveBeenCalled();
+    expect(result.state).toBe("prompt");
+  });
+
+  it("surfaces unsubscribe false as cleanup failure", async () => {
+    const subscription = subscriptionMock();
+    subscription.unsubscribe.mockResolvedValue(false);
+    setupBrowser({
+      subscription,
+      stored: storedRegistration({ inputRequired: false, sessionIdle: false }),
+    });
+    const client = clientMock();
+
+    const result = await reconcilePushNotifications(client);
+
+    expect(result.state).toBe("error");
+    expect(result.error).toContain("did not remove its push subscription");
+    expect(client.registerPushSubscription).not.toHaveBeenCalled();
+  });
+
+  it("waits for the session transport to connect before reconciling with the daemon", async () => {
+    const subscription = subscriptionMock();
+    setupBrowser({ subscription, stored: storedRegistration() });
+    const client = clientMock();
+    client.connection = "connecting";
+
+    const result = await reconcilePushNotifications(client);
+
+    expect(result.state).toBe("prompt");
+    expect(client.pushVapidPublicKey).not.toHaveBeenCalled();
+    expect(client.registerPushSubscription).not.toHaveBeenCalled();
+  });
+
+  it("requires an explicit re-enable when the daemon VAPID key changed", async () => {
+    const subscription = subscriptionMock();
+    setupBrowser({ subscription, stored: storedRegistration() });
+    const client = clientMock();
+    client.pushVapidPublicKey.mockResolvedValue(`A${PUBLIC_KEY.slice(1)}`);
+
+    const result = await reconcilePushNotifications(client);
+
+    expect(result.state).toBe("error");
+    expect(result.error).toContain("push key changed");
+    expect(client.registerPushSubscription).not.toHaveBeenCalled();
+  });
+});
+
+describe("daemon-authored foreground fallback", () => {
+  it("shows one stable notification with the same-origin session path when Push is inactive", async () => {
+    const browser = setupBrowser();
+
+    const result = await deliverForegroundNotification(NOTIFICATION, {
+      inputRequired: true,
+      sessionIdle: false,
     });
 
-    const session = { ...BASE_SESSION, id: "team/a?b=c & café%done" };
-    useSessionNotifications([session]);
-    useSessionNotifications([{ ...session, status: "waiting" }]);
+    expect(result).toBe("shown");
+    expect(browser.showNotification).toHaveBeenCalledOnce();
+    expect(browser.showNotification).toHaveBeenCalledWith("Input required", {
+      ...SESSION_NOTIFICATION_OPTIONS,
+      body: "Build is waiting for input.",
+      tag: "session-session-1-ask-1",
+      data: { url: "/?session=session-1" },
+    });
+  });
 
-    await vi.waitFor(() => expect(notificationConstructor).toHaveBeenCalledOnce());
-    expect(browserNotification?.onclick).toBeTypeOf("function");
+  it("does not duplicate a daemon event when this browser already has an active Push subscription", async () => {
+    const browser = setupBrowser({ subscription: subscriptionMock() });
 
-    browserNotification?.onclick?.(new Event("click"));
+    const result = await deliverForegroundNotification(NOTIFICATION, {
+      inputRequired: true,
+      sessionIdle: true,
+    });
 
-    expect(browserNotification?.close).toHaveBeenCalledOnce();
-    expect(location.href).toBe("https://app.test/?session=team%2Fa%3Fb%3Dc+%26+caf%C3%A9%25done");
-    expect(focus).toHaveBeenCalledOnce();
+    expect(result).toBe("push-active");
+    expect(browser.showNotification).not.toHaveBeenCalled();
+  });
+
+  it("ignores an event whose independent preference is off", async () => {
+    const browser = setupBrowser();
+    await expect(
+      deliverForegroundNotification(NOTIFICATION, { inputRequired: false, sessionIdle: true }),
+    ).resolves.toBe("ignored");
+    expect(browser.getSubscription).not.toHaveBeenCalled();
+    expect(browser.showNotification).not.toHaveBeenCalled();
   });
 });
