@@ -1,123 +1,44 @@
 import {
   type ActiveSubagent,
-  type AskRequest,
-  type AskResponse,
-  type Effort,
   filterMainSessions,
-  type Session,
   type SessionBranchTopology,
   type SessionFileChangesResponse,
 } from "@omp-remote/protocol";
 import { type FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { SessionBranchSelector } from "./session-branch-selector.js";
-import { formatSessionFileChangesMetadata, SessionFileChangesViewer } from "./session-file-changes-viewer.js";
-import { SubagentSessionViewer } from "./subagent-session-viewer.js";
-import { SessionCostViewer } from "./session-cost-viewer.js";
 import { ModelConfigurationDrawer, useConfigurationController } from "./dashboard/configuration-drawers.js";
 import { EmptyDashboard } from "./dashboard/empty-dashboard.js";
 import { LaunchSessionDialog } from "./dashboard/launch-session-dialog.js";
 import { AbortSessionDialog, KillSessionDialog } from "./dashboard/session-action-dialogs.js";
 import { SessionComposer } from "./dashboard/session-composer.js";
-import { SessionHeader, type NotificationState } from "./dashboard/session-header.js";
+import { SessionHeader } from "./dashboard/session-header.js";
 import { SessionMetadata } from "./dashboard/session-metadata.js";
 import { SessionSidebar } from "./dashboard/session-sidebar.js";
 import { SessionTranscript, WorkingIndicator } from "./dashboard/session-transcript.js";
-import { NotificationSettingsDrawer } from "./notification-settings-drawer.js";
 import { TodoDrawer } from "./dashboard/todo-drawer.js";
-import { Button } from "./ui/button.js";
-import { MessageScrollerItem } from "./ui/message-scroller.js";
-import { SidebarInset, SidebarProvider, useSidebar } from "./ui/sidebar.js";
 import {
   getActiveAskRequest,
   getComposerAction,
   getSkillSuggestions,
   groupSessionsForSidebar,
 } from "./dashboard-actions.js";
+import type { DashboardProps } from "./dashboard-props.js";
+import { NotificationSettingsDrawer } from "./notification-settings-drawer.js";
+import { SessionBranchSelector } from "./session-branch-selector.js";
+import { SessionCostViewer } from "./session-cost-viewer.js";
+import { formatSessionFileChangesMetadata, SessionFileChangesViewer } from "./session-file-changes-viewer.js";
+import { SubagentSessionViewer } from "./subagent-session-viewer.js";
 import {
   findLatestTodoResult,
   getTodoPresentation,
   getTodoTrackerLabel,
 } from "./transcript/todo-tool-transcript.js";
 import { renderTranscriptMessageItems } from "./transcript/transcript-entry.js";
-export { AskToolCall, type AskToolCallProps } from "./ask/ask-tool-call.js";
-export {
-  canKillSession,
-  formatSubagentActivityLabel,
-  getActiveAskRequest,
-  getComposerAction,
-  getSkillSuggestions,
-  groupSessionsForSidebar,
-} from "./dashboard-actions.js";
-export { parseTodoResult } from "./todo-parser.js";
-export type {
-  TodoActivePhase,
-  TodoOverallProgress,
-  TodoPhase,
-  TodoResult,
-  TodoTask,
-  TodoTaskState,
-} from "./todo-parser.js";
-export { parseInlineTranscript } from "./transcript/inline-markup.js";
-export type { InlineTranscriptToken } from "./transcript/inline-markup.js";
-export { tokenizeBashTitle } from "./transcript/bash-title.js";
-export type { BashTitleToken, BashTitleTokenKind } from "./transcript/bash-title.js";
-export { tokenizeCode } from "./transcript/code-tokenizer.js";
-export type { SyntaxToken, SyntaxTokenKind } from "./transcript/code-tokenizer.js";
-export { parseTranscriptBlocks } from "./transcript/blocks.js";
-export { TranscriptCodeBlock, TranscriptText, formatSystemTextPreview } from "./transcript/code-block.js";
-export { formatToolTextPreview, ToolTranscriptText } from "./transcript/tool-transcript.js";
-export { parseDisclosureImages } from "./transcript/disclosure-content.js";
-export type { DisclosureTranscriptSegment } from "./transcript/disclosure-content.js";
-export {
-  findLatestTodoResult,
-  TodoToolTranscript,
-} from "./transcript/todo-tool-transcript.js";
-export {
-  MessageScrollerScrollController,
-  renderTranscriptMessageItems,
-  SystemTranscriptText,
-  TranscriptEntry,
-} from "./transcript/transcript-entry.js";
-export { WorkingIndicator } from "./dashboard/session-transcript.js";
+import { Button } from "./ui/button.js";
+import { MessageScrollerItem } from "./ui/message-scroller.js";
+import { SidebarInset, SidebarProvider, useSidebar } from "./ui/sidebar.js";
 
-type ComposerMode = "prompt" | "steer" | "follow_up";
-
-type NotificationEventKey = "inputRequired" | "sessionIdle";
-type NotificationEventPreferences = Record<NotificationEventKey, boolean>;
-
-export interface DashboardProps {
-  sessions: Session[];
-  askRequests: AskRequest[];
-  savedWorkingDirectories: string[];
-  sessionsReady: boolean;
-  historyLoading: boolean;
-  hasMoreHistory: boolean;
-  connection: "connecting" | "connected" | "disconnected";
-  error: string | null;
-  notificationState: NotificationState;
-  notificationPreferences?: NotificationEventPreferences;
-  notificationError?: string | null;
-  selectedSessionId: string | null;
-  onSelectedSessionChange(sessionId: string): void;
-  onToggleNotification?(event: NotificationEventKey, enabled: boolean): Promise<void>;
-  onLaunch(cwd: string, resume: string | null): Promise<string>;
-  onSaveWorkingDirectory(cwd: string): Promise<void>;
-  onRemoveWorkingDirectory(cwd: string): Promise<void>;
-  onCommand(sessionId: string, command: ComposerMode, text: string): Promise<void>;
-  onAbort(sessionId: string): Promise<void>;
-  onKill(sessionId: string): Promise<void>;
-  onSetModel(sessionId: string, model: string): Promise<void>;
-  onSetEffort(sessionId: string, effort: Effort): Promise<void>;
-  onRespondToAsk(sessionId: string, askRequestId: string, response: AskResponse): Promise<void>;
-  onAskActivity(sessionId: string, askRequestId: string): Promise<void>;
-  onSearchHistory(query: string): Promise<void>;
-  onLoadMoreHistory(): Promise<void>;
-  onLoadTranscript(sessionId: string): Promise<void>;
-  onLoadCost(sessionId: string): Promise<void>;
-  onLoadSessionFileChanges(sessionId: string, signal?: AbortSignal): Promise<SessionFileChangesResponse>;
-  onLoadSessionBranchTopology(sessionId: string, signal?: AbortSignal): Promise<SessionBranchTopology>;
-  onSwitchBranch(sessionId: string, branch: string): Promise<void>;
-}
+export * from "./dashboard-exports.js";
+export type { DashboardProps } from "./dashboard-props.js";
 
 export function Dashboard(props: DashboardProps) {
   return (
@@ -155,12 +76,37 @@ function DashboardContent({
   onSearchHistory,
   onLoadMoreHistory,
   onLoadTranscript,
+  onLoadSession,
   onLoadCost,
   onLoadSessionFileChanges,
   onLoadSessionBranchTopology,
   onSwitchBranch,
 }: DashboardProps) {
   const [viewedSubagent, setViewedSubagent] = useState<ActiveSubagent | null>(null);
+  const [subagentDetails, setSubagentDetails] = useState<{
+    id: string;
+    state: "loading" | "loaded" | "error";
+  } | null>(null);
+  const subagentDetailsRequestRef = useRef(0);
+  const requestSubagentDetails = useCallback(
+    (id: string) => {
+      const generation = ++subagentDetailsRequestRef.current;
+      setSubagentDetails({ id, state: "loading" });
+      void onLoadSession(id).then(
+        () => {
+          if (generation === subagentDetailsRequestRef.current) {
+            setSubagentDetails({ id, state: "loaded" });
+          }
+        },
+        () => {
+          if (generation === subagentDetailsRequestRef.current) {
+            setSubagentDetails({ id, state: "error" });
+          }
+        },
+      );
+    },
+    [onLoadSession],
+  );
   const [message, setMessage] = useState("");
   const [activeSkillIndex, setActiveSkillIndex] = useState(0);
   const [autocompleteDismissedFor, setAutocompleteDismissedFor] = useState<string | null>(null);
@@ -371,10 +317,48 @@ function DashboardContent({
     [message, selectedSession?.skillCommands],
   );
   const visibleSkillSuggestions = autocompleteDismissedFor === message ? [] : skillSuggestions;
+  const viewedSubagentIsAdvertised =
+    viewedSubagent !== null &&
+    selectedSession?.activeSubagents.some((subagent) => subagent.id === viewedSubagent.id) === true;
   const viewedSubagentSession = useMemo(
-    () => sessions.find((session) => session.id === viewedSubagent?.id) ?? null,
-    [sessions, viewedSubagent?.id],
+    () =>
+      viewedSubagentIsAdvertised
+        ? (sessions.find((session) => session.id === viewedSubagent?.id) ?? null)
+        : null,
+    [sessions, viewedSubagent?.id, viewedSubagentIsAdvertised],
   );
+  const viewedSubagentIsLoaded = viewedSubagentSession !== null;
+  useEffect(() => {
+    const id = viewedSubagent?.id;
+    if (!id || !sessionsReady || !viewedSubagentIsAdvertised || viewedSubagentIsLoaded) return;
+    requestSubagentDetails(id);
+    return () => {
+      subagentDetailsRequestRef.current += 1;
+    };
+  }, [
+    requestSubagentDetails,
+    sessionsReady,
+    viewedSubagent?.id,
+    viewedSubagentIsAdvertised,
+    viewedSubagentIsLoaded,
+  ]);
+  const retrySubagentDetails = useCallback(() => {
+    const id = viewedSubagent?.id;
+    if (!id || !viewedSubagentIsAdvertised || viewedSubagentIsLoaded) return;
+    requestSubagentDetails(id);
+  }, [requestSubagentDetails, viewedSubagent?.id, viewedSubagentIsAdvertised, viewedSubagentIsLoaded]);
+  const viewedSubagentDetailsState =
+    viewedSubagentSession?.source === "history"
+      ? viewedSubagentSession.messages.length > 0
+        ? "saved"
+        : "empty"
+      : viewedSubagentSession
+        ? "live"
+        : subagentDetails !== null && subagentDetails.id === viewedSubagent?.id
+          ? subagentDetails.state === "loaded"
+            ? "empty"
+            : subagentDetails.state
+          : "loading";
   const {
     availableModels,
     currentModelOption,
@@ -849,6 +833,8 @@ function DashboardContent({
         mobile={isMobile}
         subagent={viewedSubagent}
         session={viewedSubagentSession}
+        detailsState={viewedSubagentDetailsState}
+        onRetry={retrySubagentDetails}
         onOpenChange={(open) => {
           if (!open) setViewedSubagent(null);
         }}
@@ -866,12 +852,22 @@ function DashboardContent({
                 π
               </span>
               <strong>
-                {viewedSubagentSession ? "Waiting for subagent output" : "Connecting to subagent"}
+                {viewedSubagentDetailsState === "live"
+                  ? "Waiting for subagent output"
+                  : viewedSubagentDetailsState === "loading"
+                    ? "Loading saved session"
+                    : viewedSubagentDetailsState === "error"
+                      ? "Session unavailable"
+                      : "Saved session"}
               </strong>
               <p>
-                {viewedSubagentSession
+                {viewedSubagentDetailsState === "live"
                   ? "Live output will appear here as the subagent works."
-                  : "The session will appear as soon as the host publishes it."}
+                  : viewedSubagentDetailsState === "error"
+                    ? "The session could not be loaded. Retry from the session drawer."
+                    : viewedSubagentDetailsState === "loading"
+                      ? "Loading saved output…"
+                      : "No saved output is available for this session."}
               </p>
             </div>
           </MessageScrollerItem>

@@ -26,6 +26,7 @@ const appMocks = vi.hoisted(() => {
     searchHistory: vi.fn(),
     loadMoreHistory: vi.fn(),
     loadTranscript: vi.fn(),
+    loadSession: vi.fn(),
     loadCost: vi.fn(),
     loadSessionFileChanges: vi.fn(),
     loadSessionBranchTopology: vi.fn(),
@@ -67,6 +68,7 @@ vi.mock("./session-notifications.js", () => ({
 
 interface ControlledDashboardProps {
   selectedSessionId?: string | null;
+  onLoadSession?: (sessionId: string) => Promise<void>;
   onLoadSessionFileChanges?: (sessionId: string, signal?: AbortSignal) => Promise<unknown>;
   onLoadSessionBranchTopology?: (sessionId: string, signal?: AbortSignal) => Promise<unknown>;
   onSwitchBranch?: (sessionId: string, branch: string) => Promise<void>;
@@ -121,6 +123,16 @@ describe("App session URL state", () => {
     const [, splash] = (App() as ReactElement<AppContentProps>).props.children;
 
     expect(splash.props.ready).toBe(true);
+  });
+
+  it("wires exact session loading into the dashboard", () => {
+    vi.stubGlobal("window", {
+      location: new URL("https://app.test/"),
+      history: { replaceState: vi.fn() },
+    });
+
+    const [dashboard] = (App() as ReactElement<AppContentProps>).props.children;
+    expect(dashboard.props.onLoadSession).toBe(appMocks.sessionClient.loadSession);
   });
 
   it("wires the session-derived file changes client into the dashboard", () => {

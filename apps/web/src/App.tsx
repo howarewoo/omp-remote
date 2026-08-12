@@ -57,6 +57,7 @@ export default function App() {
         onSearchHistory={client.searchHistory}
         onLoadMoreHistory={client.loadMoreHistory}
         onLoadTranscript={client.loadTranscript}
+        onLoadSession={client.loadSession}
         onLoadCost={client.loadCost}
         onLoadSessionFileChanges={client.loadSessionFileChanges}
         onLoadSessionBranchTopology={client.loadSessionBranchTopology}

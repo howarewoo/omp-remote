@@ -17,6 +17,7 @@ const daemonDirectory = dirname(fileURLToPath(new URL("../package.json", import.
 const temporaryDirectories: string[] = [];
 let daemon: ChildProcess | undefined;
 let daemonPort: number;
+let historyDirectory: string;
 
 async function availablePort(): Promise<number> {
   const server = createServer();
@@ -122,7 +123,7 @@ async function currentBranch(repository: string): Promise<string> {
 
 beforeAll(async () => {
   daemonPort = await availablePort();
-  const historyDirectory = await mkdtemp(join(tmpdir(), "omp-remote-empty-history-"));
+  historyDirectory = await mkdtemp(join(tmpdir(), "omp-remote-empty-history-"));
   temporaryDirectories.push(historyDirectory);
   const rpcFixture = join(historyDirectory, "rpc-fixture.cjs");
   const rpcSessionPath = join(historyDirectory, "sessions", "integration", "rpc-integration.jsonl");
@@ -228,6 +229,146 @@ describe("session transcript fallback integration", () => {
     );
     expect(missingResponse.status).toBe(404);
     live.close();
+  });
+});
+
+describe("exact session details integration", () => {
+  it("refreshes catalog-only child details, keeps pages root-only, prefers live state, and bounds output", async () => {
+    const sessionsDirectory = join(historyDirectory, "sessions", "details-project");
+    const rootPath = join(sessionsDirectory, "details-root.jsonl");
+    const childPath = join(sessionsDirectory, "details-root", "details-child.jsonl");
+    const grandchildPath = join(
+      sessionsDirectory,
+      "details-root",
+      "details-child",
+      "details-grandchild.jsonl",
+    );
+    const header = (id: string, title: string, timestamp: string) => [
+      JSON.stringify({ type: "title", v: 1, title, updatedAt: timestamp }),
+      JSON.stringify({
+        type: "session",
+        version: 3,
+        id,
+        timestamp,
+        cwd: "/workspace/details",
+        title,
+      }),
+    ];
+    const records = Array.from({ length: 205 }, (_, index) =>
+      JSON.stringify({
+        type: "message",
+        id: `details-message-${index}`,
+        timestamp:
+          [
+            "2026-08-01T10",
+            String(Math.floor(index / 60)).padStart(2, "0"),
+            String(index % 60).padStart(2, "0"),
+          ].join(":") + ".000Z",
+        message: {
+          role: index % 2 === 0 ? "user" : "assistant",
+          content: [
+            {
+              type: "text",
+              text: index === 5 ? "x".repeat(20_001) : `Saved detail ${index}`,
+            },
+          ],
+        },
+      }),
+    );
+    await mkdir(dirname(rootPath), { recursive: true });
+    await mkdir(dirname(childPath), { recursive: true });
+    await mkdir(dirname(grandchildPath), { recursive: true });
+    await writeFile(
+      rootPath,
+      `${header("details-root", "Details root", "2026-08-01T10:00:00.000Z").join("\n")}\n`,
+    );
+    await writeFile(
+      childPath,
+      `${[...header("details-child", "Details child", "2026-08-01T10:01:00.000Z"), ...records].join("\n")}\n`,
+    );
+    await writeFile(
+      grandchildPath,
+      `${header("details-grandchild", "Details grandchild", "2026-08-01T10:02:00.000Z").join("\n")}\n`,
+    );
+
+    const detailsResponse = await fetch(`http://127.0.0.1:${daemonPort}/api/sessions/details-child`);
+    expect(detailsResponse.status).toBe(200);
+    const details = (await detailsResponse.json()) as Session;
+    expect(details).toMatchObject({
+      id: "details-child",
+      source: "history",
+      parentSessionId: "details-root",
+    });
+    expect(details.messages).toHaveLength(200);
+    expect(details.messages[0]).toMatchObject({
+      id: "details-message-5",
+      text: `${"x".repeat(20_000)}…`,
+    });
+
+    const catalogResponse = await fetch(`http://127.0.0.1:${daemonPort}/api/sessions`);
+    const catalog = (await catalogResponse.json()) as { sessions: Session[] };
+    expect(catalog.sessions.map((catalogSession) => catalogSession.id)).toContain("details-root");
+    expect(catalog.sessions.map((catalogSession) => catalogSession.id)).not.toContain("details-child");
+    expect(catalog.sessions.map((catalogSession) => catalogSession.id)).not.toContain("details-grandchild");
+
+    const repository = await createRepository();
+    const liveMessages: Session["messages"] = Array.from({ length: 205 }, (_, index) => ({
+      id: `live-detail-${index}`,
+      role: "assistant",
+      text: `Live detail ${index}`,
+      timestamp:
+        [
+          "2026-08-01T11",
+          String(Math.floor(index / 60)).padStart(2, "0"),
+          String(index % 60).padStart(2, "0"),
+        ].join(":") + ".000Z",
+      streaming: index === 204,
+      presentation: "text",
+      ...(index === 204
+        ? {
+            images: [
+              {
+                status: "available" as const,
+                mimeType: "image/png" as const,
+                data: Buffer.from("not a png").toString("base64"),
+              },
+            ],
+          }
+        : {}),
+    }));
+    const live = await registerExtension({
+      ...session("details-child", repository, "running"),
+      name: "Live details child",
+      parentSessionId: "details-root",
+      messages: liveMessages,
+    });
+    try {
+      const liveResponse = await fetch(`http://127.0.0.1:${daemonPort}/api/sessions/details-child`);
+      expect(liveResponse.status).toBe(200);
+      const liveDetails = (await liveResponse.json()) as Session;
+      expect(liveDetails).toMatchObject({
+        id: "details-child",
+        source: "extension",
+        name: "Live details child",
+        status: "running",
+        parentSessionId: "details-root",
+      });
+      expect(liveDetails.messages).toHaveLength(200);
+      expect(liveDetails.messages.at(-1)).toMatchObject({
+        id: "live-detail-204",
+        streaming: true,
+        images: [{ status: "unavailable", reason: "mime_mismatch" }],
+      });
+    } finally {
+      live.close();
+    }
+
+    const unknown = await fetch(`http://127.0.0.1:${daemonPort}/api/sessions/unknown-details-child`);
+    expect(unknown.status).toBe(404);
+    const malformed = await fetch(
+      `http://127.0.0.1:${daemonPort}/api/sessions/${encodeURIComponent("malformed/id")}`,
+    );
+    expect(malformed.status).toBe(404);
   });
 });
 
