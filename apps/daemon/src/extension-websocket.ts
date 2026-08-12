@@ -28,7 +28,6 @@ type ExtensionWebSocketDependencies = {
   pendingAskBySession: Map<string, PendingAsk>;
   sessionCatalog: SessionCatalog;
   registry: SessionRegistry;
-  browserSockets: Set<WebSocket>;
   registerExtensionSession: (session: Session) => Promise<void>;
   ignoreCatalogReconciliationFailure: (reconciliation: Promise<void>) => void;
   sanitizeExtensionSession: <T extends { messages: TranscriptMessage[] }>(
@@ -53,7 +52,6 @@ export function registerExtensionWebSocketRoute(
     pendingAskBySession,
     sessionCatalog,
     registry,
-    browserSockets,
     registerExtensionSession,
     ignoreCatalogReconciliationFailure,
     sanitizeExtensionSession,
@@ -124,8 +122,7 @@ export function registerExtensionWebSocketRoute(
             extensionSessionBySocket,
             extensionSockets,
           ) ||
-          frame.request.kind !== "rich" ||
-          browserSockets.size === 0
+          frame.request.kind !== "rich"
         ) {
           socket.send(
             JSON.stringify({

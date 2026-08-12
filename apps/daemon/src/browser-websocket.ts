@@ -19,6 +19,15 @@ type PendingAsk = {
   source: "rpc" | "extension";
   timeout: AskInactivityTimeout | undefined;
 };
+export function removeBrowserSocket<T>(browserSockets: Set<T>, socket: T): void {
+  browserSockets.delete(socket);
+}
+
+export function pendingAskRequestsForBrowserSnapshot(
+  pendingAskBySession: ReadonlyMap<string, Pick<PendingAsk, "request">>,
+): AskRequest[] {
+  return [...pendingAskBySession.values()].map(({ request }) => request);
+}
 
 type BrowserWebSocketDependencies = {
   browserSockets: Set<WebSocket>;
@@ -38,10 +47,57 @@ type BrowserWebSocketDependencies = {
   refreshRpcState: (sessionId: string, rpc: RpcSession) => Promise<void>;
   clearPendingAsk: (sessionId: string, requestId?: string) => void;
   expirePendingAsk: (sessionId: string, requestId: string, source: "rpc" | "extension") => void;
-  sendExtensionAskUnavailable: (sessionId: string, requestId: string) => void;
   originAllowed: (origin: string | undefined, host: string | undefined) => boolean;
   logger: Logger;
 };
+
+type AskResponseCommand = Extract<BrowserCommand, { type: "ask_response" }>;
+type AskResponseDependencies = {
+  pendingAskBySession: Map<string, PendingAsk>;
+  rpcSessions: Map<string, RpcSession>;
+  extensionSockets: Map<string, WebSocket>;
+  clearPendingAsk: (sessionId: string, requestId?: string) => void;
+};
+
+export async function respondToPendingAsk(
+  command: AskResponseCommand,
+  { pendingAskBySession, rpcSessions, extensionSockets, clearPendingAsk }: AskResponseDependencies,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const pending = pendingAskBySession.get(command.sessionId);
+  if (
+    !pending ||
+    pending.request.requestId !== command.askRequestId ||
+    !isAskResponseValid(pending.request, command.response)
+  ) {
+    return { ok: false, error: "This question is no longer waiting for an answer." };
+  }
+  try {
+    if (pending.source === "rpc") {
+      const rpcSession = rpcSessions.get(command.sessionId);
+      if (pending.request.kind === "rich" || "kind" in command.response) {
+        throw new Error("The RPC ask response did not match its request.");
+      }
+      if (!rpcSession) throw new Error("This OMP session is no longer connected.");
+      await rpcSession.respondToUiRequest(command.askRequestId, command.response);
+    } else {
+      const extensionSocket = extensionSockets.get(command.sessionId);
+      if (extensionSocket?.readyState !== WebSocket.OPEN) {
+        throw new Error("This OMP session is no longer connected.");
+      }
+      extensionSocket.send(
+        JSON.stringify({
+          command: "ask_response",
+          requestId: command.askRequestId,
+          response: command.response,
+        }),
+      );
+    }
+    clearPendingAsk(command.sessionId, command.askRequestId);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "OMP rejected the answer" };
+  }
+}
 
 export function registerBrowserWebSocketRoute(
   app: FastifyInstance,
@@ -61,7 +117,6 @@ export function registerBrowserWebSocketRoute(
     refreshRpcState,
     clearPendingAsk,
     expirePendingAsk,
-    sendExtensionAskUnavailable,
     originAllowed,
     logger,
   }: BrowserWebSocketDependencies,
@@ -75,7 +130,7 @@ export function registerBrowserWebSocketRoute(
     sendToBrowser(socket, {
       type: "snapshot",
       sessions: registry.list(),
-      askRequests: [...pendingAskBySession.values()].map(({ request: askRequest }) => askRequest),
+      askRequests: pendingAskRequestsForBrowserSnapshot(pendingAskBySession),
       savedWorkingDirectories: savedWorkingDirectories.list(),
     });
     socket.on("message", async (raw) => {
@@ -203,59 +258,19 @@ export function registerBrowserWebSocketRoute(
       }
 
       if (command.type === "ask_response") {
-        const pending = pendingAskBySession.get(command.sessionId);
-        if (
-          !pending ||
-          pending.request.requestId !== command.askRequestId ||
-          !isAskResponseValid(pending.request, command.response)
-        ) {
-          sendToBrowser(socket, {
-            type: "command_result",
-            requestId: command.requestId,
-            outcome: {
-              status: "error",
-              error: "This question is no longer waiting for an answer.",
-            },
-          });
-          return;
-        }
-        try {
-          if (pending.source === "rpc") {
-            const rpcSession = rpcSessions.get(command.sessionId);
-            if (pending.request.kind === "rich" || "kind" in command.response) {
-              throw new Error("The RPC ask response did not match its request.");
-            }
-            if (!rpcSession) throw new Error("This OMP session is no longer connected.");
-            await rpcSession.respondToUiRequest(command.askRequestId, command.response);
-          } else {
-            const extensionSocket = extensionSockets.get(command.sessionId);
-            if (extensionSocket?.readyState !== WebSocket.OPEN) {
-              throw new Error("This OMP session is no longer connected.");
-            }
-            extensionSocket.send(
-              JSON.stringify({
-                command: "ask_response",
-                requestId: command.askRequestId,
-                response: command.response,
-              }),
-            );
-          }
-          clearPendingAsk(command.sessionId, command.askRequestId);
-          sendToBrowser(socket, {
-            type: "command_result",
-            requestId: command.requestId,
-            outcome: { status: "ok", value: { type: "void" } },
-          });
-        } catch (error) {
-          sendToBrowser(socket, {
-            type: "command_result",
-            requestId: command.requestId,
-            outcome: {
-              status: "error",
-              error: error instanceof Error ? error.message : "OMP rejected the answer",
-            },
-          });
-        }
+        const response = await respondToPendingAsk(command, {
+          pendingAskBySession,
+          rpcSessions,
+          extensionSockets,
+          clearPendingAsk,
+        });
+        sendToBrowser(socket, {
+          type: "command_result",
+          requestId: command.requestId,
+          outcome: response.ok
+            ? { status: "ok", value: { type: "void" } }
+            : { status: "error", error: response.error },
+        });
         return;
       }
 
@@ -358,13 +373,7 @@ export function registerBrowserWebSocketRoute(
       });
     });
     socket.on("close", () => {
-      browserSockets.delete(socket);
-      if (browserSockets.size > 0) return;
-      for (const [sessionId, pending] of pendingAskBySession) {
-        if (pending.source !== "extension") continue;
-        sendExtensionAskUnavailable(sessionId, pending.request.requestId);
-        clearPendingAsk(sessionId, pending.request.requestId);
-      }
+      removeBrowserSocket(browserSockets, socket);
     });
   });
 }

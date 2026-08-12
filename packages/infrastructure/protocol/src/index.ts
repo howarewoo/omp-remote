@@ -595,6 +595,56 @@ function base64UrlKeyOfBytes(byteLength: number) {
 export const PushEventPreferencesSchema = z
   .object({ inputRequired: z.boolean(), sessionIdle: z.boolean() })
   .strict();
+export const NotificationEventKeySchema = z.enum(["inputRequired", "sessionIdle"]);
+export type NotificationEventKey = z.infer<typeof NotificationEventKeySchema>;
+function containsAsciiControl(path: string): boolean {
+  for (const character of path) {
+    const code = character.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+export const NotificationSessionPathSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(2_048)
+  .refine(
+    (path) =>
+      path.startsWith("/") &&
+      !path.startsWith("//") &&
+      !path.includes("\\") &&
+      !containsAsciiControl(path) &&
+      (() => {
+        try {
+          return new URL(path, "https://omp.invalid").origin === "https://omp.invalid";
+        } catch {
+          return false;
+        }
+      })(),
+    "Notification URL must be a same-origin session path",
+  );
+export const NotificationEventSchema = z
+  .object({
+    type: z.literal("notification_event"),
+    event: NotificationEventKeySchema,
+    title: z.enum(["Input required", "Session idle"]),
+    body: z.string().trim().min(1).max(1_000),
+    tag: z.string().trim().min(1).max(256),
+    url: NotificationSessionPathSchema,
+  })
+  .strict()
+  .superRefine((notification, context) => {
+    const expectedTitle = notification.event === "inputRequired" ? "Input required" : "Session idle";
+    if (notification.title !== expectedTitle) {
+      context.addIssue({
+        code: "custom",
+        message: "Notification title must match its event",
+        path: ["title"],
+      });
+    }
+  });
+export type NotificationEvent = z.infer<typeof NotificationEventSchema>;
 export const PushSubscriptionSchema = z
   .object({
     endpoint: z
@@ -783,6 +833,7 @@ export const ServerFrameSchema = z.discriminatedUnion("type", [
     type: z.literal("saved_working_directories"),
     savedWorkingDirectories: z.array(z.string().trim().min(1)),
   }),
+  NotificationEventSchema,
   CommandResultSchema,
   z.object({ type: z.literal("error"), message: z.string() }),
 ]);
