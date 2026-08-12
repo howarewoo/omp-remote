@@ -58,86 +58,149 @@ export function getSessionBranchTopologyRows(topology: SessionBranchTopology): S
     childrenByParent.set(branch.parent, siblings);
   }
 
-  const laneByName = new Map<string, number>();
-  let nextLane = 0;
-  const resolveLane = (branch: SessionBranchTopologyNode, path = new Set<string>()): number => {
-    const existingLane = laneByName.get(branch.name);
-    if (existingLane !== undefined) return existingLane;
+  const chainByName = new Map<string, string>();
+  const resolveChain = (branch: SessionBranchTopologyNode, path = new Set<string>()): string => {
+    const existingChain = chainByName.get(branch.name);
+    if (existingChain) return existingChain;
     if (path.has(branch.name)) {
-      const cycleLane = nextLane++;
-      laneByName.set(branch.name, cycleLane);
-      return cycleLane;
+      chainByName.set(branch.name, branch.name);
+      return branch.name;
     }
 
     const parentIndex = branch.parent ? indexByName.get(branch.parent) : undefined;
-    if (parentIndex === undefined) {
-      const rootLane = nextLane++;
-      laneByName.set(branch.name, rootLane);
-      return rootLane;
+    const parent = parentIndex === undefined ? undefined : topology.branches[parentIndex];
+    const continuesParent = parent && childrenByParent.get(parent.name)?.[0]?.name === branch.name;
+    if (!parent || !continuesParent) {
+      chainByName.set(branch.name, branch.name);
+      return branch.name;
     }
 
     path.add(branch.name);
-    const parent = topology.branches[parentIndex];
-    if (!parent) {
-      const rootLane = nextLane++;
-      laneByName.set(branch.name, rootLane);
-      path.delete(branch.name);
-      return rootLane;
-    }
-    const parentLane = resolveLane(parent, path);
+    const chain = resolveChain(parent, path);
     path.delete(branch.name);
-    const latestSibling = childrenByParent.get(parent.name)?.[0];
-    const lane = latestSibling?.name === branch.name ? parentLane : nextLane++;
-    laneByName.set(branch.name, lane);
+    chainByName.set(branch.name, chain);
+    return chain;
+  };
+
+  for (const branch of topology.branches) resolveChain(branch);
+
+  const chainIntervals = new Map<string, { start: number; end: number }>();
+  const includeInChain = (chain: string, index: number) => {
+    const interval = chainIntervals.get(chain);
+    if (interval) {
+      interval.start = Math.min(interval.start, index);
+      interval.end = Math.max(interval.end, index);
+    } else {
+      chainIntervals.set(chain, { start: index, end: index });
+    }
+  };
+  const parentChainByChain = new Map<string, string>();
+
+  topology.branches.forEach((branch, index) => {
+    const chain = chainByName.get(branch.name) ?? branch.name;
+    includeInChain(chain, index);
+
+    const parentIndex = branch.parent ? indexByName.get(branch.parent) : undefined;
+    if (parentIndex === undefined || !branch.parent) return;
+    const parentChain = chainByName.get(branch.parent) ?? branch.parent;
+    if (parentChain === chain) return;
+    includeInChain(parentChain, index);
+    parentChainByChain.set(chain, parentChain);
+  });
+
+  const laneIntervals: Array<Array<{ start: number; end: number }>> = [];
+  const laneByChain = new Map<string, number>();
+  const resolveChainLane = (chain: string, path = new Set<string>()): number => {
+    const existingLane = laneByChain.get(chain);
+    if (existingLane !== undefined) return existingLane;
+
+    const parentChain = parentChainByChain.get(chain);
+    let firstLane = 0;
+    if (parentChain && parentChain !== chain && !path.has(chain)) {
+      path.add(chain);
+      firstLane = resolveChainLane(parentChain, path) + 1;
+      path.delete(chain);
+    }
+
+    const interval = chainIntervals.get(chain) ?? { start: 0, end: 0 };
+    let lane = firstLane;
+    while (
+      laneIntervals[lane]?.some(
+        (occupied) => interval.start <= occupied.end && occupied.start <= interval.end,
+      )
+    ) {
+      lane += 1;
+    }
+    const intervalsForLane = laneIntervals[lane] ?? [];
+    intervalsForLane.push(interval);
+    laneIntervals[lane] = intervalsForLane;
+    laneByChain.set(chain, lane);
     return lane;
   };
 
-  for (const branch of topology.branches) resolveLane(branch);
+  for (const branch of topology.branches) {
+    resolveChainLane(chainByName.get(branch.name) ?? branch.name);
+  }
 
-  const laneCount = Math.max(nextLane, 1);
+  const laneByName = new Map(
+    topology.branches.map((branch) => {
+      const chain = chainByName.get(branch.name) ?? branch.name;
+      return [branch.name, laneByChain.get(chain) ?? 0] as const;
+    }),
+  );
   const upperLanes = topology.branches.map(() => new Set<number>());
   const lowerLanes = topology.branches.map(() => new Set<number>());
   const joins = topology.branches.map(() => [] as SessionBranchTopologyJoin[]);
 
   topology.branches.forEach((branch, childIndex) => {
     const parentIndex = branch.parent ? indexByName.get(branch.parent) : undefined;
-    if (parentIndex === undefined) return;
+    if (parentIndex === undefined || !branch.parent) return;
     const childLane = laneByName.get(branch.name) ?? 0;
-    const parentLane = laneByName.get(branch.parent ?? "") ?? 0;
+    const parentLane = laneByName.get(branch.parent) ?? 0;
     const firstIndex = Math.min(childIndex, parentIndex);
     const lastIndex = Math.max(childIndex, parentIndex);
 
-    const sharedLane = childLane === parentLane;
     if (childIndex < parentIndex) {
-      lowerLanes[childIndex]?.add(childLane);
-      if (sharedLane) upperLanes[parentIndex]?.add(childLane);
+      lowerLanes[childIndex]?.add(parentLane);
+      upperLanes[parentIndex]?.add(parentLane);
     } else {
-      upperLanes[childIndex]?.add(childLane);
-      if (sharedLane) lowerLanes[parentIndex]?.add(childLane);
+      upperLanes[childIndex]?.add(parentLane);
+      lowerLanes[parentIndex]?.add(parentLane);
     }
     for (let index = firstIndex + 1; index < lastIndex; index += 1) {
-      upperLanes[index]?.add(childLane);
-      lowerLanes[index]?.add(childLane);
+      upperLanes[index]?.add(parentLane);
+      lowerLanes[index]?.add(parentLane);
     }
-    if (!sharedLane) {
-      joins[parentIndex]?.push({
+    if (childLane !== parentLane) {
+      joins[childIndex]?.push({
         startLane: Math.min(childLane, parentLane),
         endLane: Math.max(childLane, parentLane),
-        direction: childIndex < parentIndex ? "upper" : "lower",
+        direction: childIndex < parentIndex ? "lower" : "upper",
       });
     }
   });
 
-  const lanes = Array.from({ length: laneCount }, (_, lane) => lane);
-  return topology.branches.map((branch, index) => ({
-    branch,
-    index,
-    lane: laneByName.get(branch.name) ?? 0,
-    lanes,
-    upperLanes: [...(upperLanes[index] ?? [])],
-    lowerLanes: [...(lowerLanes[index] ?? [])],
-    joins: joins[index] ?? [],
-  }));
+  return topology.branches.map((branch, index) => {
+    const lane = laneByName.get(branch.name) ?? 0;
+    const rowUpperLanes = [...(upperLanes[index] ?? [])];
+    const rowLowerLanes = [...(lowerLanes[index] ?? [])];
+    const rowJoins = joins[index] ?? [];
+    const lastLane = Math.max(
+      lane,
+      ...rowUpperLanes,
+      ...rowLowerLanes,
+      ...rowJoins.flatMap(({ startLane, endLane }) => [startLane, endLane]),
+    );
+    return {
+      branch,
+      index,
+      lane,
+      lanes: Array.from({ length: lastLane + 1 }, (_, graphLane) => graphLane),
+      upperLanes: rowUpperLanes,
+      lowerLanes: rowLowerLanes,
+      joins: rowJoins,
+    };
+  });
 }
 
 export function filterSessionBranchTopologyRows(
@@ -295,7 +358,7 @@ export function SessionBranchSelector({
                               data-start-lane={join.startLane}
                               data-end-lane={join.endLane}
                               data-direction={join.direction}
-                              data-color={join.endLane % 5}
+                              data-color={join.startLane % 5}
                               style={
                                 {
                                   "--branch-join-start": join.startLane,

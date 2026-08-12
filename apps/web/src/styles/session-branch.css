@@ -110,7 +110,7 @@
   width: 100%;
   min-width: 100%;
   min-height: 2.75rem;
-  grid-template-columns: auto max-content;
+  grid-template-columns: max-content minmax(0, 1fr);
   align-items: stretch;
   padding: 0;
   overflow: visible;
@@ -206,19 +206,19 @@
   width: calc(var(--branch-join-span) * 1rem);
   height: 50%;
   border-color: var(--branch-lane-color);
-  border-right: 1px solid var(--branch-lane-color);
+  border-left: 1px solid var(--branch-lane-color);
 }
 
 .session-branch-node-join[data-direction="upper"] {
   top: 0;
   border-bottom: 1px solid var(--branch-lane-color);
-  border-bottom-right-radius: 0.5rem;
+  border-bottom-left-radius: 0.5rem;
 }
 
 .session-branch-node-join[data-direction="lower"] {
   bottom: 0;
   border-top: 1px solid var(--branch-lane-color);
-  border-top-right-radius: 0.5rem;
+  border-top-left-radius: 0.5rem;
 }
 
 .session-branch-node-dot {

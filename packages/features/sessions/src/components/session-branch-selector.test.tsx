@@ -77,39 +77,34 @@ function branchOptions(node: ReactNode): ReactElement<TestProps>[] {
 }
 
 describe("session branch topology presentation", () => {
-  it("keeps daemon order while assigning only the latest child to its parent's stack lane", () => {
+  it("keeps daemon order while reusing the gt-log fork lane", () => {
     const rows = getSessionBranchTopologyRows(TOPOLOGY);
 
     expect(rows.map(({ branch, lane }) => [branch.name, lane])).toEqual([
       ["feature/child", 0],
       ["feature/parent", 0],
       ["feature/sibling", 1],
-      [LONG_BRANCH, 2],
+      [LONG_BRANCH, 1],
       ["main", 0],
     ]);
     const laneByBranch = new Map(rows.map(({ branch, lane }) => [branch.name, lane]));
     expect(
       rows.every(({ branch, lane }) => !branch.parent || lane >= (laneByBranch.get(branch.parent) ?? lane)),
     ).toBe(true);
+    expect(rows.map(({ lanes }) => lanes.length)).toEqual([1, 1, 2, 2, 1]);
     expect(rows.map(({ upperLanes, lowerLanes }) => [upperLanes, lowerLanes])).toEqual([
       [[], [0]],
       [[0], [0]],
-      [
-        [0, 2],
-        [0, 1, 2],
-      ],
-      [
-        [0, 1, 2],
-        [0, 1],
-      ],
+      [[0], [0]],
+      [[0], [0]],
       [[0], []],
     ]);
     expect(rows.map(({ joins }) => joins)).toEqual([
       [],
-      [{ startLane: 0, endLane: 2, direction: "lower" }],
       [],
-      [],
+      [{ startLane: 0, endLane: 1, direction: "lower" }],
       [{ startLane: 0, endLane: 1, direction: "upper" }],
+      [],
     ]);
     expect(filterSessionBranchTopologyRows(TOPOLOGY, "FEATURE/").map(({ branch }) => branch.name)).toEqual([
       "feature/child",
@@ -122,7 +117,7 @@ describe("session branch topology presentation", () => {
     ).toEqual([["feature/sibling", 0]]);
   });
 
-  it("renders siblings on disconnected parallel lanes with only the latest child stacked", () => {
+  it("renders fork joins on their branch rows instead of stacking them on the parent", () => {
     const output = renderSelector();
     const group = findElements(output, (element) => element.type === RadioGroup)[0];
     const options = branchOptions(output);
@@ -157,7 +152,7 @@ describe("session branch topology presentation", () => {
       ["feature/child", "feature/parent", 0],
       ["feature/parent", "main", 0],
       ["feature/sibling", "main", 1],
-      [LONG_BRANCH, "feature/parent", 2],
+      [LONG_BRANCH, "feature/parent", 1],
       ["main", undefined, 0],
     ]);
     expect(
@@ -175,16 +170,10 @@ describe("session branch topology presentation", () => {
       [
         ["upper", 0],
         ["lower", 0],
-        ["lower", 1],
-        ["upper", 2],
-        ["lower", 2],
       ],
       [
         ["upper", 0],
         ["lower", 0],
-        ["upper", 1],
-        ["lower", 1],
-        ["upper", 2],
       ],
       [["upper", 0]],
     ]);
@@ -196,14 +185,35 @@ describe("session branch topology presentation", () => {
         join.props["data-color"],
       ]),
     ).toEqual([
-      [0, 2, "lower", 2],
-      [0, 1, "upper", 1],
+      [0, 1, "lower", 0],
+      [0, 1, "upper", 0],
     ]);
     expect(dots.map((dot) => dot.props["data-selected"])).toEqual([true, false, false, false, false]);
     expect(names.map((name) => textContent(name))).toEqual(TOPOLOGY.branches.map(({ name }) => name));
     expect(trunkLabel?.props["aria-hidden"]).toBe("true");
     expect(textContent(trunkLabel)).toBe("(trunk)");
     expect(textContent(options.at(-1))).toBe("main(trunk)");
+  });
+
+  it("bounds a TrioSens-sized direct fanout to one reusable fork lane", () => {
+    const children = Array.from({ length: 13 }, (_, index) => ({
+      name: `feature/staging-child-${index + 1}`,
+      parent: "staging",
+    }));
+    const rows = getSessionBranchTopologyRows({
+      sessionId: "triosens-session",
+      currentBranch: children[0]?.name ?? "staging",
+      branches: [...children, { name: "staging", parent: "main" }, { name: "main" }],
+    });
+
+    expect(rows.map(({ branch }) => branch.name)).toEqual([
+      ...children.map(({ name }) => name),
+      "staging",
+      "main",
+    ]);
+    expect(Math.max(...rows.map(({ lanes }) => lanes.length))).toBe(2);
+    expect(rows.slice(1, children.length).every(({ lane }) => lane === 1)).toBe(true);
+    expect(rows.slice(1, children.length).every(({ joins }) => joins.length === 1)).toBe(true);
   });
 
   it("makes the current branch selected and disabled without adding another current label", () => {
