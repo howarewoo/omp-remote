@@ -667,7 +667,7 @@ describe("SessionCatalog", () => {
     const states = {
       assigned: assigned(),
       agentAssigned: [init, message("user", { content: "assign" }, { attribution: "agent" })],
-      yielded: assigned(message("toolResult", { toolName: "yield", details: { status: "success" } })),
+      yielded: assigned(message("toolResult", { toolName: "yield", details: { data: {} } })),
       exited: assigned({ type: "custom", customType: "session_exit" }),
       aborted: assigned(aborted),
       exitSteeredAborted: assigned(
@@ -684,21 +684,25 @@ describe("SessionCatalog", () => {
     );
     const writeRaw = (id: string, records: string[], complete = true) =>
       writeRawSession(childPath(id), header(id), records, complete);
+    const large = (size: number) =>
+      JSON.stringify({ type: "custom", customType: "large", data: "x".repeat(size) });
     await Promise.all([
       writeRaw("partial", ['{"type":"session_init","task":"start"'], false),
       writeRaw("malformed", ['{"type":"session_init","task":"start"}', "not-json"]),
       writeRaw("large-malformed", [
-        '{"type":"session_init","task":"start"}',
+        JSON.stringify(init),
         "x".repeat(20_000),
         JSON.stringify(states.yielded[2]),
       ]),
       writeRaw("unassigned", [JSON.stringify(init)]),
-      writeRaw("large-unassigned", [
-        JSON.stringify({ type: "custom", customType: "large", data: "x".repeat(20_000) }),
+      writeRaw("large-unassigned", [large(20_000)]),
+      writeRaw("large-parked", [
+        JSON.stringify(init),
+        JSON.stringify(assignment),
+        large(140_000),
+        JSON.stringify(states.exited[2]),
       ]),
-      writeRaw("oversized", [
-        JSON.stringify({ type: "custom", customType: "large", data: "x".repeat(140_000) }),
-      ]),
+      writeRaw("oversized", [large(140_000)]),
     ]);
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();

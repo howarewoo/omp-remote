@@ -570,7 +570,7 @@ async function scanSessionLifecycle(
   let offset = 0;
   let assignmentOffset = Number.POSITIVE_INFINITY;
   const limit = Math.min(fileSize, LIFECYCLE_SCAN_BYTES);
-  while (offset < limit) {
+  while (offset < limit && !lifecycle.assigned) {
     const length = Math.min(chunk.length, limit - offset);
     const { bytesRead } = await handle.read(chunk, 0, length, offset);
     if (bytesRead !== length) return finish({ assigned: null, exited: false });
@@ -587,15 +587,19 @@ async function scanSessionLifecycle(
         if (!record) lifecycle.malformed = true;
         else {
           updateSessionLifecycle(record, lifecycle);
-          if (lifecycle.assigned && assignmentOffset === Number.POSITIVE_INFINITY)
+          if (lifecycle.assigned && assignmentOffset === Number.POSITIVE_INFINITY) {
             assignmentOffset = currentOffset;
+            break;
+          }
         }
       }
       newline = carry.indexOf("\n");
     }
   }
-  carry += decoder.end();
-  if (carry) lifecycle.incomplete = true;
+  if (!lifecycle.assigned) {
+    carry += decoder.end();
+    if (carry) lifecycle.incomplete = true;
+  }
   if (lifecycle.malformed || lifecycle.incomplete) return finish({ assigned: null, exited: false });
   if (!lifecycle.assigned) return finish({ assigned: oversized ? null : false, exited: false });
   if (!oversized) return finish({ assigned: true, exited: lifecycle.exited });
@@ -627,9 +631,7 @@ function updateSessionLifecycle(record: Record<string, unknown>, lifecycle: Life
   if (
     record.message.role === "toolResult" &&
     record.message.toolName === "yield" &&
-    record.message.isError !== true &&
-    isRecord(record.message.details) &&
-    record.message.details.status === "success"
+    record.message.isError !== true
   ) {
     lifecycle.exited = true;
   }
