@@ -83,7 +83,10 @@ describe("SessionCatalog", () => {
     const catalog = new SessionCatalog([root]);
     const diff = await catalog.refresh();
 
-    expect(diff.upserted.map((session) => session.id)).toEqual(["session-first"]);
+    expect(diff.upserted.map((session) => session.id)).toEqual(
+      expect.arrayContaining(["session-first", "session-agent", "session-completed-agent"]),
+    );
+    expect(diff.upserted).toHaveLength(3);
     expect(diff.removed).toEqual([]);
     expect(catalog.list({ offset: 0, limit: 1, query: "" })).toEqual({
       sessions: [
@@ -119,6 +122,281 @@ describe("SessionCatalog", () => {
       total: 1,
       nextOffset: null,
     });
+  });
+
+  it("publishes canonical direct topology while keeping catalog pages root-only", async () => {
+    const root = await makeTemporaryDirectory();
+    const rootPath = join(root, "project", "root.jsonl");
+    const childPath = join(root, "project", "root", "child.jsonl");
+    const grandchildPath = join(root, "project", "root", "child", "grandchild.jsonl");
+    await writeSession(rootPath, {
+      id: "topology-root",
+      title: "Root",
+      cwd: "/workspace/project",
+      timestamp: "2026-08-01T10:00:00.000Z",
+    });
+    await writeSession(childPath, {
+      id: "topology-child",
+      title: "Child",
+      cwd: "/workspace/project",
+      timestamp: "2026-08-01T10:01:00.000Z",
+    });
+    await writeSession(grandchildPath, {
+      id: "topology-grandchild",
+      title: "Grandchild",
+      cwd: "/workspace/project",
+      timestamp: "2026-08-01T10:02:00.000Z",
+    });
+
+    const catalog = new SessionCatalog([root]);
+    const diff = await catalog.refresh();
+
+    expect(diff.upserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "topology-root", parentSessionId: null }),
+        expect.objectContaining({ id: "topology-child", parentSessionId: "topology-root" }),
+        expect.objectContaining({ id: "topology-grandchild", parentSessionId: "topology-child" }),
+      ]),
+    );
+    expect(catalog.list({ offset: 0, limit: 20, query: "" }).sessions.map((session) => session.id)).toEqual([
+      "topology-root",
+    ]);
+    expect(catalog.get("topology-child")).toEqual(
+      expect.objectContaining({ id: "topology-child", parentSessionId: "topology-root" }),
+    );
+    expect(catalog.get("topology-grandchild")).toEqual(
+      expect.objectContaining({ id: "topology-grandchild", parentSessionId: "topology-child" }),
+    );
+  });
+
+  it("retains proven child topology when an ancestor path disappears", async () => {
+    const root = await makeTemporaryDirectory();
+    const rootPath = join(root, "project", "root.jsonl");
+    const childPath = join(root, "project", "root", "child.jsonl");
+    const rootHeader = {
+      id: "retained-root",
+      title: "Root",
+      cwd: "/workspace/project",
+      timestamp: "2026-08-01T10:00:00.000Z",
+    };
+    const childHeader = {
+      id: "retained-child",
+      title: "Child",
+      cwd: "/workspace/project",
+      timestamp: "2026-08-01T10:01:00.000Z",
+    };
+    await writeSession(rootPath, rootHeader);
+    await writeSession(childPath, childHeader);
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    await rm(rootPath);
+    await writeSession(childPath, childHeader, [{ type: "custom", customType: "session_exit" }]);
+    const diff = await catalog.refresh();
+
+    expect(catalog.get("retained-child")).toEqual(
+      expect.objectContaining({ id: "retained-child", parentSessionId: "retained-root" }),
+    );
+    expect(catalog.list({ offset: 0, limit: 20, query: "" })).toMatchObject({
+      sessions: [],
+      total: 0,
+      nextOffset: null,
+    });
+    expect(diff.upserted).toEqual([
+      expect.objectContaining({ id: "retained-child", parentSessionId: "retained-root" }),
+    ]);
+  });
+
+  it("retains a grandchild direct parent when the intermediate child path disappears", async () => {
+    const root = await makeTemporaryDirectory();
+    const rootPath = join(root, "project", "root.jsonl");
+    const childPath = join(root, "project", "root", "child.jsonl");
+    const grandchildPath = join(root, "project", "root", "child", "grandchild.jsonl");
+    await writeSession(rootPath, {
+      id: "loss-root",
+      title: "Root",
+      cwd: "/workspace/project",
+      timestamp: "2026-08-01T10:00:00.000Z",
+    });
+    await writeSession(childPath, {
+      id: "loss-child",
+      title: "Child",
+      cwd: "/workspace/project",
+      timestamp: "2026-08-01T10:01:00.000Z",
+    });
+    await writeSession(grandchildPath, {
+      id: "loss-grandchild",
+      title: "Grandchild",
+      cwd: "/workspace/project",
+      timestamp: "2026-08-01T10:02:00.000Z",
+    });
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    await rm(childPath);
+    await setModifiedTime(grandchildPath, "2026-08-01T10:03:00.000Z");
+    const diff = await catalog.refresh();
+
+    expect(catalog.get("loss-grandchild")).toEqual(
+      expect.objectContaining({ id: "loss-grandchild", parentSessionId: "loss-child" }),
+    );
+    expect(diff.upserted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "loss-root", activeSubagents: [] }),
+        expect.objectContaining({ id: "loss-grandchild", parentSessionId: "loss-child" }),
+      ]),
+    );
+    expect(diff.upserted).toHaveLength(2);
+    expect(catalog.list({ offset: 0, limit: 20, query: "" }).sessions).toEqual([
+      expect.objectContaining({ id: "loss-root", parentSessionId: null }),
+    ]);
+  });
+
+  it("leaves a first-observed nested path unknown when its immediate parent is absent", async () => {
+    const root = await makeTemporaryDirectory();
+    const rootPath = join(root, "project", "root.jsonl");
+    const grandchildPath = join(root, "project", "root", "missing", "grandchild.jsonl");
+    await writeSession(rootPath, {
+      id: "unknown-root",
+      title: "Root",
+      cwd: "/workspace/project",
+      timestamp: "2026-08-01T10:00:00.000Z",
+    });
+    await writeSession(grandchildPath, {
+      id: "unknown-grandchild",
+      title: "Grandchild",
+      cwd: "/workspace/project",
+      timestamp: "2026-08-01T10:01:00.000Z",
+    });
+
+    const catalog = new SessionCatalog([root]);
+    const diff = await catalog.refresh();
+
+    expect(diff.upserted).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "unknown-grandchild" })]),
+    );
+    expect(catalog.get("unknown-grandchild")).not.toHaveProperty("parentSessionId");
+    expect(catalog.list({ offset: 0, limit: 20, query: "" }).sessions.map((session) => session.id)).toEqual([
+      "unknown-root",
+    ]);
+  });
+
+  it("binds duplicate IDs to the latest catalog entry and its topology", async () => {
+    const root = await makeTemporaryDirectory();
+    const rootPath = join(root, "project", "root.jsonl");
+    const nestedPath = join(root, "project", "root", "duplicate.jsonl");
+    const latestPath = join(root, "other", "duplicate.jsonl");
+    await writeSession(rootPath, {
+      id: "duplicate-root",
+      title: "Root",
+      cwd: "/workspace/project",
+      timestamp: "2026-08-01T10:00:00.000Z",
+    });
+    await writeSession(nestedPath, {
+      id: "duplicate",
+      title: "Nested duplicate",
+      cwd: "/workspace/project",
+      timestamp: "2026-08-01T10:01:00.000Z",
+    });
+    await writeSession(latestPath, {
+      id: "duplicate",
+      title: "Latest duplicate",
+      cwd: "/workspace/other",
+      timestamp: "2026-08-01T10:02:00.000Z",
+    });
+    await setModifiedTime(nestedPath, "2026-08-01T10:01:00.000Z");
+    await setModifiedTime(latestPath, "2026-08-01T10:03:00.000Z");
+
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    expect(catalog.get("duplicate")).toEqual(
+      expect.objectContaining({
+        name: "Latest duplicate",
+        parentSessionId: null,
+        sessionPath: latestPath,
+      }),
+    );
+    expect(catalog.list({ offset: 0, limit: 20, query: "" }).sessions.map((session) => session.id)).toEqual(
+      expect.arrayContaining(["duplicate-root", "duplicate"]),
+    );
+    expect(catalog.list({ offset: 0, limit: 20, query: "" }).total).toBe(2);
+  });
+
+  it("retains direct-parent evidence per path when the selected duplicate changes", async () => {
+    const root = await makeTemporaryDirectory();
+    const firstRootPath = join(root, "first", "root.jsonl");
+    const firstParentPath = join(root, "first", "root", "parent.jsonl");
+    const firstDuplicatePath = join(root, "first", "root", "parent", "duplicate.jsonl");
+    const secondRootPath = join(root, "second", "root.jsonl");
+    const secondParentPath = join(root, "second", "root", "parent.jsonl");
+    const secondDuplicatePath = join(root, "second", "root", "parent", "duplicate.jsonl");
+    await writeSession(firstRootPath, {
+      id: "first-root",
+      title: "First root",
+      cwd: "/workspace/first",
+      timestamp: "2026-08-01T10:00:00.000Z",
+    });
+    await writeSession(firstParentPath, {
+      id: "first-parent",
+      title: "First parent",
+      cwd: "/workspace/first",
+      timestamp: "2026-08-01T10:01:00.000Z",
+    });
+    await writeSession(firstDuplicatePath, {
+      id: "changing-duplicate",
+      title: "First duplicate",
+      cwd: "/workspace/first",
+      timestamp: "2026-08-01T10:02:00.000Z",
+    });
+    await writeSession(secondRootPath, {
+      id: "second-root",
+      title: "Second root",
+      cwd: "/workspace/second",
+      timestamp: "2026-08-01T10:00:00.000Z",
+    });
+    await writeSession(secondParentPath, {
+      id: "second-parent",
+      title: "Second parent",
+      cwd: "/workspace/second",
+      timestamp: "2026-08-01T10:01:00.000Z",
+    });
+    await writeSession(secondDuplicatePath, {
+      id: "changing-duplicate",
+      title: "Second duplicate",
+      cwd: "/workspace/second",
+      timestamp: "2026-08-01T10:03:00.000Z",
+    });
+    await setModifiedTime(firstDuplicatePath, "2026-08-01T10:02:00.000Z");
+    await setModifiedTime(secondDuplicatePath, "2026-08-01T10:03:00.000Z");
+
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+    expect(catalog.get("changing-duplicate")).toEqual(
+      expect.objectContaining({
+        name: "Second duplicate",
+        parentSessionId: "second-parent",
+        sessionPath: secondDuplicatePath,
+      }),
+    );
+
+    await rm(firstParentPath);
+    await writeSession(firstDuplicatePath, {
+      id: "changing-duplicate",
+      title: "First duplicate refreshed",
+      cwd: "/workspace/first",
+      timestamp: "2026-08-01T10:04:00.000Z",
+    });
+    await setModifiedTime(firstDuplicatePath, "2026-08-01T10:04:00.000Z");
+    await catalog.refresh();
+
+    expect(catalog.get("changing-duplicate")).toEqual(
+      expect.objectContaining({
+        name: "First duplicate refreshed",
+        parentSessionId: "first-parent",
+        sessionPath: firstDuplicatePath,
+      }),
+    );
   });
 
   it("loads exact persisted usage only for the requested root and descendants", async () => {
@@ -417,7 +695,11 @@ describe("SessionCatalog", () => {
     ]);
     const diff = await catalog.refresh();
 
-    expect(diff.upserted).toEqual([expect.objectContaining({ id: "session-main", activeSubagents: [] })]);
+    expect(diff.upserted.map((session) => session.id)).toEqual(["session-main", "session-worker"]);
+    expect(diff.upserted).toEqual([
+      expect.objectContaining({ id: "session-main", activeSubagents: [] }),
+      expect.objectContaining({ id: "session-worker", parentSessionId: "session-main" }),
+    ]);
     expect(diff.removed).toEqual([]);
     expect(catalog.list({ offset: 0, limit: 20, query: "" }).sessions[0]?.activeSubagents).toEqual([]);
   });
@@ -659,126 +941,6 @@ describe("SessionCatalog", () => {
         readTarget: "/workspace/project/src/logs.d.ts:raw",
       }),
     ]);
-  });
-
-  it("derives id-less message identities from full text before display truncation", async () => {
-    const root = await makeTemporaryDirectory();
-    const sessionPath = join(root, "project", "long-idless-session.jsonl");
-    const commonPrefix = "x".repeat(20_000);
-    await writeSession(
-      sessionPath,
-      {
-        id: "session-long-idless",
-        title: "Long id-less messages",
-        cwd: "/workspace/project",
-        timestamp: "2026-07-29T12:00:00.000Z",
-      },
-      [
-        {
-          type: "message",
-          timestamp: "2026-07-29T12:01:00.000Z",
-          message: { role: "assistant", content: `${commonPrefix}a` },
-        },
-        {
-          type: "message",
-          timestamp: "2026-07-29T12:01:00.000Z",
-          message: { role: "assistant", content: `${commonPrefix}b` },
-        },
-      ],
-    );
-    const catalog = new SessionCatalog([root]);
-    await catalog.refresh();
-
-    const messages = await catalog.transcript("session-long-idless");
-    expect(messages.map(({ text }) => text)).toEqual([`${commonPrefix}…`, `${commonPrefix}…`]);
-    expect(messages[0]?.id).not.toBe(messages[1]?.id);
-  });
-
-  it("streams the latest 200 meaningful transcript messages on demand", async () => {
-    const root = await makeTemporaryDirectory();
-    const sessionPath = join(root, "project", "long-session.jsonl");
-    const records = Array.from({ length: 205 }, (_, index) => ({
-      type: "message",
-      id: `message-${index}`,
-      timestamp: `2026-07-28T10:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`,
-      message: {
-        role: index % 2 === 0 ? "user" : "assistant",
-        content: [{ type: "text", text: `Message ${index}` }],
-      },
-    }));
-    records.splice(10, 0, {
-      type: "message",
-      id: "empty-tool-call",
-      timestamp: "2026-07-28T10:00:10.500Z",
-      message: { role: "assistant", content: [{ type: "toolCall", text: "" }] },
-    });
-    await writeSession(
-      sessionPath,
-      {
-        id: "session-long",
-        title: "Long session",
-        cwd: "/workspace/project",
-        timestamp: "2026-07-28T10:00:00.000Z",
-      },
-      records,
-    );
-    const catalog = new SessionCatalog([root]);
-    await catalog.refresh();
-
-    const messages = await catalog.transcript("session-long");
-
-    expect(messages).toHaveLength(200);
-    expect(messages[0]).toMatchObject({ id: "message-5", text: "Message 5", streaming: false });
-    expect(messages.at(-1)).toMatchObject({ id: "message-204", text: "Message 204" });
-  });
-  it("selects one root and all descendants while excluding unrelated roots", async () => {
-    const historyRoot = await makeTemporaryDirectory();
-    const worktreeA = join(historyRoot, "worktree-a");
-    const worktreeB = join(historyRoot, "worktree-b");
-    const rootPath = join(historyRoot, "project", "root.jsonl");
-    const childPath = join(historyRoot, "project", "root", "child.jsonl");
-
-    const grandchildPath = join(historyRoot, "project", "root", "child", "grandchild.jsonl");
-    const unrelatedPath = join(historyRoot, "project", "other.jsonl");
-    await writeSession(rootPath, {
-      id: "root-session",
-      title: "Root",
-      cwd: worktreeA,
-      timestamp: "2026-08-01T10:00:00.000Z",
-    });
-    await writeSession(childPath, {
-      id: "child-session",
-      title: "Child",
-      cwd: worktreeB,
-      timestamp: "2026-08-01T10:01:00.000Z",
-    });
-    await writeSession(grandchildPath, {
-      id: "grandchild-session",
-      title: "Grandchild",
-      cwd: worktreeB,
-      timestamp: "2026-08-01T10:02:00.000Z",
-    });
-    await writeSession(unrelatedPath, {
-      id: "other-session",
-      title: "Other",
-      cwd: worktreeA,
-      timestamp: "2026-08-01T10:03:00.000Z",
-    });
-    const catalog = new SessionCatalog([historyRoot]);
-    await catalog.refresh();
-
-    expect(catalog.fileChangeSources("root-session")).toEqual({
-      sources: [
-        { sessionId: "root-session", root: worktreeA, sessionPath: rootPath },
-        { sessionId: "child-session", root: worktreeB, sessionPath: childPath },
-        { sessionId: "grandchild-session", root: worktreeB, sessionPath: grandchildPath },
-      ],
-      truncated: false,
-    });
-    expect(catalog.fileChangeSources("other-session")?.sources).toEqual([
-      { sessionId: "other-session", root: worktreeA, sessionPath: unrelatedPath },
-    ]);
-    expect(catalog.fileChangeSources("missing-session")).toBeUndefined();
   });
 });
 

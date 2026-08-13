@@ -1,0 +1,164 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { SessionCatalog } from "./session-catalog.js";
+
+const temporaryDirectories: string[] = [];
+
+async function makeTemporaryDirectory(): Promise<string> {
+  const directory = await mkdtemp(join(tmpdir(), "omp-remote-catalog-"));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+
+afterEach(async () => {
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true })));
+});
+
+describe("SessionCatalog transcript and file changes", () => {
+  it("derives id-less message identities from full text before display truncation", async () => {
+    const root = await makeTemporaryDirectory();
+    const sessionPath = join(root, "project", "long-idless-session.jsonl");
+    const commonPrefix = "x".repeat(20_000);
+    await writeSession(
+      sessionPath,
+      {
+        id: "session-long-idless",
+        title: "Long id-less messages",
+        cwd: "/workspace/project",
+        timestamp: "2026-07-29T12:00:00.000Z",
+      },
+      [
+        {
+          type: "message",
+          timestamp: "2026-07-29T12:01:00.000Z",
+          message: { role: "assistant", content: `${commonPrefix}a` },
+        },
+        {
+          type: "message",
+          timestamp: "2026-07-29T12:01:00.000Z",
+          message: { role: "assistant", content: `${commonPrefix}b` },
+        },
+      ],
+    );
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    const messages = await catalog.transcript("session-long-idless");
+    expect(messages.map(({ text }) => text)).toEqual([`${commonPrefix}…`, `${commonPrefix}…`]);
+    expect(messages[0]?.id).not.toBe(messages[1]?.id);
+  });
+
+  it("streams the latest 200 meaningful transcript messages on demand", async () => {
+    const root = await makeTemporaryDirectory();
+    const sessionPath = join(root, "project", "long-session.jsonl");
+    const records = Array.from({ length: 205 }, (_, index) => ({
+      type: "message",
+      id: `message-${index}`,
+      timestamp: `2026-07-28T10:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`,
+      message: {
+        role: index % 2 === 0 ? "user" : "assistant",
+        content: [{ type: "text", text: `Message ${index}` }],
+      },
+    }));
+    records.splice(10, 0, {
+      type: "message",
+      id: "empty-tool-call",
+      timestamp: "2026-07-28T10:00:10.500Z",
+      message: { role: "assistant", content: [{ type: "toolCall", text: "" }] },
+    });
+    await writeSession(
+      sessionPath,
+      {
+        id: "session-long",
+        title: "Long session",
+        cwd: "/workspace/project",
+        timestamp: "2026-07-28T10:00:00.000Z",
+      },
+      records,
+    );
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    const messages = await catalog.transcript("session-long");
+
+    expect(messages).toHaveLength(200);
+    expect(messages[0]).toMatchObject({ id: "message-5", text: "Message 5", streaming: false });
+    expect(messages.at(-1)).toMatchObject({ id: "message-204", text: "Message 204" });
+  });
+  it("selects one root and all descendants while excluding unrelated roots", async () => {
+    const historyRoot = await makeTemporaryDirectory();
+    const worktreeA = join(historyRoot, "worktree-a");
+    const worktreeB = join(historyRoot, "worktree-b");
+    const rootPath = join(historyRoot, "project", "root.jsonl");
+    const childPath = join(historyRoot, "project", "root", "child.jsonl");
+
+    const grandchildPath = join(historyRoot, "project", "root", "child", "grandchild.jsonl");
+    const unrelatedPath = join(historyRoot, "project", "other.jsonl");
+    await writeSession(rootPath, {
+      id: "root-session",
+      title: "Root",
+      cwd: worktreeA,
+      timestamp: "2026-08-01T10:00:00.000Z",
+    });
+    await writeSession(childPath, {
+      id: "child-session",
+      title: "Child",
+      cwd: worktreeB,
+      timestamp: "2026-08-01T10:01:00.000Z",
+    });
+    await writeSession(grandchildPath, {
+      id: "grandchild-session",
+      title: "Grandchild",
+      cwd: worktreeB,
+      timestamp: "2026-08-01T10:02:00.000Z",
+    });
+    await writeSession(unrelatedPath, {
+      id: "other-session",
+      title: "Other",
+      cwd: worktreeA,
+      timestamp: "2026-08-01T10:03:00.000Z",
+    });
+    const catalog = new SessionCatalog([historyRoot]);
+    await catalog.refresh();
+
+    expect(catalog.fileChangeSources("root-session")).toEqual({
+      sources: [
+        { sessionId: "root-session", root: worktreeA, sessionPath: rootPath },
+        { sessionId: "child-session", root: worktreeB, sessionPath: childPath },
+        { sessionId: "grandchild-session", root: worktreeB, sessionPath: grandchildPath },
+      ],
+      truncated: false,
+    });
+    expect(catalog.fileChangeSources("other-session")?.sources).toEqual([
+      { sessionId: "other-session", root: worktreeA, sessionPath: unrelatedPath },
+    ]);
+    expect(catalog.fileChangeSources("missing-session")).toBeUndefined();
+  });
+});
+
+interface SessionHeader {
+  id: string;
+  title: string;
+  headerTitle?: string;
+  cwd: string;
+  timestamp?: string | number;
+}
+
+async function writeSession(path: string, header: SessionHeader, records: unknown[] = []): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const lines = [
+    JSON.stringify({ type: "title", v: 1, title: header.title, updatedAt: header.timestamp }),
+    JSON.stringify({
+      type: "session",
+      version: 3,
+      id: header.id,
+      timestamp: header.timestamp,
+      cwd: header.cwd,
+      title: (header.headerTitle ?? header.title) || undefined,
+    }),
+    ...records.map((record) => JSON.stringify(record)),
+  ];
+  await writeFile(path, `${lines.join("\n")}\n`, "utf8");
+}

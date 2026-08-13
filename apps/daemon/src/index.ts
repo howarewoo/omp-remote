@@ -10,48 +10,49 @@ import {
   type AskRequest,
   type AskResponse,
   type NotificationEvent,
-  type Session,
-  type TranscriptMessage,
   type ServerFrame,
+  type Session,
   SessionBranchTopologySchema,
   SessionCatalogPageSchema,
   SessionCostResponseSchema,
   SessionFileChangesResponseSchema,
   SessionTranscriptResponseSchema,
+  type TranscriptMessage,
   validateTranscriptImageBytes,
 } from "@omp-remote/protocol";
 import { SessionRegistry } from "@omp-remote/sessions/services";
 import Fastify from "fastify";
 import { WebSocket } from "ws";
 import { z } from "zod";
+import { BranchTopologyCapacityError, createBranchRuntime } from "./branch-runtime.js";
 import {
   type BrowserFrameDeliveryResult,
   broadcastBrowserFrame,
   sendBrowserFrame,
 } from "./browser-broadcast.js";
+import { registerBrowserWebSocketRoute } from "./browser-websocket.js";
 import {
   createCatalogReconciler,
   createReconciledSessionRegistrar,
   getCatalogSessionMetadataPatch,
+  resolveReconciledSession,
 } from "./catalog-reconciliation.js";
-import { createBranchRuntime, BranchTopologyCapacityError } from "./branch-runtime.js";
-import { registerBrowserWebSocketRoute } from "./browser-websocket.js";
 import { EnvironmentSchema } from "./daemon-schemas.js";
 import { registerExtensionWebSocketRoute } from "./extension-websocket.js";
-import { createRpcSessionRuntime } from "./rpc-session-runtime.js";
+import { NotificationEventTracker } from "./notification-events.js";
+import {
+  createBestEffortPushSender,
+  PushDeliveryError,
+  PushSubscriptionStore,
+} from "./push-subscriptions.js";
 import {
   type AskInactivityTimeout,
   clearAskInactivityTimeout,
   createAskInactivityTimeout,
   expireExtensionAsk,
 } from "./rpc-ask.js";
+import { createRpcSessionRuntime } from "./rpc-session-runtime.js";
 import { SavedWorkingDirectoryStore } from "./saved-working-directories.js";
-import {
-  createBestEffortPushSender,
-  PushDeliveryError,
-  PushSubscriptionStore,
-} from "./push-subscriptions.js";
-import { NotificationEventTracker } from "./notification-events.js";
 import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
 import { collectSessionFileChanges } from "./session-file-changes.js";
 
@@ -126,6 +127,7 @@ const requestCatalogReconciliation = createCatalogReconciler({
 });
 const registerExtensionSession = createReconciledSessionRegistrar({
   registerSession: (session) => registry.upsert(session),
+  resolveSession: (session) => resolveReconciledSession(session, sessionCatalog.get(session.id)),
   requestCatalogReconciliation,
 });
 const { launchRpcSession, refreshRpcState } = createRpcSessionRuntime({
@@ -272,7 +274,6 @@ registerExtensionWebSocketRoute(app, {
   sessionCatalog,
   registry,
   registerExtensionSession,
-  ignoreCatalogReconciliationFailure,
   sanitizeExtensionSession,
   sanitizeTranscriptMessageImages,
   refreshSessionBranch,

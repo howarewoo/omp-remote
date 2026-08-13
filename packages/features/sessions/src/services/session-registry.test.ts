@@ -62,6 +62,22 @@ describe("SessionRegistry", () => {
     expect(registry.list().map((session) => session.id)).toEqual(["newer-session", "older-session"]);
   });
 
+  it("preserves and emits additive parent topology patches", () => {
+    const registry = new SessionRegistry();
+    registry.upsert(BASE_SESSION);
+    const events: unknown[] = [];
+    registry.subscribe((event) => events.push(event));
+
+    registry.update("session-1", { parentSessionId: "parent-session" });
+    registry.update("session-1", { parentSessionId: null });
+
+    expect(registry.get("session-1")?.parentSessionId).toBeNull();
+    expect(events).toEqual([
+      { type: "session_update", sessionId: "session-1", patch: { parentSessionId: "parent-session" } },
+      { type: "session_update", sessionId: "session-1", patch: { parentSessionId: null } },
+    ]);
+  });
+
   it("replaces a streaming message without duplicating it", () => {
     const registry = new SessionRegistry();
     registry.upsert(BASE_SESSION);

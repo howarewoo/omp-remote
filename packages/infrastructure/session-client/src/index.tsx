@@ -11,16 +11,16 @@ import {
   type PushSubscriptionUpdate,
   ServerFrameSchema,
   type Session,
-  SessionBranchTopologySchema,
   type SessionBranchTopology,
+  SessionBranchTopologySchema,
   SessionCatalogPageSchema,
-  SessionCostResponseSchema,
   type SessionCostResponse,
-  type SessionPatch,
-  SessionTranscriptResponseSchema,
-  type SessionTranscriptResponse,
+  SessionCostResponseSchema,
   type SessionFileChangesResponse,
   SessionFileChangesResponseSchema,
+  type SessionPatch,
+  type SessionTranscriptResponse,
+  SessionTranscriptResponseSchema,
 } from "@omp-remote/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -901,6 +901,7 @@ export function patchSession(sessions: Session[], sessionId: string, patch: Sess
   if (patch.lastActivity !== undefined) updated.lastActivity = patch.lastActivity;
   if (patch.capabilities !== undefined) updated.capabilities = patch.capabilities;
   if (patch.sessionPath !== undefined) updated.sessionPath = patch.sessionPath;
+  if (patch.parentSessionId !== undefined) updated.parentSessionId = patch.parentSessionId;
   if (patch.activeSubagents !== undefined) updated.activeSubagents = patch.activeSubagents;
   if (patch.skillCommands !== undefined) updated.skillCommands = patch.skillCommands;
   if (patch.costSummary !== undefined) updated.costSummary = patch.costSummary;

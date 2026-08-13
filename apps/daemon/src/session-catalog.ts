@@ -58,6 +58,7 @@ interface SessionMetadata {
 interface CatalogEntry {
   fingerprint: string;
   path: string;
+  parentPath?: string | null;
   session: Session;
   exited: boolean;
 }
@@ -271,23 +272,61 @@ export class SessionCatalog {
       });
     }
 
+    const entriesWithTopology = new Map<string, CatalogEntry>();
+    for (const entry of entriesByPath.values()) {
+      const rootPath = findRootSessionPath(entry.path, sessionPaths);
+      const parentPath = findNearestParentSessionPath(entry.path, sessionPaths);
+      const immediateParentPath = `${dirname(entry.path)}.jsonl`;
+      const previousEntry = this.#entriesByPath.get(entry.path);
+      const previousParentSessionId = previousEntry?.session.parentSessionId;
+      const previousParentPath = previousEntry?.parentPath;
+      const session = { ...entry.session };
+      delete session.parentSessionId;
+      const missingImmediateParent = !sessionPaths.has(immediateParentPath);
+      let parentSessionId: string | null | undefined;
+      let topologyParentPath: string | null | undefined;
+      if (parentPath && !missingImmediateParent) {
+        parentSessionId = entriesByPath.get(parentPath)?.session.id;
+        topologyParentPath = parentPath;
+      } else if (
+        missingImmediateParent &&
+        previousParentSessionId !== undefined &&
+        previousParentSessionId !== null &&
+        previousParentPath === immediateParentPath
+      ) {
+        parentSessionId = previousParentSessionId;
+        topologyParentPath = previousParentPath;
+      } else if (rootPath === entry.path && parentPath === null) {
+        parentSessionId = null;
+        topologyParentPath = null;
+      }
+      entriesWithTopology.set(entry.path, {
+        ...entry,
+        ...(topologyParentPath === undefined ? {} : { parentPath: topologyParentPath }),
+        session: {
+          ...session,
+          ...(parentSessionId === undefined ? {} : { parentSessionId }),
+        },
+      });
+    }
+    entriesByPath = entriesWithTopology;
+
     const nextEntriesBySessionId = new Map<string, CatalogEntry>();
-    const nextRootEntriesBySessionId = new Map<string, CatalogEntry>();
     for (const entry of entriesByPath.values()) {
       const existing = nextEntriesBySessionId.get(entry.session.id);
       if (!existing || entry.session.lastActivity > existing.session.lastActivity) {
         nextEntriesBySessionId.set(entry.session.id, entry);
       }
-      if (!rootPaths.has(entry.path)) continue;
-      const existingRoot = nextRootEntriesBySessionId.get(entry.session.id);
-      if (!existingRoot || entry.session.lastActivity > existingRoot.session.lastActivity) {
-        nextRootEntriesBySessionId.set(entry.session.id, entry);
-      }
     }
 
+    const nextRootEntriesBySessionId = new Map<string, CatalogEntry>();
+    for (const entry of nextEntriesBySessionId.values()) {
+      if (entry.session.parentSessionId !== null) continue;
+      nextRootEntriesBySessionId.set(entry.session.id, entry);
+    }
     const upserted: Session[] = [];
-    for (const [sessionId, entry] of nextRootEntriesBySessionId) {
-      const previous = this.#rootEntriesBySessionId.get(sessionId);
+    for (const [sessionId, entry] of nextEntriesBySessionId) {
+      const previous = this.#entriesBySessionId.get(sessionId);
       if (
         previous?.path !== entry.path ||
         previous?.fingerprint !== entry.fingerprint ||
@@ -657,6 +696,7 @@ function findNearestParentSessionPath(path: string, sessionPaths: ReadonlySet<st
 
 function sessionsEqual(left: Session, right: Session): boolean {
   return (
+    left.parentSessionId === right.parentSessionId &&
     left.activeSubagents.length === right.activeSubagents.length &&
     left.activeSubagents.every((subagent, index) => {
       const other = right.activeSubagents[index];
