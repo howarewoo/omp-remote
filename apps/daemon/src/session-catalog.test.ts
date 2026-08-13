@@ -696,11 +696,14 @@ describe("SessionCatalog", () => {
       header("large-unassigned", "2026-07-28T10:06:00.000Z"),
       [{ type: "custom", customType: "large", data: "x".repeat(20_000) }],
     );
+    await writeSession(childPath("oversized"), header("oversized", "2026-07-28T10:07:00.000Z"), [
+      { type: "custom", customType: "large", data: "x".repeat(140_000) },
+    ]);
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
     const activeIds = catalog.get("parent")?.activeSubagents?.map(({ id }) => id);
     expect(activeIds).toEqual(
-      expect.arrayContaining(["assigned", "partial", "malformed", "large-malformed"]),
+      expect.arrayContaining(["assigned", "partial", "malformed", "large-malformed", "oversized"]),
     );
     expect(activeIds).toEqual(
       expect.not.arrayContaining(["yielded", "exited", "unassigned", "large-unassigned"]),
