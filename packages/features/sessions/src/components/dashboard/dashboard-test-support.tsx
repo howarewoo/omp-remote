@@ -5,6 +5,11 @@ import { beforeEach, vi } from "vitest";
 import { Dashboard, type DashboardProps } from "../dashboard.js";
 
 const reactHarness = vi.hoisted(() => ({
+  callbackIndex: 0,
+  callbackValues: [] as {
+    callback: (...args: never[]) => unknown;
+    dependencies: readonly unknown[];
+  }[],
   effectsEnabled: true,
   effectIndex: 0,
   effectValues: [] as {
@@ -80,7 +85,21 @@ vi.mock("react", async (importOriginal) => {
     useLayoutEffect: (effect: Parameters<typeof actual.useLayoutEffect>[0]) => {
       if (reactHarness.effectsEnabled) void effect();
     },
-    useCallback: <T extends (...args: never[]) => unknown>(callback: T) => callback,
+    useCallback: <T extends (...args: never[]) => unknown>(callback: T, dependencies: readonly unknown[]) => {
+      const index = reactHarness.callbackIndex++;
+      const previous = reactHarness.callbackValues[index];
+      if (
+        previous &&
+        previous.dependencies.length === dependencies.length &&
+        dependencies.every((dependency, dependencyIndex) =>
+          Object.is(dependency, previous.dependencies[dependencyIndex]),
+        )
+      ) {
+        return previous.callback as T;
+      }
+      reactHarness.callbackValues[index] = { callback, dependencies };
+      return callback;
+    },
     useMemo: <T,>(factory: () => T) => factory(),
     useRef: <T,>(initial: T) => {
       const index = reactHarness.refIndex++;
@@ -118,6 +137,8 @@ function cleanupReactHarnessEffects() {
 
 beforeEach(() => {
   if (reactHarness.lifecycleEffects) cleanupReactHarnessEffects();
+  reactHarness.callbackIndex = 0;
+  reactHarness.callbackValues = [];
   reactHarness.effectsEnabled = true;
   reactHarness.effectIndex = 0;
   reactHarness.effectValues = [];
@@ -228,6 +249,7 @@ export const DASHBOARD_DEFAULTS: DashboardProps = {
   onSearchHistory: vi.fn().mockResolvedValue(undefined),
   onLoadMoreHistory: vi.fn().mockResolvedValue(undefined),
   onLoadTranscript: vi.fn().mockResolvedValue(undefined),
+  onLoadSession: vi.fn().mockResolvedValue(undefined),
   onLoadCost: vi.fn().mockResolvedValue(undefined),
   onLoadSessionBranchTopology: vi.fn().mockResolvedValue({
     sessionId: "session-1",
@@ -253,11 +275,13 @@ export function renderControlledDashboard(
   options: { preserveState?: boolean; effectsEnabled?: boolean } = {},
 ): ReactNode {
   if (!options.preserveState) {
+    reactHarness.callbackValues = [];
     if (reactHarness.lifecycleEffects) cleanupReactHarnessEffects();
     reactHarness.refValues = [];
     reactHarness.stateValues = [];
   }
   if (reactHarness.lifecycleEffects) reactHarness.effectIndex = 0;
+  reactHarness.callbackIndex = 0;
   reactHarness.refIndex = 0;
   reactHarness.stateIndex = 0;
   reactHarness.effectsEnabled = options.effectsEnabled ?? true;

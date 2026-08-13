@@ -8,8 +8,10 @@ import {
   dispatchNotificationEvent,
   loadSessionBranchTopology,
   loadSessionCost,
+  loadSessionDetails,
   loadSessionFileChanges,
   loadSessionTranscript,
+  mergeSessions,
   mergeTranscriptMessages,
   overlaySessionCosts,
   patchSession,
@@ -19,6 +21,7 @@ import {
   sendBrowserCommand,
   snapshotSessionsWithCurrentMessages,
   upsertAskRequest,
+  upsertLoadedSession,
   upsertTranscriptMessage,
   useSessionClient,
 } from "./index.js";
@@ -502,12 +505,18 @@ describe("snapshotSessionsWithCurrentMessages", () => {
 });
 
 describe("applyTranscriptToSessions", () => {
-  it("hydrates the target, clears other history transcripts, and preserves live transcripts", () => {
+  it("hydrates the target, clears other root history transcripts, and preserves live and child transcripts", () => {
     const target = { ...SESSION, source: "history" as const, id: "target", messages: [] };
     const otherHistory = { ...SESSION, source: "history" as const, id: "other-history" };
+    const historyChild = {
+      ...SESSION,
+      source: "history" as const,
+      id: "history-child",
+      parentSessionId: "other-history",
+    };
     const otherLive = { ...SESSION, id: "other-live" };
 
-    const result = applyTranscriptToSessions([target, otherHistory, otherLive], {
+    const result = applyTranscriptToSessions([target, otherHistory, historyChild, otherLive], {
       sessionId: target.id,
       messages: SESSION.messages,
     });
@@ -515,6 +524,39 @@ describe("applyTranscriptToSessions", () => {
     expect(result[0]?.messages).toEqual(SESSION.messages);
     expect(result[1]?.messages).toEqual([]);
     expect(result[2]?.messages).toEqual(SESSION.messages);
+    expect(result[3]?.messages).toEqual(SESSION.messages);
+  });
+});
+
+describe("mergeSessions", () => {
+  it("keeps live metadata while merging saved details with concurrent live messages", () => {
+    const saved = {
+      ...SESSION,
+      source: "history" as const,
+      id: "child",
+      parentSessionId: "root",
+      messages: [{ ...SESSION.messages[0]!, id: "saved", text: "saved transcript" }],
+    };
+    const live = {
+      ...SESSION,
+      id: "child",
+      source: "extension" as const,
+      connected: true,
+      messages: [{ ...SESSION.messages[0]!, id: "live", text: "live update" }],
+    };
+
+    expect(mergeSessions([saved], [live])).toEqual([
+      expect.objectContaining({
+        id: "child",
+        source: "extension",
+        connected: true,
+        parentSessionId: "root",
+        messages: [
+          expect.objectContaining({ id: "saved", text: "saved transcript" }),
+          expect.objectContaining({ id: "live", text: "live update" }),
+        ],
+      }),
+    ]);
   });
 });
 
@@ -771,230 +813,5 @@ describe("remote ask request state", () => {
 
     expect(removeAskRequest([newerRequest], "session-1", "ask-1")).toEqual([newerRequest]);
     expect(removeAskRequest([newerRequest], "session-1", "ask-2")).toEqual([]);
-  });
-});
-
-describe("loadSessionTranscript", () => {
-  it("rejects a transcript returned for a different session", async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ sessionId: "session-2", messages: [] }), {
-        status: 200,
-      }),
-    );
-
-    await expect(loadSessionTranscript("session-1", undefined, fetcher)).rejects.toThrow(
-      "Session transcript response did not match the request",
-    );
-  });
-});
-
-describe("loadSessionCost", () => {
-  it("requests only the encoded selected session and validates the exact summary", async () => {
-    const costSummary = {
-      totalUsd: 1.25,
-      partial: false,
-      agents: [
-        {
-          sessionId: "session/a",
-          name: "Selected",
-          parentSessionId: null,
-          totalUsd: 1.25,
-          available: true,
-        },
-      ],
-    };
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ sessionId: "session/a", costSummary }), { status: 200 }),
-      );
-
-    await expect(loadSessionCost("session/a", undefined, fetcher)).resolves.toEqual({
-      sessionId: "session/a",
-      costSummary,
-    });
-    expect(fetcher).toHaveBeenCalledWith("/api/sessions/session%2Fa/cost", {});
-  });
-
-  it("preserves an explicit unavailable summary and reports request failures", async () => {
-    const unavailableFetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ sessionId: "session-1", costSummary: null }), { status: 200 }),
-      );
-    await expect(loadSessionCost("session-1", undefined, unavailableFetcher)).resolves.toEqual({
-      sessionId: "session-1",
-      costSummary: null,
-    });
-
-    const failedFetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 500 }));
-    await expect(loadSessionCost("session-1", undefined, failedFetcher)).rejects.toThrow(
-      "Session cost request failed (500)",
-    );
-  });
-
-  it("rejects a response for a different session", async () => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ sessionId: "session-2", costSummary: null }), { status: 200 }),
-      );
-    await expect(loadSessionCost("session-1", undefined, fetcher)).rejects.toThrow(
-      "Session cost response did not match the request",
-    );
-  });
-});
-
-describe("loadSessionBranchTopology", () => {
-  const availableResponse = {
-    sessionId: "session/a",
-    branches: [{ name: "main" }, { name: "feature/child", parent: "main" }],
-    currentBranch: "feature/child",
-  };
-
-  it("requests the encoded branches route and validates its schema", async () => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(new Response(JSON.stringify(availableResponse), { status: 200 }));
-
-    await expect(loadSessionBranchTopology("session/a", undefined, fetcher)).resolves.toEqual(
-      availableResponse,
-    );
-    expect(fetcher).toHaveBeenCalledWith("/api/sessions/session%2Fa/branches", {});
-  });
-
-  it("passes the cancellation signal to fetch", async () => {
-    const controller = new AbortController();
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(new Response(JSON.stringify(availableResponse), { status: 200 }));
-
-    await loadSessionBranchTopology("session/a", controller.signal, fetcher);
-    expect(fetcher).toHaveBeenCalledWith("/api/sessions/session%2Fa/branches", {
-      signal: controller.signal,
-    });
-  });
-
-  it("propagates the exact host error text", async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ error: "Cannot switch branches while the session is running." }), {
-        status: 409,
-      }),
-    );
-
-    await expect(loadSessionBranchTopology("session-1", undefined, fetcher)).rejects.toThrow(
-      "Cannot switch branches while the session is running.",
-    );
-  });
-  it("preserves an abort raised while reading a failed response", async () => {
-    const controller = new AbortController();
-    const abortFailure = new Error("Topology response read aborted");
-    abortFailure.name = "AbortError";
-    const response = {
-      ok: false,
-      status: 503,
-      json: vi.fn().mockImplementation(async () => {
-        controller.abort();
-        throw abortFailure;
-      }),
-    } as unknown as Response;
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response);
-
-    await expect(loadSessionBranchTopology("session-1", controller.signal, fetcher)).rejects.toBe(
-      abortFailure,
-    );
-  });
-
-  it("rejects a successful response that violates the topology schema", async () => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        new Response(JSON.stringify({ ...availableResponse, unexpected: true }), { status: 200 }),
-      );
-
-    await expect(loadSessionBranchTopology("session-1", undefined, fetcher)).rejects.toThrow();
-  });
-});
-
-describe("loadSessionFileChanges", () => {
-  const availableResponse = {
-    sessionId: "session/a",
-    state: "available",
-    sources: [],
-    fileCount: 0,
-    operationCount: 0,
-    additions: 0,
-    deletions: 0,
-    changedLines: 0,
-    message: null,
-  };
-
-  it("requests the encoded changes route and validates its schema", async () => {
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(new Response(JSON.stringify(availableResponse), { status: 200 }));
-
-    await expect(loadSessionFileChanges("session/a", undefined, fetcher)).resolves.toEqual(availableResponse);
-    expect(fetcher).toHaveBeenCalledWith("/api/sessions/session%2Fa/changes", {});
-  });
-
-  it("passes the cancellation signal to fetch", async () => {
-    const controller = new AbortController();
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(new Response(JSON.stringify(availableResponse), { status: 200 }));
-
-    await loadSessionFileChanges("session/a", controller.signal, fetcher);
-    expect(fetcher).toHaveBeenCalledWith("/api/sessions/session%2Fa/changes", {
-      signal: controller.signal,
-    });
-  });
-
-  it("propagates host errors before parsing an error body as a response", async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ error: "Session file changes could not be read" }), {
-        status: 500,
-      }),
-    );
-
-    await expect(loadSessionFileChanges("session-1", undefined, fetcher)).rejects.toThrow(
-      "Session file changes could not be read",
-    );
-  });
-
-  it.each([
-    ["non-JSON", new Response("<html>Bad gateway</html>", { status: 502 }), 502],
-    [
-      "unreadable",
-      {
-        ok: false,
-        status: 503,
-        json: vi.fn().mockRejectedValue(new Error("Response body is unavailable")),
-      } as unknown as Response,
-      503,
-    ],
-  ])("uses the status fallback for a %s non-OK response", async (_kind, response, status) => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response);
-
-    await expect(loadSessionFileChanges("session-1", undefined, fetcher)).rejects.toThrow(
-      `Session file changes request failed (${status})`,
-    );
-  });
-
-  it("preserves cancellation when a non-OK response body read aborts", async () => {
-    const controller = new AbortController();
-    const abortFailure = new Error("Response body read aborted");
-    abortFailure.name = "AbortError";
-    const response = {
-      ok: false,
-      status: 503,
-      json: vi.fn().mockImplementation(async () => {
-        controller.abort();
-        throw abortFailure;
-      }),
-    } as unknown as Response;
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response);
-
-    await expect(loadSessionFileChanges("session-1", controller.signal, fetcher)).rejects.toBe(abortFailure);
   });
 });

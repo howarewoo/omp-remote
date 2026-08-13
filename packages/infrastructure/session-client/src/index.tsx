@@ -19,6 +19,7 @@ import {
   type SessionFileChangesResponse,
   SessionFileChangesResponseSchema,
   type SessionPatch,
+  SessionSchema,
   type SessionTranscriptResponse,
   SessionTranscriptResponseSchema,
 } from "@omp-remote/protocol";
@@ -90,6 +91,7 @@ export interface SessionClient {
   switchBranch(sessionId: string, branch: string): Promise<void>;
   loadCost(sessionId: string): Promise<void>;
   loadTranscript(sessionId: string): Promise<void>;
+  loadSession(sessionId: string): Promise<void>;
   pushVapidPublicKey(): Promise<string>;
   registerPushSubscription(registration: PushSubscriptionRegistration): Promise<void>;
   updatePushSubscription(update: PushSubscriptionUpdate): Promise<void>;
@@ -179,9 +181,11 @@ export function useSessionClient(): SessionClient {
   const notificationListenersRef = useRef(new Set<NotificationEventListener>());
   const catalogRequestRef = useRef(0);
   const costRequestRef = useRef(0);
+  const detailsRequestRef = useRef(0);
   const catalogAbortRef = useRef<AbortController | null>(null);
   const transcriptAbortRef = useRef<AbortController | null>(null);
   const transcriptRequestRef = useRef(0);
+  const detailsAbortRef = useRef<AbortController | null>(null);
   const costAbortRef = useRef<AbortController | null>(null);
   const costSummaryBySessionRef = useRef(new Map<string, Session["costSummary"] | null>());
   const [liveSessions, setLiveSessions] = useState<Session[]>([]);
@@ -340,6 +344,8 @@ export function useSessionClient(): SessionClient {
     () => () => {
       transcriptRequestRef.current += 1;
       transcriptAbortRef.current?.abort();
+      detailsRequestRef.current += 1;
+      detailsAbortRef.current?.abort();
       costAbortRef.current?.abort();
     },
     [],
@@ -418,6 +424,20 @@ export function useSessionClient(): SessionClient {
       throw error;
     } finally {
       if (transcriptAbortRef.current === abortController) transcriptAbortRef.current = null;
+    }
+  }, []);
+
+  const loadSession = useCallback(async (sessionId: string) => {
+    const requestNumber = ++detailsRequestRef.current;
+    detailsAbortRef.current?.abort();
+    const abortController = new AbortController();
+    detailsAbortRef.current = abortController;
+    try {
+      const session = await loadSessionDetails(sessionId, abortController.signal);
+      if (requestNumber !== detailsRequestRef.current || abortController.signal.aborted) return;
+      setHistorySessions((current) => upsertLoadedSession(current, session));
+    } finally {
+      if (detailsAbortRef.current === abortController) detailsAbortRef.current = null;
     }
   }, []);
 
@@ -648,6 +668,7 @@ export function useSessionClient(): SessionClient {
     searchHistory,
     loadMoreHistory,
     loadTranscript,
+    loadSession,
     loadCost,
     loadSessionFileChanges: loadSessionFileChangesCallback,
     loadSessionBranchTopology: loadSessionBranchTopologyCallback,
@@ -658,6 +679,18 @@ export function useSessionClient(): SessionClient {
     removePushSubscription,
   };
 }
+export async function loadSessionDetails(
+  sessionId: string,
+  signal?: AbortSignal,
+  fetcher: typeof fetch = fetch,
+): Promise<Session> {
+  const response = await fetcher(`/api/sessions/${encodeURIComponent(sessionId)}`, signal ? { signal } : {});
+  if (!response.ok) throw new Error(`Session details request failed (${response.status})`);
+  const result = SessionSchema.parse(await response.json());
+  if (result.id !== sessionId) throw new Error("Session details response did not match the request");
+  return result;
+}
+
 export async function loadSessionTranscript(
   sessionId: string,
   signal?: AbortSignal,
@@ -790,10 +823,41 @@ export function createCatalogLoadCoordinator(loadBaselinePage: () => Promise<voi
   };
 }
 
-function mergeSessions(base: Session[], overrides: Session[]): Session[] {
+export function mergeSessions(base: Session[], overrides: Session[]): Session[] {
   const sessions = new Map(base.map((session) => [session.id, session]));
-  for (const session of overrides) sessions.set(session.id, session);
+  for (const session of overrides) {
+    const current = sessions.get(session.id);
+    sessions.set(
+      session.id,
+      current
+        ? {
+            ...current,
+            ...session,
+            messages: mergeTranscriptMessages(current.messages, session.messages),
+          }
+        : session,
+    );
+  }
   return [...sessions.values()].sort(compareSessionsByCreation);
+}
+
+export function upsertLoadedSession(sessions: Session[], loaded: Session): Session[] {
+  const index = sessions.findIndex((session) => session.id === loaded.id);
+  const current = sessions[index];
+  if (!current) return mergeSessions(sessions, [loaded]);
+
+  const messages = mergeTranscriptMessages(loaded.messages, current.messages);
+  const currentIsLive = current.source !== "history";
+  const topology =
+    !currentIsLive && loaded.parentSessionId === undefined && current.parentSessionId !== undefined
+      ? { parentSessionId: current.parentSessionId }
+      : {};
+  const merged = currentIsLive
+    ? { ...loaded, ...current, messages }
+    : { ...current, ...loaded, ...topology, messages };
+  const next = [...sessions];
+  next[index] = merged;
+  return next.sort(compareSessionsByCreation);
 }
 
 export function overlaySessionCosts(
@@ -848,7 +912,7 @@ export function applyTranscriptToSessions(
     if (session.id === transcript.sessionId) {
       return { ...session, messages: mergeTranscriptMessages(transcript.messages, session.messages) };
     }
-    return session.source === "history" && session.messages.length > 0
+    return session.source === "history" && session.parentSessionId == null && session.messages.length > 0
       ? { ...session, messages: [] }
       : session;
   });

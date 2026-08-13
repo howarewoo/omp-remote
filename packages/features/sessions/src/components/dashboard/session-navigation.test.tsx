@@ -1,13 +1,14 @@
+// biome-ignore-all assist/source/organizeImports: The test support must install the React hook mock first.
 import {
   BASE_SESSION,
   type ControlledDashboardProps,
-  DASHBOARD_DEFAULTS,
-  SELECT_ASK,
   composerDashboardProps,
+  DASHBOARD_DEFAULTS,
   findElements,
   findHostText,
   getReactHarness,
   renderControlledDashboard,
+  SELECT_ASK,
   textContent,
 } from "./dashboard-test-support.js";
 import type { Session } from "@omp-remote/protocol";
@@ -20,6 +21,7 @@ import {
   MessageScrollerItem,
   MessageScrollerViewport,
 } from "../ui/message-scroller.js";
+
 const reactHarness = getReactHarness();
 
 describe("dashboard ask stream", () => {

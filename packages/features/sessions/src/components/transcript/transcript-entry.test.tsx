@@ -207,6 +207,7 @@ const DASHBOARD_DEFAULTS = {
   onSearchHistory: vi.fn().mockResolvedValue(undefined),
   onLoadMoreHistory: vi.fn().mockResolvedValue(undefined),
   onLoadTranscript: vi.fn().mockResolvedValue(undefined),
+  onLoadSession: vi.fn().mockResolvedValue(undefined),
   onLoadCost: vi.fn().mockResolvedValue(undefined),
   onLoadSessionBranchTopology: vi.fn().mockResolvedValue({
     sessionId: "session-1",

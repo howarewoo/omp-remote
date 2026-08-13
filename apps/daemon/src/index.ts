@@ -9,6 +9,7 @@ import type { RpcSession } from "@omp-remote/omp-rpc";
 import {
   type AskRequest,
   type AskResponse,
+  boundTranscriptImageBudget,
   type NotificationEvent,
   type ServerFrame,
   type Session,
@@ -16,8 +17,10 @@ import {
   SessionCatalogPageSchema,
   SessionCostResponseSchema,
   SessionFileChangesResponseSchema,
+  SessionSchema,
   SessionTranscriptResponseSchema,
   type TranscriptMessage,
+  truncateTranscriptText,
   validateTranscriptImageBytes,
 } from "@omp-remote/protocol";
 import { SessionRegistry } from "@omp-remote/sessions/services";
@@ -77,6 +80,16 @@ function sanitizeExtensionSession<T extends { messages: TranscriptMessage[] }>(
     ...session,
     messages: session.messages.map(sanitizeTranscriptMessageImages),
   };
+}
+
+function sanitizeSessionDetails<T extends { messages: TranscriptMessage[] }>(
+  session: T,
+): Omit<T, "messages"> & { messages: TranscriptMessage[] } {
+  const messages = session.messages.slice(-200).map((message) => ({
+    ...sanitizeTranscriptMessageImages(message),
+    text: truncateTranscriptText(message.text),
+  }));
+  return { ...session, messages: boundTranscriptImageBudget(messages) };
 }
 
 const logger = createLogger("omp-remote-daemon");
@@ -161,6 +174,34 @@ app.get("/api/sessions", async (request, reply) => {
       query: query.data.q,
     }),
   );
+});
+
+app.get("/api/sessions/:sessionId", async (request, reply) => {
+  const params = SessionParamsSchema.safeParse(request.params);
+  if (!params.success) return reply.code(404).send({ error: "Session history was not found" });
+  const sessionId = params.data.sessionId;
+  let liveSession = registry.get(sessionId);
+  let catalogSession = liveSession ? undefined : sessionCatalog.get(sessionId);
+  if (!liveSession && !catalogSession) {
+    await requestCatalogReconciliation();
+    liveSession = registry.get(sessionId);
+    catalogSession = liveSession ? undefined : sessionCatalog.get(sessionId);
+  }
+  if (!liveSession && !catalogSession) {
+    return reply.code(404).send({ error: "Session history was not found" });
+  }
+  try {
+    const session = liveSession
+      ? sanitizeSessionDetails(liveSession)
+      : {
+          ...catalogSession,
+          messages: await sessionCatalog.transcript(sessionId),
+        };
+    return SessionSchema.parse(session);
+  } catch (error) {
+    logger.error("Could not read OMP session details", error, { sessionId });
+    return reply.code(500).send({ error: "Session details could not be read" });
+  }
 });
 
 app.get("/api/sessions/:sessionId/transcript", async (request, reply) => {

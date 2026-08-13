@@ -26,6 +26,8 @@ interface SubagentSessionViewerProps {
   mobile: boolean;
   subagent: ActiveSubagent | null;
   session: Session | null;
+  detailsState: "live" | "loading" | "saved" | "empty" | "error";
+  onRetry(): void;
   onOpenChange(open: boolean): void;
   children: ReactNode;
 }
@@ -35,6 +37,8 @@ export function SubagentSessionViewer({
   open,
   subagent,
   session,
+  detailsState,
+  onRetry,
   mobile,
   onOpenChange,
   children,
@@ -54,18 +58,42 @@ export function SubagentSessionViewer({
         <DrawerHeader className="subagent-session-header">
           <div>
             <DrawerTitle>{session?.name ?? displayedSubagent.name}</DrawerTitle>
-            <DrawerDescription>{session?.cwd ?? "Live subagent session"}</DrawerDescription>
+            <DrawerDescription>
+              {session?.cwd ??
+                (detailsState === "loading"
+                  ? "Loading saved session"
+                  : detailsState === "error"
+                    ? "Saved session unavailable"
+                    : detailsState === "live"
+                      ? "Live subagent session"
+                      : "Saved subagent session")}
+            </DrawerDescription>
           </div>
           <div className="subagent-session-header-actions">
-            {session ? (
+            {detailsState === "live" && session ? (
               <Badge className={cn("status-badge", `status-${SESSION_STATUS_TONE[session.status]}`)}>
                 <span aria-hidden="true" />
                 {SESSION_STATUS_LABEL[session.status]}
               </Badge>
-            ) : (
+            ) : detailsState === "loading" ? (
               <Badge className="status-badge status-waiting">
                 <span aria-hidden="true" />
-                Connecting
+                Loading
+              </Badge>
+            ) : detailsState === "error" ? (
+              <>
+                <Badge className="status-badge status-disconnected">
+                  <span aria-hidden="true" />
+                  Unavailable
+                </Badge>
+                <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+                  Retry
+                </Button>
+              </>
+            ) : (
+              <Badge className="status-badge status-history">
+                <span aria-hidden="true" />
+                Saved session
               </Badge>
             )}
             <DrawerClose
@@ -94,7 +122,7 @@ export function SubagentSessionViewer({
                 className="transcript-messages"
                 role="log"
                 aria-live="polite"
-                aria-busy={session?.messages.at(-1)?.streaming === true}
+                aria-busy={detailsState === "loading" || session?.messages.at(-1)?.streaming === true}
               >
                 {children}
               </MessageScrollerContent>
