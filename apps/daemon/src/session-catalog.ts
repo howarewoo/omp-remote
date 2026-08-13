@@ -51,11 +51,13 @@ interface SessionCostData {
 }
 
 interface SessionMetadata {
+  assigned: boolean | null;
   exited: boolean;
   session: Session;
 }
 
 interface CatalogEntry {
+  assigned: boolean | null;
   fingerprint: string;
   path: string;
   parentPath?: string | null;
@@ -249,7 +251,7 @@ export class SessionCatalog {
       const rootPath = findRootSessionPath(entry.path, sessionPaths);
       if (rootPath === entry.path) {
         rootPaths.add(rootPath);
-      } else if (!entry.exited) {
+      } else if (entry.assigned !== false && !entry.exited) {
         const activeSubagents = activeSubagentsByRoot.get(rootPath) ?? [];
         activeSubagents.push({
           id: entry.session.id,
@@ -414,10 +416,11 @@ async function readSessionMetadata(path: string): Promise<SessionMetadata | null
     handle = await open(path, "r");
     const buffer = Buffer.allocUnsafe(METADATA_READ_BYTES);
     const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    const lines = buffer.subarray(0, bytesRead).toString("utf8").split("\n");
+    const headText = buffer.subarray(0, bytesRead).toString("utf8");
+    const headLines = headText.split("\n");
     let title: string | null = null;
     let header: Record<string, unknown> | null = null;
-    for (const line of lines) {
+    for (const line of headLines) {
       const record = parseRecord(line);
       if (!record) continue;
       if (record.type === "title" && typeof record.title === "string") title = record.title.trim() || null;
@@ -428,20 +431,37 @@ async function readSessionMetadata(path: string): Promise<SessionMetadata | null
     }
     if (!header || typeof header.id !== "string" || typeof header.cwd !== "string" || !header.cwd)
       return null;
+
     const fileStats = await handle.stat();
     const tailOffset = Math.max(0, fileStats.size - buffer.length);
     const tailLength = fileStats.size - tailOffset;
     const tailRead = await handle.read(buffer, 0, tailLength, tailOffset);
-    const tailRecords = buffer
-      .subarray(0, tailRead.bytesRead)
-      .toString("utf8")
-      .split("\n")
-      .map(parseRecord)
-      .filter((record): record is Record<string, unknown> => record !== null);
-    const exited = sessionHasEnded(tailRecords);
+    const tailText = buffer.subarray(0, tailRead.bytesRead).toString("utf8");
+    const tailLines = tailText.split("\n");
+    const headWindow = inspectLifecycleWindow(headLines, headText.endsWith("\n"), false);
+    const tailWindow = inspectLifecycleWindow(tailLines, tailText.endsWith("\n"), tailOffset !== 0);
+
+    let lifecycle: SessionLifecycle;
+    if (
+      tailOffset === 0 &&
+      !headWindow.incomplete &&
+      !tailWindow.incomplete &&
+      !headWindow.malformed &&
+      !tailWindow.malformed &&
+      (headWindow.assigned || tailWindow.assigned || tailWindow.exited)
+    ) {
+      lifecycle = {
+        assigned: headWindow.assigned || tailWindow.assigned,
+        exited: tailWindow.exited,
+      };
+    } else {
+      lifecycle = await scanSessionLifecycle(path, tailText.endsWith("\n"));
+    }
+
     const headerTitle = typeof header.title === "string" ? header.title.trim() : "";
     return {
-      exited,
+      assigned: lifecycle.assigned,
+      exited: lifecycle.exited,
       session: {
         id: header.id,
         source: "history",
@@ -471,6 +491,87 @@ async function readSessionMetadata(path: string): Promise<SessionMetadata | null
     await handle?.close();
   }
 }
+
+interface SessionLifecycle {
+  assigned: boolean | null;
+  exited: boolean;
+}
+
+interface LifecycleWindow {
+  assigned: boolean;
+  exited: boolean;
+  incomplete: boolean;
+  malformed: boolean;
+}
+
+function inspectLifecycleWindow(lines: string[], complete: boolean, skipFirst: boolean): LifecycleWindow {
+  const lifecycle: LifecycleWindow = {
+    assigned: false,
+    exited: false,
+    incomplete: !complete,
+    malformed: false,
+  };
+  const first = skipFirst ? 1 : 0;
+  const last = complete ? lines.length : Math.max(first, lines.length - 1);
+  for (let index = first; index < last; index += 1) {
+    const line = lines[index];
+    if (!line) continue;
+    const record = parseRecord(line);
+    if (!record) {
+      lifecycle.malformed = true;
+      continue;
+    }
+    updateSessionLifecycle(record, lifecycle);
+  }
+  return lifecycle;
+}
+
+async function scanSessionLifecycle(path: string, complete: boolean): Promise<SessionLifecycle> {
+  const lifecycle: LifecycleWindow = {
+    assigned: false,
+    exited: false,
+    incomplete: !complete,
+    malformed: false,
+  };
+  const lines = createInterface({ input: createReadStream(path), crlfDelay: Number.POSITIVE_INFINITY });
+  for await (const line of lines) {
+    if (!line) continue;
+    const record = parseRecord(line);
+    if (!record) {
+      lifecycle.malformed = true;
+      continue;
+    }
+    updateSessionLifecycle(record, lifecycle);
+  }
+  if (!complete || lifecycle.malformed) return { assigned: null, exited: false };
+  return { assigned: lifecycle.assigned, exited: lifecycle.exited };
+}
+function updateSessionLifecycle(record: Record<string, unknown>, lifecycle: LifecycleWindow): void {
+  if (record.type === "session_init") {
+    if (typeof record.task !== "string") lifecycle.malformed = true;
+    return;
+  }
+  if (record.type === "custom" && record.customType === "session_exit") {
+    lifecycle.exited = true;
+    return;
+  }
+  if (record.type !== "message" || !isRecord(record.message)) return;
+  if (record.message.role === "user") {
+    lifecycle.assigned = true;
+    lifecycle.exited = false;
+    return;
+  }
+  if (
+    record.message.role === "toolResult" &&
+    record.message.toolName === "yield" &&
+    record.message.isError !== true &&
+    isRecord(record.message.details) &&
+    record.message.details.status === "success"
+  ) {
+    lifecycle.exited = true;
+  }
+}
+
 async function readSessionCost(path: string): Promise<SessionCostData> {
   let totalUsd = 0;
   let exact = true;
@@ -729,31 +830,6 @@ function parseRecord(line: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
-}
-
-function sessionHasEnded(records: Record<string, unknown>[]): boolean {
-  let ended = false;
-  for (const record of records) {
-    if (record.type === "custom" && record.customType === "session_exit") {
-      ended = true;
-      continue;
-    }
-    if (record.type !== "message" || !isRecord(record.message)) continue;
-    if (record.message.role === "user") {
-      ended = false;
-      continue;
-    }
-    if (
-      record.message.role === "toolResult" &&
-      record.message.toolName === "yield" &&
-      record.message.isError !== true &&
-      isRecord(record.message.details) &&
-      record.message.details.status === "success"
-    ) {
-      ended = true;
-    }
-  }
-  return ended;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

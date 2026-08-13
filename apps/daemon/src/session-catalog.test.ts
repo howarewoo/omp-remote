@@ -3,9 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
-
 const temporaryDirectories: string[] = [];
-
 async function makeTemporaryDirectory(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "omp-remote-catalog-"));
   temporaryDirectories.push(directory);
@@ -18,17 +16,14 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
   });
   return { promise, resolve };
 }
-
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true })));
 });
-
 describe("resolveSessionRoots", () => {
   it("includes the default agent and every local profile", async () => {
     const homeDirectory = await makeTemporaryDirectory();
     await mkdir(join(homeDirectory, ".omp", "profiles", "personal", "agent"), { recursive: true });
     await mkdir(join(homeDirectory, ".omp", "profiles", "work", "agent"), { recursive: true });
-
     await expect(resolveSessionRoots(homeDirectory)).resolves.toEqual([
       join(homeDirectory, ".omp", "agent", "sessions"),
       join(homeDirectory, ".omp", "profiles", "personal", "agent", "sessions"),
@@ -36,7 +31,6 @@ describe("resolveSessionRoots", () => {
     ]);
   });
 });
-
 describe("SessionCatalog", () => {
   it("nests active subagents under their main session instead of listing them as sessions", async () => {
     const root = await makeTemporaryDirectory();
@@ -49,12 +43,16 @@ describe("SessionCatalog", () => {
       cwd: "/workspace/alpha",
       timestamp: "2026-07-27T10:00:00.000Z",
     });
-    await writeSession(nestedPath, {
-      id: "session-agent",
-      title: "",
-      cwd: "/workspace/alpha",
-      timestamp: "2026-07-28T10:00:00.000Z",
-    });
+    await writeSession(
+      nestedPath,
+      {
+        id: "session-agent",
+        title: "",
+        cwd: "/workspace/alpha",
+        timestamp: "2026-07-28T10:00:00.000Z",
+      },
+      [{ type: "message", message: { role: "user", content: "assigned" } }],
+    );
     await writeSession(
       completedPath,
       {
@@ -79,10 +77,8 @@ describe("SessionCatalog", () => {
     await setModifiedTime(firstPath, "2026-07-27T11:00:00.000Z");
     await setModifiedTime(nestedPath, "2026-07-28T11:00:00.000Z");
     await setModifiedTime(completedPath, "2026-07-28T10:00:00.000Z");
-
     const catalog = new SessionCatalog([root]);
     const diff = await catalog.refresh();
-
     expect(diff.upserted.map((session) => session.id)).toEqual(
       expect.arrayContaining(["session-first", "session-agent", "session-completed-agent"]),
     );
@@ -123,7 +119,6 @@ describe("SessionCatalog", () => {
       nextOffset: null,
     });
   });
-
   it("publishes canonical direct topology while keeping catalog pages root-only", async () => {
     const root = await makeTemporaryDirectory();
     const rootPath = join(root, "project", "root.jsonl");
@@ -135,22 +130,28 @@ describe("SessionCatalog", () => {
       cwd: "/workspace/project",
       timestamp: "2026-08-01T10:00:00.000Z",
     });
-    await writeSession(childPath, {
-      id: "topology-child",
-      title: "Child",
-      cwd: "/workspace/project",
-      timestamp: "2026-08-01T10:01:00.000Z",
-    });
-    await writeSession(grandchildPath, {
-      id: "topology-grandchild",
-      title: "Grandchild",
-      cwd: "/workspace/project",
-      timestamp: "2026-08-01T10:02:00.000Z",
-    });
-
+    await writeSession(
+      childPath,
+      {
+        id: "topology-child",
+        title: "Child",
+        cwd: "/workspace/project",
+        timestamp: "2026-08-01T10:01:00.000Z",
+      },
+      [{ type: "message", message: { role: "user", content: "assigned" } }],
+    );
+    await writeSession(
+      grandchildPath,
+      {
+        id: "topology-grandchild",
+        title: "Grandchild",
+        cwd: "/workspace/project",
+        timestamp: "2026-08-01T10:02:00.000Z",
+      },
+      [{ type: "message", message: { role: "user", content: "assigned" } }],
+    );
     const catalog = new SessionCatalog([root]);
     const diff = await catalog.refresh();
-
     expect(diff.upserted).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "topology-root", parentSessionId: null }),
@@ -168,7 +169,6 @@ describe("SessionCatalog", () => {
       expect.objectContaining({ id: "topology-grandchild", parentSessionId: "topology-child" }),
     );
   });
-
   it("retains proven child topology when an ancestor path disappears", async () => {
     const root = await makeTemporaryDirectory();
     const rootPath = join(root, "project", "root.jsonl");
@@ -189,11 +189,9 @@ describe("SessionCatalog", () => {
     await writeSession(childPath, childHeader);
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
-
     await rm(rootPath);
     await writeSession(childPath, childHeader, [{ type: "custom", customType: "session_exit" }]);
     const diff = await catalog.refresh();
-
     expect(catalog.get("retained-child")).toEqual(
       expect.objectContaining({ id: "retained-child", parentSessionId: "retained-root" }),
     );
@@ -206,7 +204,6 @@ describe("SessionCatalog", () => {
       expect.objectContaining({ id: "retained-child", parentSessionId: "retained-root" }),
     ]);
   });
-
   it("retains a grandchild direct parent when the intermediate child path disappears", async () => {
     const root = await makeTemporaryDirectory();
     const rootPath = join(root, "project", "root.jsonl");
@@ -218,25 +215,31 @@ describe("SessionCatalog", () => {
       cwd: "/workspace/project",
       timestamp: "2026-08-01T10:00:00.000Z",
     });
-    await writeSession(childPath, {
-      id: "loss-child",
-      title: "Child",
-      cwd: "/workspace/project",
-      timestamp: "2026-08-01T10:01:00.000Z",
-    });
-    await writeSession(grandchildPath, {
-      id: "loss-grandchild",
-      title: "Grandchild",
-      cwd: "/workspace/project",
-      timestamp: "2026-08-01T10:02:00.000Z",
-    });
+    await writeSession(
+      childPath,
+      {
+        id: "loss-child",
+        title: "Child",
+        cwd: "/workspace/project",
+        timestamp: "2026-08-01T10:01:00.000Z",
+      },
+      [{ type: "message", message: { role: "user", content: "assigned" } }],
+    );
+    await writeSession(
+      grandchildPath,
+      {
+        id: "loss-grandchild",
+        title: "Grandchild",
+        cwd: "/workspace/project",
+        timestamp: "2026-08-01T10:02:00.000Z",
+      },
+      [{ type: "message", message: { role: "user", content: "assigned" } }],
+    );
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
-
     await rm(childPath);
     await setModifiedTime(grandchildPath, "2026-08-01T10:03:00.000Z");
     const diff = await catalog.refresh();
-
     expect(catalog.get("loss-grandchild")).toEqual(
       expect.objectContaining({ id: "loss-grandchild", parentSessionId: "loss-child" }),
     );
@@ -251,7 +254,6 @@ describe("SessionCatalog", () => {
       expect.objectContaining({ id: "loss-root", parentSessionId: null }),
     ]);
   });
-
   it("leaves a first-observed nested path unknown when its immediate parent is absent", async () => {
     const root = await makeTemporaryDirectory();
     const rootPath = join(root, "project", "root.jsonl");
@@ -268,10 +270,8 @@ describe("SessionCatalog", () => {
       cwd: "/workspace/project",
       timestamp: "2026-08-01T10:01:00.000Z",
     });
-
     const catalog = new SessionCatalog([root]);
     const diff = await catalog.refresh();
-
     expect(diff.upserted).toEqual(
       expect.arrayContaining([expect.objectContaining({ id: "unknown-grandchild" })]),
     );
@@ -280,7 +280,6 @@ describe("SessionCatalog", () => {
       "unknown-root",
     ]);
   });
-
   it("binds duplicate IDs to the latest catalog entry and its topology", async () => {
     const root = await makeTemporaryDirectory();
     const rootPath = join(root, "project", "root.jsonl");
@@ -306,10 +305,8 @@ describe("SessionCatalog", () => {
     });
     await setModifiedTime(nestedPath, "2026-08-01T10:01:00.000Z");
     await setModifiedTime(latestPath, "2026-08-01T10:03:00.000Z");
-
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
-
     expect(catalog.get("duplicate")).toEqual(
       expect.objectContaining({
         name: "Latest duplicate",
@@ -322,7 +319,6 @@ describe("SessionCatalog", () => {
     );
     expect(catalog.list({ offset: 0, limit: 20, query: "" }).total).toBe(2);
   });
-
   it("retains direct-parent evidence per path when the selected duplicate changes", async () => {
     const root = await makeTemporaryDirectory();
     const firstRootPath = join(root, "first", "root.jsonl");
@@ -369,7 +365,6 @@ describe("SessionCatalog", () => {
     });
     await setModifiedTime(firstDuplicatePath, "2026-08-01T10:02:00.000Z");
     await setModifiedTime(secondDuplicatePath, "2026-08-01T10:03:00.000Z");
-
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
     expect(catalog.get("changing-duplicate")).toEqual(
@@ -379,7 +374,6 @@ describe("SessionCatalog", () => {
         sessionPath: secondDuplicatePath,
       }),
     );
-
     await rm(firstParentPath);
     await writeSession(firstDuplicatePath, {
       id: "changing-duplicate",
@@ -389,7 +383,6 @@ describe("SessionCatalog", () => {
     });
     await setModifiedTime(firstDuplicatePath, "2026-08-01T10:04:00.000Z");
     await catalog.refresh();
-
     expect(catalog.get("changing-duplicate")).toEqual(
       expect.objectContaining({
         name: "First duplicate refreshed",
@@ -398,7 +391,6 @@ describe("SessionCatalog", () => {
       }),
     );
   });
-
   it("loads exact persisted usage only for the requested root and descendants", async () => {
     const root = await makeTemporaryDirectory();
     const rootPath = join(root, "project", "root.jsonl");
@@ -435,7 +427,6 @@ describe("SessionCatalog", () => {
       },
       [assistantUsage(9)],
     );
-
     let costReads = 0;
     const catalog = new SessionCatalog([root], {
       beforeCostRead: async () => {
@@ -462,7 +453,6 @@ describe("SessionCatalog", () => {
       ],
     });
     expect(costReads).toBe(3);
-
     await writeFile(rootPath, `${JSON.stringify(assistantUsage(0.05))}\n`, { flag: "a" });
     await setModifiedTime(rootPath, "2026-08-01T11:00:00.000Z");
     const updated = await catalog.refresh();
@@ -495,13 +485,11 @@ describe("SessionCatalog", () => {
       },
       [assistantUsage("not-a-number")],
     );
-
     const catalog = new SessionCatalog([history]);
     await catalog.refresh();
     await expect(catalog.costSummary("healthy")).resolves.toMatchObject({ totalUsd: 0.75 });
     await expect(catalog.costSummary("failed")).resolves.toBeUndefined();
   });
-
   it("deduplicates concurrent cost reads for the selected session", async () => {
     const history = await makeTemporaryDirectory();
     const sessionPath = join(history, "project", "session.jsonl");
@@ -558,7 +546,6 @@ describe("SessionCatalog", () => {
       },
     ]);
   });
-
   it("does not return a cost summary for a stale fingerprint", async () => {
     const history = await makeTemporaryDirectory();
     const sessionPath = join(history, "project", "session.jsonl");
@@ -594,7 +581,6 @@ describe("SessionCatalog", () => {
     await expect(staleCost).resolves.toBeUndefined();
     await expect(catalog.costSummary("session-stale-cost")).resolves.toMatchObject({ totalUsd: 2 });
   });
-
   it("does not mark a summary exact when a descendant appears during loading", async () => {
     const history = await makeTemporaryDirectory();
     const rootPath = join(history, "project", "root.jsonl");
@@ -627,14 +613,12 @@ describe("SessionCatalog", () => {
     );
     await catalog.refresh();
     costReadGate.resolve();
-
     await expect(staleCost).resolves.toBeUndefined();
     await expect(catalog.costSummary("root-growing-tree")).resolves.toMatchObject({
       totalUsd: 1.5,
       partial: false,
     });
   });
-
   it("lists sessions by creation time instead of file activity", async () => {
     const root = await makeTemporaryDirectory();
     const olderPath = join(root, "project-a", "older.jsonl");
@@ -653,10 +637,8 @@ describe("SessionCatalog", () => {
     });
     await setModifiedTime(olderPath, "2026-07-28T12:00:00.000Z");
     await setModifiedTime(newerPath, "2026-07-28T11:30:00.000Z");
-
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
-
     expect(
       catalog.list({ offset: 0, limit: 20, query: "" }).sessions.map((session) => ({
         id: session.id,
@@ -667,43 +649,74 @@ describe("SessionCatalog", () => {
       { id: "older-session", createdAt: "2026-07-28T10:00:00.000Z" },
     ]);
   });
-
-  it("updates the main session when an active subagent exits", async () => {
+  it("classifies child lifecycles fail-safe and updates the parent", async () => {
     const root = await makeTemporaryDirectory();
-    const mainPath = join(root, "project-a", "main.jsonl");
-    const subagentPath = join(root, "project-a", "main", "Worker.jsonl");
-    const mainHeader = {
-      id: "session-main",
-      title: "Main session",
-      cwd: "/workspace/alpha",
-      timestamp: "2026-07-28T10:00:00.000Z",
+    const childPath = (id: string) => join(root, "project", "parent", `${id}.jsonl`);
+    const header = (id: string, timestamp: string) => ({
+      id,
+      title: id,
+      cwd: "/workspace/project",
+      timestamp,
+    });
+    const assigned = (tail: unknown[] = []) => [
+      { type: "session_init", task: "start" },
+      { type: "message", message: { role: "user", content: "assign" } },
+      ...tail,
+    ];
+    const states = {
+      assigned: assigned(),
+      yielded: assigned([
+        {
+          type: "message",
+          message: { role: "toolResult", toolName: "yield", details: { status: "success" } },
+        },
+      ]),
+      exited: assigned([{ type: "custom", customType: "session_exit" }]),
     };
-    const subagentHeader = {
-      id: "session-worker",
-      title: "",
-      cwd: "/workspace/alpha",
-      timestamp: "2026-07-28T10:01:00.000Z",
-    };
-    await writeSession(mainPath, mainHeader);
-    await writeSession(subagentPath, subagentHeader);
-
+    await writeSession(join(root, "project", "parent.jsonl"), header("parent", "2026-07-28T10:00:00.000Z"));
+    for (const [id, records] of Object.entries(states))
+      await writeSession(childPath(id), header(id, "2026-07-28T10:01:00.000Z"), records);
+    const writeRaw = (id: string, timestamp: string, records: string[], complete = true) =>
+      writeRawSession(childPath(id), header(id, timestamp), records, complete);
+    await writeRaw("partial", "2026-07-28T10:02:00.000Z", ['{"type":"session_init","task":"start"'], false);
+    await writeRaw("malformed", "2026-07-28T10:03:00.000Z", [
+      '{"type":"session_init","task":"start"}',
+      "not-json",
+    ]);
+    await writeRaw("large-malformed", "2026-07-28T10:04:00.000Z", [
+      '{"type":"session_init","task":"start"}',
+      "x".repeat(20_000),
+      JSON.stringify(states.yielded[2]),
+    ]);
+    await writeSession(childPath("unassigned"), header("unassigned", "2026-07-28T10:05:00.000Z"), [
+      { type: "session_init", task: "start" },
+    ]);
+    await writeSession(
+      childPath("large-unassigned"),
+      header("large-unassigned", "2026-07-28T10:06:00.000Z"),
+      [{ type: "custom", customType: "large", data: "x".repeat(20_000) }],
+    );
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
-
-    await writeSession(subagentPath, subagentHeader, [
-      { type: "custom", customType: "session_exit", data: { reason: "dispose" } },
-    ]);
-    const diff = await catalog.refresh();
-
-    expect(diff.upserted.map((session) => session.id)).toEqual(["session-main", "session-worker"]);
-    expect(diff.upserted).toEqual([
-      expect.objectContaining({ id: "session-main", activeSubagents: [] }),
-      expect.objectContaining({ id: "session-worker", parentSessionId: "session-main" }),
-    ]);
-    expect(diff.removed).toEqual([]);
-    expect(catalog.list({ offset: 0, limit: 20, query: "" }).sessions[0]?.activeSubagents).toEqual([]);
+    const activeIds = catalog.get("parent")?.activeSubagents?.map(({ id }) => id);
+    expect(activeIds).toEqual(
+      expect.arrayContaining(["assigned", "partial", "malformed", "large-malformed"]),
+    );
+    expect(activeIds).toEqual(
+      expect.not.arrayContaining(["yielded", "exited", "unassigned", "large-unassigned"]),
+    );
+    expect(catalog.fileChangeSources("parent")?.sources.map(({ sessionId }) => sessionId)).toEqual(
+      expect.arrayContaining(["unassigned", "large-unassigned", "partial", "malformed", "large-malformed"]),
+    );
+    await writeSession(childPath("assigned"), header("assigned", "2026-07-28T10:01:00.000Z"), states.exited);
+    const second = await catalog.refresh();
+    const updatedParent = second.upserted.find(({ id }) => id === "parent");
+    expect(updatedParent).toBeDefined();
+    expect(updatedParent?.activeSubagents.map(({ id }) => id)).not.toContain("assigned");
+    expect(second.upserted).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "assigned", parentSessionId: "parent" })]),
+    );
   });
-
   it("uses the cwd leaf for generated session filenames without a title", async () => {
     const root = await makeTemporaryDirectory();
     const sessionPath = join(
@@ -717,13 +730,10 @@ describe("SessionCatalog", () => {
       cwd: "/workspace/alpha",
       timestamp: "2026-07-28T22:03:11.256Z",
     });
-
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
-
     expect(catalog.get("019faac0-d218-7000-a8f9-d1c5875c00e4")?.name).toBe("alpha");
   });
-
   it("only replaces exact generated stems and returns null without a cwd leaf", async () => {
     const root = await makeTemporaryDirectory();
     await writeSession(join(root, "project-a", "2026-07-28T23-00-00-000Z_session-root.jsonl"), {
@@ -743,15 +753,12 @@ describe("SessionCatalog", () => {
       title: "",
       cwd: "/workspace/alpha",
     });
-
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
-
     expect(catalog.get("session-root")?.name).toBeNull();
     expect(catalog.get("session-invalid")?.name).toBe("timestamp-like_session-invalid");
     expect(catalog.get("session-missing")?.name).toBe("missing-timestamp");
   });
-
   it("prefers a non-empty mutable title over a different header title", async () => {
     const root = await makeTemporaryDirectory();
     await writeSession(join(root, "project-a", "custom-title.jsonl"), {
@@ -761,13 +768,10 @@ describe("SessionCatalog", () => {
       cwd: "/workspace/alpha",
       timestamp: "2026-07-28T20:00:00.000Z",
     });
-
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
-
     expect(catalog.get("session-mutable-title")?.name).toBe("Mutable title");
   });
-
   it("uses the header title when the mutable title is empty", async () => {
     const root = await makeTemporaryDirectory();
     await writeSession(join(root, "project-a", "header-title.jsonl"), {
@@ -777,13 +781,10 @@ describe("SessionCatalog", () => {
       cwd: "/workspace/alpha",
       timestamp: "2026-07-28T21:00:00.000Z",
     });
-
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
-
     expect(catalog.get("session-header-title")?.name).toBe("Header title");
   });
-
   it("preserves a custom filename stem despite a valid timestamp", async () => {
     const root = await makeTemporaryDirectory();
     await writeSession(join(root, "project-a", "2026-07-28T22-00-00-000Z_custom-session.jsonl"), {
@@ -792,13 +793,11 @@ describe("SessionCatalog", () => {
       cwd: "/workspace/alpha",
       timestamp: "2026-07-28T22:00:00.000Z",
     });
-
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
 
     expect(catalog.get("session-custom")?.name).toBe("2026-07-28T22-00-00-000Z_custom-session");
   });
-
   it("derives an exact generated stem from a numeric timestamp", async () => {
     const root = await makeTemporaryDirectory();
     await writeSession(join(root, "project-a", "2026-07-28T22-03-11-256Z_session-numeric.jsonl"), {
@@ -807,13 +806,11 @@ describe("SessionCatalog", () => {
       cwd: "/workspace/alpha",
       timestamp: Date.UTC(2026, 6, 28, 22, 3, 11, 256),
     });
-
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
 
     expect(catalog.get("session-numeric")?.name).toBe("alpha");
   });
-
   it("reports changed and removed session files", async () => {
     const root = await makeTemporaryDirectory();
     const sessionPath = join(root, "project", "session.jsonl");
@@ -825,7 +822,6 @@ describe("SessionCatalog", () => {
     });
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
-
     await writeSession(sessionPath, {
       id: "session-1",
       title: "Updated title",
@@ -836,14 +832,12 @@ describe("SessionCatalog", () => {
     const changed = await catalog.refresh();
     expect(changed.upserted).toEqual([expect.objectContaining({ id: "session-1", name: "Updated title" })]);
     expect(changed.removed).toEqual([]);
-
     await rm(sessionPath);
     const removed = await catalog.refresh();
     expect(removed.upserted).toEqual([]);
     expect(removed.removed).toEqual(["session-1"]);
     expect(catalog.fileChangeSources("session-1")).toBeUndefined();
   });
-
   it("uses a persisted edit result's canonical diff instead of its snapshot", async () => {
     const root = await makeTemporaryDirectory();
     const sessionPath = join(root, "project", "edit-session.jsonl");
@@ -872,7 +866,6 @@ describe("SessionCatalog", () => {
     );
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
-
     await expect(catalog.transcript("session-edit")).resolves.toEqual([
       {
         id: "edit-result-1",
@@ -885,7 +878,6 @@ describe("SessionCatalog", () => {
       },
     ]);
   });
-
   it("preserves requested read selectors by correlating historical tool calls and results", async () => {
     const root = await makeTemporaryDirectory();
     const sessionPath = join(root, "project", "read-selectors.jsonl");
@@ -928,7 +920,6 @@ describe("SessionCatalog", () => {
     );
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
-
     await expect(catalog.transcript("session-read-selectors")).resolves.toEqual([
       expect.objectContaining({
         id: "read-result-0",
@@ -943,7 +934,6 @@ describe("SessionCatalog", () => {
     ]);
   });
 });
-
 function assistantUsage(total: unknown): Record<string, unknown> {
   return {
     type: "message",
@@ -953,7 +943,6 @@ function assistantUsage(total: unknown): Record<string, unknown> {
     },
   };
 }
-
 interface SessionHeader {
   id: string;
   title: string;
@@ -961,7 +950,6 @@ interface SessionHeader {
   cwd: string;
   timestamp?: string | number;
 }
-
 async function writeSession(path: string, header: SessionHeader, records: unknown[] = []): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const lines = [
@@ -978,7 +966,29 @@ async function writeSession(path: string, header: SessionHeader, records: unknow
   ];
   await writeFile(path, `${lines.join("\n")}\n`, "utf8");
 }
-
+async function writeRawSession(
+  path: string,
+  header: SessionHeader,
+  records: string[],
+  trailingNewline = true,
+): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(
+    path,
+    [
+      JSON.stringify({ type: "title", v: 1, title: header.title, updatedAt: header.timestamp }),
+      JSON.stringify({
+        type: "session",
+        version: 3,
+        id: header.id,
+        timestamp: header.timestamp,
+        cwd: header.cwd,
+      }),
+      ...records,
+    ].join("\n") + (trailingNewline ? "\n" : ""),
+    "utf8",
+  );
+}
 async function setModifiedTime(path: string, timestamp: string): Promise<void> {
   const date = new Date(timestamp);
   await utimes(path, date, date);
