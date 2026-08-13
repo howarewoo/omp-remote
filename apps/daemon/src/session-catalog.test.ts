@@ -651,67 +651,65 @@ describe("SessionCatalog", () => {
   });
   it("classifies child lifecycles fail-safe and updates the parent", async () => {
     const root = await makeTemporaryDirectory();
+    const timestamp = "2026-07-28T10:00:00.000Z";
     const childPath = (id: string) => join(root, "project", "parent", `${id}.jsonl`);
-    const header = (id: string, timestamp: string) => ({
-      id,
-      title: id,
-      cwd: "/workspace/project",
-      timestamp,
-    });
-    const assigned = (tail: unknown[] = []) => [
-      { type: "session_init", task: "start" },
-      { type: "message", message: { role: "user", content: "assign" } },
-      ...tail,
-    ];
+    const header = (id: string) => ({ id, title: id, cwd: "/workspace/project", timestamp });
+    const message = (
+      role: string,
+      data: Record<string, unknown> = {},
+      envelope: Record<string, unknown> = {},
+    ) => ({ type: "message", message: { role, ...data }, ...envelope });
+    const init = { type: "session_init", task: "start" };
+    const assignment = message("user", { content: "assign" });
+    const assigned = (...tail: unknown[]) => [init, assignment, ...tail];
+    const aborted = message("assistant", { stopReason: "aborted" });
+    const syntheticSteering = message("user", {}, { attribution: "agent", steering: true });
     const states = {
       assigned: assigned(),
-      yielded: assigned([
-        {
-          type: "message",
-          message: { role: "toolResult", toolName: "yield", details: { status: "success" } },
-        },
-      ]),
-      exited: assigned([{ type: "custom", customType: "session_exit" }]),
+      agentAssigned: [init, message("user", { content: "assign" }, { attribution: "agent" })],
+      yielded: assigned(message("toolResult", { toolName: "yield", details: { status: "success" } })),
+      exited: assigned({ type: "custom", customType: "session_exit" }),
+      aborted: assigned(aborted),
+      exitSteeredAborted: assigned(
+        { type: "custom", customType: "session_exit" },
+        syntheticSteering,
+        aborted,
+      ),
+      abortSteered: assigned(aborted, syntheticSteering),
+      resumed: assigned(aborted, message("user", { content: "resume" })),
     };
-    await writeSession(join(root, "project", "parent.jsonl"), header("parent", "2026-07-28T10:00:00.000Z"));
-    for (const [id, records] of Object.entries(states))
-      await writeSession(childPath(id), header(id, "2026-07-28T10:01:00.000Z"), records);
-    const writeRaw = (id: string, timestamp: string, records: string[], complete = true) =>
-      writeRawSession(childPath(id), header(id, timestamp), records, complete);
-    await writeRaw("partial", "2026-07-28T10:02:00.000Z", ['{"type":"session_init","task":"start"'], false);
-    await writeRaw("malformed", "2026-07-28T10:03:00.000Z", [
-      '{"type":"session_init","task":"start"}',
-      "not-json",
-    ]);
-    await writeRaw("large-malformed", "2026-07-28T10:04:00.000Z", [
-      '{"type":"session_init","task":"start"}',
-      "x".repeat(20_000),
-      JSON.stringify(states.yielded[2]),
-    ]);
-    await writeSession(childPath("unassigned"), header("unassigned", "2026-07-28T10:05:00.000Z"), [
-      { type: "session_init", task: "start" },
-    ]);
-    await writeSession(
-      childPath("large-unassigned"),
-      header("large-unassigned", "2026-07-28T10:06:00.000Z"),
-      [{ type: "custom", customType: "large", data: "x".repeat(20_000) }],
+    await writeSession(join(root, "project", "parent.jsonl"), header("parent"));
+    await Promise.all(
+      Object.entries(states).map(([id, records]) => writeSession(childPath(id), header(id), records)),
     );
-    await writeSession(childPath("oversized"), header("oversized", "2026-07-28T10:07:00.000Z"), [
-      { type: "custom", customType: "large", data: "x".repeat(140_000) },
+    const writeRaw = (id: string, records: string[], complete = true) =>
+      writeRawSession(childPath(id), header(id), records, complete);
+    await Promise.all([
+      writeRaw("partial", ['{"type":"session_init","task":"start"'], false),
+      writeRaw("malformed", ['{"type":"session_init","task":"start"}', "not-json"]),
+      writeRaw("large-malformed", [
+        '{"type":"session_init","task":"start"}',
+        "x".repeat(20_000),
+        JSON.stringify(states.yielded[2]),
+      ]),
+      writeRaw("unassigned", [JSON.stringify(init)]),
+      writeRaw("large-unassigned", [
+        JSON.stringify({ type: "custom", customType: "large", data: "x".repeat(20_000) }),
+      ]),
+      writeRaw("oversized", [
+        JSON.stringify({ type: "custom", customType: "large", data: "x".repeat(140_000) }),
+      ]),
     ]);
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
     const activeIds = catalog.get("parent")?.activeSubagents?.map(({ id }) => id);
-    expect(activeIds).toEqual(
-      expect.arrayContaining(["assigned", "partial", "malformed", "large-malformed", "oversized"]),
-    );
-    expect(activeIds).toEqual(
-      expect.not.arrayContaining(["yielded", "exited", "unassigned", "large-unassigned"]),
+    expect(activeIds?.sort().join()).toBe(
+      "agentAssigned,assigned,large-malformed,malformed,oversized,partial,resumed",
     );
     expect(catalog.fileChangeSources("parent")?.sources.map(({ sessionId }) => sessionId)).toEqual(
       expect.arrayContaining(["unassigned", "large-unassigned", "partial", "malformed", "large-malformed"]),
     );
-    await writeSession(childPath("assigned"), header("assigned", "2026-07-28T10:01:00.000Z"), states.exited);
+    await writeSession(childPath("assigned"), header("assigned"), states.exited);
     const second = await catalog.refresh();
     const updatedParent = second.upserted.find(({ id }) => id === "parent");
     expect(updatedParent).toBeDefined();

@@ -615,8 +615,13 @@ function updateSessionLifecycle(record: Record<string, unknown>, lifecycle: Life
   }
   if (record.type !== "message" || !isRecord(record.message)) return;
   if (record.message.role === "user") {
+    if (record.steering === true && record.attribution === "agent") return;
     lifecycle.assigned = true;
     lifecycle.exited = false;
+    return;
+  }
+  if (record.message.role === "assistant" && record.message.stopReason === "aborted") {
+    lifecycle.exited = true;
     return;
   }
   if (
