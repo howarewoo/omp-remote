@@ -11,6 +11,7 @@ import {
 import { type FileHandle, open, opendir, readdir, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
+import { StringDecoder } from "node:string_decoder";
 import {
   boundTranscriptImageBudget,
   compareSessionsByCreation,
@@ -29,6 +30,7 @@ import {
 import { materializeReadImages, normalizeRawMessage, ToolCallTracker } from "./message-normalizer.js";
 
 const METADATA_READ_BYTES = 16 * 1024;
+const LIFECYCLE_SCAN_BYTES = 128 * 1024;
 const MAX_TRANSCRIPT_MESSAGES = 200;
 const METADATA_READ_CONCURRENCY = 32;
 const COST_HYDRATION_CONCURRENCY = 4;
@@ -51,11 +53,13 @@ interface SessionCostData {
 }
 
 interface SessionMetadata {
+  assigned: boolean | null;
   exited: boolean;
   session: Session;
 }
 
 interface CatalogEntry {
+  assigned: boolean | null;
   fingerprint: string;
   path: string;
   parentPath?: string | null;
@@ -249,7 +253,7 @@ export class SessionCatalog {
       const rootPath = findRootSessionPath(entry.path, sessionPaths);
       if (rootPath === entry.path) {
         rootPaths.add(rootPath);
-      } else if (!entry.exited) {
+      } else if (entry.assigned !== false && !entry.exited) {
         const activeSubagents = activeSubagentsByRoot.get(rootPath) ?? [];
         activeSubagents.push({
           id: entry.session.id,
@@ -412,12 +416,16 @@ async function readSessionMetadata(path: string): Promise<SessionMetadata | null
   let handle: FileHandle | undefined;
   try {
     handle = await open(path, "r");
+    const fileStats = await handle.stat();
     const buffer = Buffer.allocUnsafe(METADATA_READ_BYTES);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    const lines = buffer.subarray(0, bytesRead).toString("utf8").split("\n");
+    const headLength = Math.min(fileStats.size, buffer.length);
+    const { bytesRead: headBytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (headBytesRead !== headLength) return null;
+    const headText = buffer.subarray(0, headBytesRead).toString("utf8");
+    const headLines = headText.split("\n");
     let title: string | null = null;
     let header: Record<string, unknown> | null = null;
-    for (const line of lines) {
+    for (const line of headLines) {
       const record = parseRecord(line);
       if (!record) continue;
       if (record.type === "title" && typeof record.title === "string") title = record.title.trim() || null;
@@ -428,20 +436,52 @@ async function readSessionMetadata(path: string): Promise<SessionMetadata | null
     }
     if (!header || typeof header.id !== "string" || typeof header.cwd !== "string" || !header.cwd)
       return null;
-    const fileStats = await handle.stat();
+
     const tailOffset = Math.max(0, fileStats.size - buffer.length);
     const tailLength = fileStats.size - tailOffset;
     const tailRead = await handle.read(buffer, 0, tailLength, tailOffset);
-    const tailRecords = buffer
-      .subarray(0, tailRead.bytesRead)
-      .toString("utf8")
-      .split("\n")
-      .map(parseRecord)
-      .filter((record): record is Record<string, unknown> => record !== null);
-    const exited = sessionHasEnded(tailRecords);
+    if (tailRead.bytesRead !== tailLength) return null;
+    const tailText = buffer.subarray(0, tailRead.bytesRead).toString("utf8");
+    const tailLines = tailText.split("\n");
+    const headWindow = inspectLifecycleWindow(headLines, headText.endsWith("\n"), false);
+    const tailWindow = inspectLifecycleWindow(tailLines, tailText.endsWith("\n"), tailOffset !== 0);
+    let lifecycle: SessionLifecycle;
+    const trustedAssignmentWindow =
+      !headWindow.malformed &&
+      !tailWindow.incomplete &&
+      !tailWindow.malformed &&
+      (headWindow.assigned || tailWindow.assigned);
+    if (
+      (!tailOffset &&
+        !headWindow.incomplete &&
+        !tailWindow.incomplete &&
+        !headWindow.malformed &&
+        !tailWindow.malformed &&
+        (headWindow.assigned || tailWindow.assigned || tailWindow.exited)) ||
+      trustedAssignmentWindow
+    ) {
+      lifecycle = {
+        assigned: headWindow.assigned || tailWindow.assigned,
+        exited: tailWindow.exited,
+      };
+    } else {
+      lifecycle = await scanSessionLifecycle(
+        handle,
+        fileStats.size,
+        headWindow,
+        tailWindow,
+        tailText.endsWith("\n"),
+        tailOffset,
+      );
+    }
+    if ((await handle.stat()).size !== fileStats.size) {
+      lifecycle = { assigned: null, exited: false };
+    }
+
     const headerTitle = typeof header.title === "string" ? header.title.trim() : "";
     return {
-      exited,
+      assigned: lifecycle.assigned,
+      exited: lifecycle.exited,
       session: {
         id: header.id,
         source: "history",
@@ -471,6 +511,132 @@ async function readSessionMetadata(path: string): Promise<SessionMetadata | null
     await handle?.close();
   }
 }
+
+interface SessionLifecycle {
+  assigned: boolean | null;
+  exited: boolean;
+}
+
+interface LifecycleWindow {
+  assigned: boolean;
+  exited: boolean;
+  incomplete: boolean;
+  malformed: boolean;
+}
+
+function inspectLifecycleWindow(lines: string[], complete: boolean, skipFirst: boolean): LifecycleWindow {
+  const lifecycle: LifecycleWindow = {
+    assigned: false,
+    exited: false,
+    incomplete: !complete,
+    malformed: false,
+  };
+  const first = skipFirst ? 1 : 0;
+  const last = complete ? lines.length : Math.max(first, lines.length - 1);
+  for (let index = first; index < last; index += 1) {
+    const line = lines[index];
+    if (!line) continue;
+    const record = parseRecord(line);
+    if (!record) {
+      lifecycle.malformed = true;
+      continue;
+    }
+    updateSessionLifecycle(record, lifecycle);
+  }
+  return lifecycle;
+}
+
+async function scanSessionLifecycle(
+  handle: FileHandle,
+  fileSize: number,
+  headWindow: LifecycleWindow,
+  tailWindow: LifecycleWindow,
+  complete: boolean,
+  tailOffset: number,
+): Promise<SessionLifecycle> {
+  const finish = async (lifecycle: SessionLifecycle): Promise<SessionLifecycle> =>
+    (await handle.stat()).size === fileSize ? lifecycle : { assigned: null, exited: false };
+  const oversized = fileSize > LIFECYCLE_SCAN_BYTES;
+  const lifecycle: LifecycleWindow = {
+    assigned: false,
+    exited: false,
+    incomplete: !complete,
+    malformed: headWindow.malformed,
+  };
+  const chunk = Buffer.allocUnsafe(METADATA_READ_BYTES);
+  const decoder = new StringDecoder("utf8");
+  let carry = "";
+  let lineOffset = 0;
+  let offset = 0;
+  let assignmentOffset = Number.POSITIVE_INFINITY;
+  const limit = Math.min(fileSize, LIFECYCLE_SCAN_BYTES);
+  while (offset < limit && !lifecycle.assigned) {
+    const length = Math.min(chunk.length, limit - offset);
+    const { bytesRead } = await handle.read(chunk, 0, length, offset);
+    if (bytesRead !== length) return finish({ assigned: null, exited: false });
+    offset += bytesRead;
+    carry += decoder.write(chunk.subarray(0, bytesRead));
+    let newline = carry.indexOf("\n");
+    while (newline >= 0) {
+      const line = carry.slice(0, newline);
+      carry = carry.slice(newline + 1);
+      const currentOffset = lineOffset;
+      lineOffset += Buffer.byteLength(line, "utf8") + 1;
+      if (line) {
+        const record = parseRecord(line);
+        if (!record) lifecycle.malformed = true;
+        else {
+          updateSessionLifecycle(record, lifecycle);
+          if (lifecycle.assigned && assignmentOffset === Number.POSITIVE_INFINITY) {
+            assignmentOffset = currentOffset;
+            break;
+          }
+        }
+      }
+      newline = carry.indexOf("\n");
+    }
+  }
+  if (!lifecycle.assigned) {
+    carry += decoder.end();
+    if (carry) lifecycle.incomplete = true;
+  }
+  if (lifecycle.malformed || lifecycle.incomplete) return finish({ assigned: null, exited: false });
+  if (!lifecycle.assigned) return finish({ assigned: oversized ? null : false, exited: false });
+  if (!oversized) return finish({ assigned: true, exited: lifecycle.exited });
+  if (tailWindow.incomplete || tailWindow.malformed) return finish({ assigned: null, exited: false });
+  if (assignmentOffset < tailOffset)
+    return finish({ assigned: true, exited: lifecycle.exited || tailWindow.exited });
+  return finish({ assigned: true, exited: lifecycle.exited });
+}
+function updateSessionLifecycle(record: Record<string, unknown>, lifecycle: LifecycleWindow): void {
+  if (record.type === "session_init") {
+    if (typeof record.task !== "string") lifecycle.malformed = true;
+    return;
+  }
+  if (record.type === "custom" && record.customType === "session_exit") {
+    lifecycle.exited = true;
+    return;
+  }
+  if (record.type !== "message" || !isRecord(record.message)) return;
+  if (record.message.role === "user") {
+    if (record.steering === true && record.attribution === "agent") return;
+    lifecycle.assigned = true;
+    lifecycle.exited = false;
+    return;
+  }
+  if (record.message.role === "assistant" && record.message.stopReason === "aborted") {
+    lifecycle.exited = true;
+    return;
+  }
+  if (
+    record.message.role === "toolResult" &&
+    record.message.toolName === "yield" &&
+    record.message.isError !== true
+  ) {
+    lifecycle.exited = true;
+  }
+}
+
 async function readSessionCost(path: string): Promise<SessionCostData> {
   let totalUsd = 0;
   let exact = true;
@@ -729,31 +895,6 @@ function parseRecord(line: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
-}
-
-function sessionHasEnded(records: Record<string, unknown>[]): boolean {
-  let ended = false;
-  for (const record of records) {
-    if (record.type === "custom" && record.customType === "session_exit") {
-      ended = true;
-      continue;
-    }
-    if (record.type !== "message" || !isRecord(record.message)) continue;
-    if (record.message.role === "user") {
-      ended = false;
-      continue;
-    }
-    if (
-      record.message.role === "toolResult" &&
-      record.message.toolName === "yield" &&
-      record.message.isError !== true &&
-      isRecord(record.message.details) &&
-      record.message.details.status === "success"
-    ) {
-      ended = true;
-    }
-  }
-  return ended;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
