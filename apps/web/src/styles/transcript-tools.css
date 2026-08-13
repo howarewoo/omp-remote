@@ -16,7 +16,7 @@
 }
 
 .transcript-entry > .system-message-disclosure {
-  width: min(100%, 74ch);
+  width: 100%;
 }
 
 .transcript-entry > :is(.system-message-disclosure, .tool-message-disclosure) {
