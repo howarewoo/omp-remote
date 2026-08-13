@@ -74,6 +74,10 @@
   overflow-wrap: anywhere;
 }
 
+.todo-active-task > span:last-child {
+  min-width: 0;
+}
+
 .todo-state-marker {
   position: relative;
   width: 0.72rem;
