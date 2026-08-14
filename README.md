@@ -8,6 +8,20 @@ A phone-first PWA for supervising multiple [Oh My Pi](https://omp.sh) coding ses
 |---|---|
 |[![Desktop OMP Remote dashboard showing an active coding session at 1440×900](docs/screenshots/desktop.webp)](docs/screenshots/desktop.webp)|[![Mobile OMP Remote dashboard showing an active coding session at 390×844](docs/screenshots/mobile.webp)](docs/screenshots/mobile.webp)
 
+### Transcript disclosures
+
+OMP Remote keeps verbose transcript details inspectable without crowding the session stream.
+
+|System message|Code block|
+|---|---|
+|[![Collapsed system message disclosure](docs/screenshots/disclosure-system.webp)](docs/screenshots/disclosure-system.webp)|[![Collapsed code block disclosure](docs/screenshots/disclosure-code.webp)](docs/screenshots/disclosure-code.webp)|
+|Tool output|Edit diff|
+|[![Collapsed Bash tool output disclosure](docs/screenshots/disclosure-tool.webp)](docs/screenshots/disclosure-tool.webp)|[![Expanded edit diff disclosure](docs/screenshots/disclosure-edit.webp)](docs/screenshots/disclosure-edit.webp)|
+|Write result|Read result|
+|[![Expanded write result disclosure](docs/screenshots/disclosure-write.webp)](docs/screenshots/disclosure-write.webp)|[![Expanded Read result disclosure](docs/screenshots/disclosure-read.webp)](docs/screenshots/disclosure-read.webp)|
+|Todo progress||
+|[![Expanded Todo progress disclosure](docs/screenshots/disclosure-todo.webp)](docs/screenshots/disclosure-todo.webp)||
+
 ## Getting started
 
 Follow these steps on the macOS or Linux computer where you run OMP.
