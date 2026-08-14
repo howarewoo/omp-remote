@@ -28,6 +28,7 @@ describe("normalizeExtensionMessage", () => {
       streaming: true,
       presentation: "diff",
       toolName: "edit",
+      lifecycle: { state: "running" },
     });
   });
 
@@ -358,6 +359,86 @@ describe("normalizeExtensionMessage", () => {
         () => ({ status: "available", mimeType: "image/png", data: "iVBORw0KGgo=" }),
       ),
     ).toMatchObject({ images: [{ status: "unavailable", reason: "invalid_reference" }] });
+  });
+
+  it("assigns explicit lifecycle evidence for running, successful, and errored tool results", () => {
+    const running = normalizeExtensionMessage(
+      {
+        id: "tool-running-live",
+        role: "toolResult",
+        toolName: "bash",
+        content: "building...",
+      },
+      true,
+      "fallback-id",
+    );
+    expect(running?.lifecycle).toEqual({ state: "running" });
+    expect(running?.streaming).toBe(true);
+
+    const success = normalizeExtensionMessage(
+      {
+        id: "tool-success-live",
+        role: "toolResult",
+        toolName: "bash",
+        content: "build complete",
+        isError: false,
+      },
+      false,
+      "fallback-id",
+    );
+    expect(success?.lifecycle).toEqual({ state: "success" });
+    expect(success?.streaming).toBe(false);
+
+    const successDefault = normalizeExtensionMessage(
+      {
+        id: "tool-success-default",
+        role: "toolResult",
+        toolName: "bash",
+        content: "build complete",
+      },
+      false,
+      "fallback-id",
+    );
+    expect(successDefault?.lifecycle).toEqual({ state: "success" });
+
+    const errored = normalizeExtensionMessage(
+      {
+        id: "tool-error-live",
+        role: "toolResult",
+        toolName: "bash",
+        content: "build failed",
+        isError: true,
+      },
+      false,
+      "fallback-id",
+    );
+    expect(errored?.lifecycle).toEqual({ state: "error" });
+    expect(errored?.streaming).toBe(false);
+  });
+
+  it("omits lifecycle for non-tool messages and preserves legacy streaming semantics", () => {
+    const user = normalizeExtensionMessage(
+      {
+        id: "user-message-1",
+        role: "user",
+        content: "Run test suite",
+      },
+      false,
+      "fallback-id",
+    );
+    expect(user?.lifecycle).toBeUndefined();
+
+    const assistantStreaming = normalizeExtensionMessage(
+      {
+        id: "assistant-message-1",
+        role: "assistant",
+        content: "Running test suite...",
+      },
+      true,
+      "fallback-id",
+    );
+    expect(assistantStreaming?.lifecycle).toBeUndefined();
+    expect(assistantStreaming?.streaming).toBe(true);
   });
 });
 

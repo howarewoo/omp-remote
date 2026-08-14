@@ -145,6 +145,7 @@ function cloneTranscriptMessage(message: TranscriptMessage): TranscriptMessage {
     ...message,
     text: truncateTranscriptText(message.text),
     ...(message.images ? { images: message.images.map((image) => ({ ...image })) } : {}),
+    ...(message.lifecycle ? { lifecycle: { ...message.lifecycle } } : {}),
   };
 }
 

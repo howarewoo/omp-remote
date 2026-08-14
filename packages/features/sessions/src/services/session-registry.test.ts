@@ -5,7 +5,7 @@ import {
   TRANSCRIPT_TEXT_LIMIT,
 } from "@omp-remote/protocol";
 import { describe, expect, it } from "vitest";
-import { SessionRegistry } from "./session-registry.js";
+import { SessionRegistry, type SessionRegistryEvent } from "./session-registry.js";
 
 const BASE_SESSION: Session = {
   id: "session-1",
@@ -478,5 +478,126 @@ describe("SessionRegistry", () => {
     expect(registry.get("session-1")?.messages).toHaveLength(0);
     expect(registry.get("session-1")?.activeSubagents[0]?.name).toBe("ResearchAgent");
     expect(registry.get("session-1")?.costSummary?.agents[0]?.name).toBe("Bootstrap");
+  });
+
+  it("preserves and transitions explicit tool lifecycle through append, deduplication, and emitted deltas", () => {
+    const registry = new SessionRegistry();
+    registry.upsert(BASE_SESSION);
+
+    const events: SessionRegistryEvent[] = [];
+    registry.subscribe((event) => events.push(event));
+
+    registry.appendMessage("session-1", {
+      id: "tool-task-1",
+      role: "tool",
+      text: "running build...",
+      timestamp: "2026-07-28T17:01:00.000Z",
+      streaming: true,
+      presentation: "text",
+      toolName: "bash",
+      lifecycle: { state: "running" },
+    });
+
+    expect(registry.get("session-1")?.messages).toEqual([
+      expect.objectContaining({
+        id: "tool-task-1",
+        streaming: true,
+        lifecycle: { state: "running" },
+      }),
+    ]);
+
+    registry.appendMessage("session-1", {
+      id: "tool-task-1",
+      role: "tool",
+      text: "running build...",
+      timestamp: "2026-07-28T17:01:00.000Z",
+      streaming: true,
+      presentation: "text",
+      toolName: "bash",
+      lifecycle: { state: "running" },
+    });
+
+    registry.appendMessage("session-1", {
+      id: "tool-task-1",
+      role: "tool",
+      text: "build passed",
+      timestamp: "2026-07-28T17:01:02.000Z",
+      streaming: false,
+      presentation: "text",
+      toolName: "bash",
+      lifecycle: { state: "success" },
+    });
+
+    expect(registry.get("session-1")?.messages).toHaveLength(1);
+    expect(registry.get("session-1")?.messages[0]?.lifecycle).toEqual({ state: "success" });
+
+    registry.appendMessage("session-1", {
+      id: "tool-task-2",
+      role: "tool",
+      text: "error occurred",
+      timestamp: "2026-07-28T17:01:03.000Z",
+      streaming: false,
+      presentation: "text",
+      toolName: "bash",
+      lifecycle: { state: "error" },
+    });
+
+    const transcriptEvents = events.filter((event) => event.type === "transcript_upsert");
+    expect(transcriptEvents).toHaveLength(4);
+    const event0 = transcriptEvents[0];
+    if (!event0 || event0.type !== "transcript_upsert") throw new Error("Expected transcript event");
+    expect(event0.message.lifecycle).toEqual({ state: "running" });
+
+    const event1 = transcriptEvents[1];
+    if (!event1 || event1.type !== "transcript_upsert") throw new Error("Expected transcript event");
+    expect(event1.message.lifecycle).toEqual({ state: "running" });
+
+    const event2 = transcriptEvents[2];
+    if (!event2 || event2.type !== "transcript_upsert") throw new Error("Expected transcript event");
+    expect(event2.message.lifecycle).toEqual({ state: "success" });
+
+    const event3 = transcriptEvents[3];
+    if (!event3 || event3.type !== "transcript_upsert") throw new Error("Expected transcript event");
+    expect(event3.message.lifecycle).toEqual({ state: "error" });
+    const snapshotMessage = registry.get("session-1")?.messages[0];
+    if (snapshotMessage?.lifecycle) {
+      snapshotMessage.lifecycle = { state: "error" };
+    }
+    expect(registry.get("session-1")?.messages[0]?.lifecycle).toEqual({ state: "success" });
+  });
+
+  it("preserves legacy messages without lifecycle alongside new lifecycle records", () => {
+    const registry = new SessionRegistry();
+    const sessionWithLegacy: Session = {
+      ...BASE_SESSION,
+      messages: [
+        {
+          id: "legacy-tool-1",
+          role: "tool",
+          text: "legacy tool output",
+          timestamp: "2026-07-28T16:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+          toolName: "read",
+        },
+      ],
+    };
+    registry.upsert(sessionWithLegacy);
+
+    registry.appendMessage("session-1", {
+      id: "modern-tool-1",
+      role: "tool",
+      text: "modern tool output with lifecycle",
+      timestamp: "2026-07-28T16:06:00.000Z",
+      streaming: false,
+      presentation: "text",
+      toolName: "read",
+      lifecycle: { state: "success" },
+    });
+
+    const messages = registry.get("session-1")?.messages;
+    expect(messages).toHaveLength(2);
+    expect(messages?.[0]?.lifecycle).toBeUndefined();
+    expect(messages?.[1]?.lifecycle).toEqual({ state: "success" });
   });
 });

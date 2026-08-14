@@ -880,6 +880,7 @@ describe("SessionCatalog", () => {
         streaming: false,
         presentation: "diff",
         toolName: "edit",
+        lifecycle: { state: "success" },
       },
     ]);
   });

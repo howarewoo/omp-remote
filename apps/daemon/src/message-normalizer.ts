@@ -209,6 +209,14 @@ export function normalizeRawMessage(
     data.role === "toolResult"
       ? formatToolTitle(toolName, toolCall?.arguments, data.details, appliedDiff)
       : undefined;
+  const lifecycle =
+    data.role === "toolResult"
+      ? streaming
+        ? ({ state: "running" } as const)
+        : data.isError === true
+          ? ({ state: "error" } as const)
+          : ({ state: "success" } as const)
+      : undefined;
   const role =
     data.role === "toolResult"
       ? "tool"
@@ -227,6 +235,7 @@ export function normalizeRawMessage(
     ...(readResolvedPath ? { readResolvedPath } : {}),
     ...(images?.length ? { images } : {}),
     ...(toolTitle ? { toolTitle } : {}),
+    ...(lifecycle ? { lifecycle } : {}),
   };
 }
 function extractReadImages(

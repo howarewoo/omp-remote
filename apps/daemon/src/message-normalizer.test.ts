@@ -28,6 +28,7 @@ describe("normalizeRawMessage", () => {
       streaming: true,
       presentation: "diff",
       toolName: "edit",
+      lifecycle: { state: "running" },
     });
   });
 
@@ -165,6 +166,7 @@ describe("normalizeRawMessage", () => {
       toolName: "read",
       readTarget: "skill://using-woostack/references/session-learning.md",
       readResolvedPath: "/Users/example/.agents/skills/using-woostack/references/session-learning.md",
+      lifecycle: { state: "success" },
     });
   });
 
@@ -585,6 +587,86 @@ describe("normalizeRawMessage", () => {
       { resolveReadImage: () => ({ status: "available", mimeType: "image/png", data: "iVBORw0KGgo=" }) },
     );
     expect(errored?.images).toEqual([{ status: "unavailable", reason: "invalid_reference" }]);
+  });
+
+  it("assigns explicit lifecycle evidence for running, successful, and errored tool results", () => {
+    const running = normalizeRawMessage(
+      {
+        id: "tool-running-raw",
+        role: "toolResult",
+        toolName: "bash",
+        content: "executing...",
+      },
+      true,
+      "fallback-id",
+    );
+    expect(running?.lifecycle).toEqual({ state: "running" });
+    expect(running?.streaming).toBe(true);
+
+    const success = normalizeRawMessage(
+      {
+        id: "tool-success-raw",
+        role: "toolResult",
+        toolName: "bash",
+        content: "executed",
+        isError: false,
+      },
+      false,
+      "fallback-id",
+    );
+    expect(success?.lifecycle).toEqual({ state: "success" });
+    expect(success?.streaming).toBe(false);
+
+    const successDefault = normalizeRawMessage(
+      {
+        id: "tool-success-default",
+        role: "toolResult",
+        toolName: "bash",
+        content: "executed",
+      },
+      false,
+      "fallback-id",
+    );
+    expect(successDefault?.lifecycle).toEqual({ state: "success" });
+
+    const errored = normalizeRawMessage(
+      {
+        id: "tool-error-raw",
+        role: "toolResult",
+        toolName: "bash",
+        content: "execution failed",
+        isError: true,
+      },
+      false,
+      "fallback-id",
+    );
+    expect(errored?.lifecycle).toEqual({ state: "error" });
+    expect(errored?.streaming).toBe(false);
+  });
+
+  it("omits lifecycle for non-tool messages and preserves legacy streaming semantics", () => {
+    const user = normalizeRawMessage(
+      {
+        id: "user-raw-1",
+        role: "user",
+        content: "Analyze workspace",
+      },
+      false,
+      "fallback-id",
+    );
+    expect(user?.lifecycle).toBeUndefined();
+
+    const assistant = normalizeRawMessage(
+      {
+        id: "assistant-raw-1",
+        role: "assistant",
+        content: "Analyzing workspace...",
+      },
+      true,
+      "fallback-id",
+    );
+    expect(assistant?.lifecycle).toBeUndefined();
+    expect(assistant?.streaming).toBe(true);
   });
 });
 

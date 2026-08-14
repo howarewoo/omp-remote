@@ -156,4 +156,114 @@ describe("TranscriptMessageSchema", () => {
       presentation: "text",
     });
   });
+
+  it("preserves running tool lifecycle on a streaming tool message", () => {
+    expect(
+      TranscriptMessageSchema.parse({
+        id: "tool-running-1",
+        role: "tool",
+        text: "partial stdout",
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: true,
+        toolName: "bash",
+        lifecycle: { state: "running" },
+      }),
+    ).toEqual({
+      id: "tool-running-1",
+      role: "tool",
+      text: "partial stdout",
+      timestamp: "2026-07-29T12:00:00.000Z",
+      streaming: true,
+      presentation: "text",
+      toolName: "bash",
+      lifecycle: { state: "running" },
+    });
+  });
+
+  it("preserves success tool lifecycle on a completed tool message", () => {
+    expect(
+      TranscriptMessageSchema.parse({
+        id: "tool-success-1",
+        role: "tool",
+        text: "command succeeded",
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        toolName: "bash",
+        lifecycle: { state: "success" },
+      }),
+    ).toEqual({
+      id: "tool-success-1",
+      role: "tool",
+      text: "command succeeded",
+      timestamp: "2026-07-29T12:00:00.000Z",
+      streaming: false,
+      presentation: "text",
+      toolName: "bash",
+      lifecycle: { state: "success" },
+    });
+  });
+
+  it("preserves error tool lifecycle on an errored tool message", () => {
+    expect(
+      TranscriptMessageSchema.parse({
+        id: "tool-error-1",
+        role: "tool",
+        text: "command failed with exit code 1",
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        toolName: "bash",
+        lifecycle: { state: "error" },
+      }),
+    ).toEqual({
+      id: "tool-error-1",
+      role: "tool",
+      text: "command failed with exit code 1",
+      timestamp: "2026-07-29T12:00:00.000Z",
+      streaming: false,
+      presentation: "text",
+      toolName: "bash",
+      lifecycle: { state: "error" },
+    });
+  });
+
+  it("preserves legacy records without the lifecycle field across all roles", () => {
+    const roles = ["user", "assistant", "tool", "system"] as const;
+    for (const role of roles) {
+      const parsed = TranscriptMessageSchema.parse({
+        id: `legacy-${role}-1`,
+        role,
+        text: `Legacy content for ${role}`,
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+      });
+      expect(parsed.lifecycle).toBeUndefined();
+      expect(parsed.role).toBe(role);
+    }
+  });
+
+  it.each([
+    ["running state on a non-streaming tool message", { streaming: false, lifecycle: { state: "running" } }],
+    ["success state on a streaming tool message", { streaming: true, lifecycle: { state: "success" } }],
+    ["error state on a streaming tool message", { streaming: true, lifecycle: { state: "error" } }],
+    ["lifecycle on a non-tool role", { role: "assistant", streaming: true, lifecycle: { state: "running" } }],
+    [
+      "error lifecycle with canonical diff presentation",
+      { presentation: "diff", lifecycle: { state: "error" } },
+    ],
+    ["unevidenced waiting state", { lifecycle: { state: "waiting" } }],
+    ["unevidenced canceled state", { lifecycle: { state: "canceled" } }],
+    ["unknown lifecycle state", { lifecycle: { state: "unknown" } }],
+  ])("rejects contradictory or unevidenced %s", (_case, patch) => {
+    const candidate = {
+      id: "contradictory-message-1",
+      role: "tool" as const,
+      text: "output",
+      timestamp: "2026-07-29T12:00:00.000Z",
+      streaming: false,
+      presentation: "text" as const,
+      toolName: "bash",
+      ...patch,
+    };
+    expect(TranscriptMessageSchema.safeParse(candidate).success).toBe(false);
+  });
 });
