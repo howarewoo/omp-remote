@@ -1,6 +1,6 @@
 import type { AskRequest, Session } from "@omp-remote/protocol";
 import type * as ReactModule from "react";
-import { isValidElement, type ReactElement, type ReactNode } from "react";
+import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard, type DashboardProps } from "../dashboard.js";
 import { Drawer } from "../ui/drawer.js";
@@ -404,7 +404,13 @@ describe("dashboard current Todo tracker", () => {
     const tracker = findElements(output, (element) => element.props.className === "todo-tracker-trigger")[0];
     const progress = findElements(tracker, (element) => element.type === "progress")[0];
     const transcript = findElements(output, (element) => element.props.className === "transcript")[0];
-    const rows = findElements(transcript, (element) => element.type === MessageScrollerItem);
+    const content = findElements(
+      transcript,
+      (element) => element.props.className === "transcript-messages",
+    )[0];
+    const items = Children.toArray(content?.props.children as ReactNode) as ReactElement<
+      Record<string, unknown>
+    >[];
 
     expect(tracker?.props["aria-label"]).toBe(
       "Open current Todo: 2 of 4 tasks complete. In progress: Verify current Todo tracker.",
@@ -416,7 +422,18 @@ describe("dashboard current Todo tracker", () => {
       max: 4,
       value: 2,
     });
-    expect(rows.map((row) => row.props.messageId)).toEqual([
+
+    const displayMessageIds = items.flatMap((item) => {
+      const messageId = item?.props?.messageId;
+      if (typeof messageId === "string") return [messageId];
+      const group = item?.props?.group as { messages: Session["messages"] } | undefined;
+      if (group?.messages) {
+        return group.messages.map((m) => m.id);
+      }
+      return [];
+    });
+
+    expect(displayMessageIds).toEqual([
       "todo-first",
       "assistant-between",
       "todo-latest",
