@@ -1,6 +1,6 @@
-import { type Session } from "@omp-remote/protocol";
+import type { Session } from "@omp-remote/protocol";
 import { SESSION_STATUS_LABEL, SESSION_STATUS_TONE } from "@omp-remote/ui";
-import { type FormEventHandler } from "react";
+import type { FormEventHandler } from "react";
 import { Button } from "../ui/button.js";
 import { Input } from "../ui/input.js";
 import {
@@ -10,6 +10,7 @@ import {
   SidebarHeader,
   SidebarRail,
   SidebarTrigger,
+  useSidebar,
 } from "../ui/sidebar.js";
 import { cn } from "../ui/utils.js";
 import { DashboardIcon } from "./session-header.js";
@@ -56,6 +57,8 @@ export function SessionSidebar({
   onSelectSession,
   onLoadMoreHistory,
 }: SessionSidebarProps) {
+  const { isMobile } = useSidebar();
+
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
@@ -66,7 +69,7 @@ export function SessionSidebar({
           <span className="brand-word">omp</span>
           <span className="brand-remote">remote</span>
         </div>
-        <SidebarTrigger />
+        {isMobile ? <SidebarTrigger /> : null}
       </SidebarHeader>
 
       <div className="sidebar-actions">
