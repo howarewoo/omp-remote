@@ -174,7 +174,11 @@
   .transcript-disclosure-panel > .transcript-disclosure-text,
   .transcript-disclosure-content[data-variant="expanded"],
   .todo-tool-disclosure .transcript-disclosure-panel > .todo-phase-list {
-    padding: 0.625rem;
+    padding: 0.625rem 0.625rem 0.625rem 2rem;
+  }
+
+  .read-result-resolved-path {
+    padding-inline-start: 2rem;
   }
 
   .code-block pre {
@@ -287,7 +291,11 @@
     font-size: 0.625rem;
   }
 
-  .transcript-disclosure-preview {
+  .transcript-disclosure-preview,
+  .transcript-disclosure-panel > .transcript-disclosure-text,
+  .transcript-disclosure-content[data-variant="expanded"],
+  .todo-tool-disclosure .transcript-disclosure-panel > .todo-phase-list,
+  .read-result-resolved-path {
     padding-inline-start: 1.875rem;
   }
 

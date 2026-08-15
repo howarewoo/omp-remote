@@ -295,7 +295,7 @@
 }
 
 .transcript-disclosure-panel > .transcript-disclosure-text {
-  padding: 0.75rem;
+  padding: 0.75rem 0.75rem 0.75rem 2.25rem;
 }
 
 .transcript-disclosure-content {
@@ -317,7 +317,7 @@
 }
 
 .transcript-disclosure-content[data-variant="expanded"] {
-  padding: 0.75rem;
+  padding: 0.75rem 0.75rem 0.75rem 2.25rem;
 }
 
 .system-message-disclosure
@@ -422,7 +422,7 @@
 }
 
 .read-result-resolved-path {
-  padding: 0.5rem 0.75rem 0.75rem;
+  padding: 0.5rem 0.75rem 0.75rem 2.25rem;
   color: var(--transcript-muted);
   overflow-wrap: anywhere;
 }

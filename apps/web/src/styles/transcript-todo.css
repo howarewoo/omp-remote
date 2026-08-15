@@ -156,7 +156,7 @@
 }
 
 .todo-tool-disclosure .transcript-disclosure-panel > .todo-phase-list {
-  padding: 0.75rem;
+  padding: 0.75rem 0.75rem 0.75rem 2.25rem;
 }
 
 .todo-phase {
