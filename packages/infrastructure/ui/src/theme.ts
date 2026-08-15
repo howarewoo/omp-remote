@@ -70,6 +70,6 @@ export function applyThemeToDocument(theme: Theme, resolved: ResolvedTheme): voi
 
   const metaThemeColor = document.querySelector('meta[name="theme-color"]');
   if (metaThemeColor) {
-    metaThemeColor.setAttribute("content", resolved === "light" ? "#fbfbfc" : "#0d0c13");
+    metaThemeColor.setAttribute("content", resolved === "light" ? "#f5f0ea" : "#0d0c13");
   }
 }
