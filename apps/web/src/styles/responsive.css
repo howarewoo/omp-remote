@@ -171,7 +171,10 @@
     padding: 0 0.625rem 0.625rem 2rem;
   }
 
-  .transcript-disclosure-panel > .transcript-disclosure-text,
+  .transcript-disclosure-panel > .transcript-disclosure-text {
+    padding: 0 0.625rem 0.625rem 2rem;
+  }
+
   .transcript-disclosure-content[data-variant="expanded"],
   .todo-tool-disclosure .transcript-disclosure-panel > .todo-phase-list {
     padding: 0.625rem 0.625rem 0.625rem 2rem;
