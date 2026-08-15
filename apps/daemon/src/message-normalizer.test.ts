@@ -642,6 +642,24 @@ describe("normalizeRawMessage", () => {
     );
     expect(errored?.lifecycle).toEqual({ state: "error" });
     expect(errored?.streaming).toBe(false);
+
+    const failedEval = normalizeRawMessage(
+      {
+        id: "eval-error-raw",
+        role: "toolResult",
+        toolName: "eval",
+        content: "RuntimeError: eval smoke: expected failure\n\nCommand exited with code 1",
+        details: {
+          language: "python",
+          cells: [{ status: "error", exitCode: 1 }],
+          isError: true,
+        },
+        isError: false,
+      },
+      false,
+      "fallback-id",
+    );
+    expect(failedEval?.lifecycle).toEqual({ state: "error" });
   });
 
   it("omits lifecycle for non-tool messages and preserves legacy streaming semantics", () => {

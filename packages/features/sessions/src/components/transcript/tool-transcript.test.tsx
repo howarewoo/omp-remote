@@ -309,6 +309,50 @@ describe("ToolTranscriptText", () => {
     expect(expandedLink?.props?.["aria-label"]).toBe("Open image source: Architecture diagram");
   });
 
+  it("marks failed eval disclosures with the error lifecycle", () => {
+    const failed = renderTranscriptNodes(
+      ToolTranscriptText({
+        entry: {
+          id: "eval-error",
+          role: "tool",
+          toolName: "eval",
+          text: "ReferenceError: missingValue is not defined",
+          timestamp: "2026-07-29T12:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+          lifecycle: { state: "error" },
+        },
+      }),
+    );
+    const successful = renderTranscriptNodes(
+      ToolTranscriptText({
+        entry: {
+          id: "eval-success",
+          role: "tool",
+          toolName: "eval",
+          text: "42",
+          timestamp: "2026-07-29T12:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+          lifecycle: { state: "success" },
+        },
+      }),
+    );
+
+    expect(
+      failed.find((node) => node.className?.includes("transcript-disclosure-frame"))?.props?.[
+        "data-lifecycle"
+      ],
+    ).toBe("error");
+    expect(failed.find((node) => node.className === "transcript-disclosure-status")?.text).toBe("Failed");
+    expect(
+      successful.find((node) => node.className?.includes("transcript-disclosure-frame"))?.props?.[
+        "data-lifecycle"
+      ],
+    ).toBe("success");
+    expect(successful.some((node) => node.className === "transcript-disclosure-status")).toBe(false);
+  });
+
   it("shows the Grep query, result counts, and scope in the disclosure header", () => {
     const title =
       'Grep: type: "toolCall"|toolCallId|arguments: \\{ path|name: "bash"|name: "edit" 24 matches · 3 files · in apps, packages';

@@ -235,6 +235,7 @@ function ReadResultTranscript({
 }
 
 export function ToolTranscriptText({ entry }: { entry: TranscriptEntryMessage }) {
+  const lifecycle = entry.lifecycle?.state ?? (entry.streaming ? "running" : undefined);
   const todo = entry.toolName === "todo" ? parseTodoResult(entry.text) : null;
   if (todo) return <MemoizedTodoToolTranscript entry={entry} todo={todo} />;
 
@@ -294,7 +295,7 @@ export function ToolTranscriptText({ entry }: { entry: TranscriptEntryMessage })
       className={className}
       expandable={expandable}
       defaultOpen={entry.toolName === "edit" || entry.streaming === true}
-      lifecycle={entry.streaming ? "running" : undefined}
+      lifecycle={lifecycle}
       preview={
         <>
           <ToolOutputDivider />
