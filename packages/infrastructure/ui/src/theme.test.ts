@@ -15,12 +15,14 @@ describe("theme utilities", () => {
   let mockAttributes: Record<string, string> = {};
   let mockClasses = new Set<string>();
   let mockStyle: Record<string, string> = {};
+  let metaSetAttribute: (name: string, value: string) => void;
 
   beforeEach(() => {
     mockStorage = {};
     mockAttributes = {};
     mockClasses = new Set<string>();
     mockStyle = {};
+    metaSetAttribute = vi.fn();
 
     const localStorageMock = {
       getItem: vi.fn((key: string) => mockStorage[key] ?? null),
@@ -55,9 +57,14 @@ describe("theme utilities", () => {
       style: mockStyle,
     };
 
+    const metaElement = {
+      setAttribute: metaSetAttribute,
+      getAttribute: vi.fn(),
+    };
+
     const documentMock = {
       documentElement: documentElementMock,
-      querySelector: vi.fn(() => null),
+      querySelector: vi.fn((sel: string) => (sel === 'meta[name="theme-color"]' ? metaElement : null)),
     };
 
     const windowMock = {
@@ -88,9 +95,9 @@ describe("theme utilities", () => {
     expect(isTheme("system")).toBe(true);
     expect(isTheme("light")).toBe(true);
     expect(isTheme("dark")).toBe(true);
-    expect(isTheme("auto")).toBe(false);
-    expect(isTheme("")).toBe(false);
+    expect(isTheme("invalid")).toBe(false);
     expect(isTheme(null)).toBe(false);
+    expect(isTheme(undefined)).toBe(false);
     expect(isTheme(123)).toBe(false);
   });
 
@@ -109,7 +116,7 @@ describe("theme utilities", () => {
     expect(mockStorage[THEME_STORAGE_KEY]).toBe("dark");
     expect(getStoredTheme()).toBe("dark");
 
-    mockStorage[THEME_STORAGE_KEY] = "invalid";
+    mockStorage[THEME_STORAGE_KEY] = "corrupt";
     expect(getStoredTheme()).toBe("system");
   });
 
@@ -152,6 +159,7 @@ describe("theme utilities", () => {
     expect(mockStyle.colorScheme).toBe("dark");
     expect(mockClasses.has("dark")).toBe(true);
     expect(mockClasses.has("light")).toBe(false);
+    expect(metaSetAttribute).toHaveBeenCalledWith("content", "#0d0c13");
 
     applyThemeToDocument("light", "light");
     expect(mockAttributes["data-theme"]).toBe("light");
@@ -159,5 +167,6 @@ describe("theme utilities", () => {
     expect(mockStyle.colorScheme).toBe("light");
     expect(mockClasses.has("light")).toBe(true);
     expect(mockClasses.has("dark")).toBe(false);
+    expect(metaSetAttribute).toHaveBeenCalledWith("content", "#f5f0ea");
   });
 });
