@@ -98,7 +98,6 @@
   display: grid;
   width: max-content;
   min-width: 100%;
-  gap: 0.125rem;
   margin: 0;
   padding: 0.25rem 0;
   list-style: none;
