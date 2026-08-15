@@ -1,0 +1,42 @@
+{
+  "lastCheckedVersion": "17.3.4",
+  "lastCheckedAt": "2026-08-15T16:44:12.072Z",
+  "baseSupportedVersion": "17.1.8",
+  "history": [
+    {
+      "checkedAt": "2026-08-15T12:00:00.000Z",
+      "fromVersion": "17.1.8",
+      "toVersion": "17.1.8",
+      "releaseCount": 0,
+      "breakingChangeCount": 0
+    },
+    {
+      "checkedAt": "2026-08-15T16:42:08.907Z",
+      "fromVersion": "17.1.8",
+      "toVersion": "17.3.4",
+      "releaseCount": 21,
+      "breakingChangeCount": 16
+    },
+    {
+      "checkedAt": "2026-08-15T16:42:12.412Z",
+      "fromVersion": "17.3.4",
+      "toVersion": "17.3.4",
+      "releaseCount": 0,
+      "breakingChangeCount": 0
+    },
+    {
+      "checkedAt": "2026-08-15T16:42:15.494Z",
+      "fromVersion": "17.1.8",
+      "toVersion": "17.3.4",
+      "releaseCount": 21,
+      "breakingChangeCount": 16
+    },
+    {
+      "checkedAt": "2026-08-15T16:44:12.072Z",
+      "fromVersion": "17.1.8",
+      "toVersion": "17.3.4",
+      "releaseCount": 21,
+      "breakingChangeCount": 16
+    }
+  ]
+}

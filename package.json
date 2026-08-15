@@ -14,13 +14,15 @@
     "format:check": "biome format .",
     "lint": "biome lint .",
     "lint:lines": "node scripts/check-file-lengths.mjs",
-    "test": "node --test scripts/check-file-lengths.test.mjs scripts/dev.test.mjs scripts/install-service.test.mjs scripts/setup.test.mjs && turbo run test",
+    "test": "node --test scripts/check-file-lengths.test.mjs scripts/check-omp-changelog.test.mjs scripts/dev.test.mjs scripts/install-service.test.mjs scripts/setup.test.mjs && turbo run test",
     "typecheck": "turbo run typecheck",
     "install:service": "node scripts/install-service.mjs",
     "setup": "node scripts/setup.mjs",
     "setup:extension": "pnpm --filter @omp-remote/omp-extension install:user",
     "start": "pnpm --filter @omp-remote/daemon start",
-    "tailscale:serve": "node scripts/tailscale-serve.mjs"
+    "tailscale:serve": "node scripts/tailscale-serve.mjs",
+    "check:omp": "node scripts/check-omp-changelog.mjs",
+    "upgrade:omp": "node scripts/check-omp-changelog.mjs --create-pr"
   },
   "devDependencies": {
     "@biomejs/biome": "catalog:",
