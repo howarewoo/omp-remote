@@ -81,13 +81,7 @@ export function SessionTranscript({
                   </div>
                 </MessageScrollerItem>
               ) : (
-                renderTranscriptMessageItems({
-                  messages: session.messages,
-                  context: {
-                    sessionStatus: session.status,
-                    activeAskRequest,
-                  },
-                })
+                renderTranscriptMessageItems({ messages: session.messages })
               )}
               {activeAskRequest ? (
                 <MessageScrollerItem

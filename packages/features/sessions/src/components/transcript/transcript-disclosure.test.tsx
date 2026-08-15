@@ -218,6 +218,30 @@ describe("TranscriptDisclosure", () => {
     expect(chevron).toBeDefined();
   });
 
+  it("renders short content as a static icon-led row without disclosure controls", () => {
+    const disclosure = TranscriptDisclosure({
+      category: "read",
+      expandable: false,
+      title: "Read: package.json",
+      preview: <span>Short output</span>,
+      children: <div>Unused expanded output</div>,
+    });
+    const nodes = renderNodes(disclosure);
+    const frame = nodes.find((node) => node.className?.includes("transcript-disclosure-frame"));
+
+    expect(frame?.props?.["data-state"]).toBe("static");
+    expect(nodes.find((node) => node.className === "transcript-disclosure-summary")).toBeDefined();
+    expect(
+      nodes.find((node) => node.className === "transcript-disclosure-icon")?.props?.["data-category"],
+    ).toBe("read");
+    expect(nodes.find((node) => node.className === "transcript-disclosure-preview")?.text).toBe(
+      "Short output",
+    );
+    expect(nodes.some((node) => node.className === "transcript-disclosure-trigger")).toBe(false);
+    expect(nodes.some((node) => node.className === "transcript-disclosure-panel")).toBe(false);
+    expect(nodes.some((node) => node.className === "transcript-disclosure-chevron")).toBe(false);
+  });
+
   it("keeps preview as a sibling outside the trigger button to prevent nested interactive content", () => {
     const disclosure = TranscriptDisclosure({
       category: "read",
@@ -321,11 +345,11 @@ describe("TranscriptDisclosure", () => {
   it("supports controlled open state and forwards toggle events", () => {
     const onOpenChange = vi.fn();
     const disclosure = TranscriptDisclosure({
-      category: "group",
+      category: "tool",
       open: true,
       onOpenChange,
-      title: "Grouped activity",
-      children: <div>Group items</div>,
+      title: "Controlled disclosure",
+      children: <div>Disclosure content</div>,
     });
     const nodes = renderNodes(disclosure);
     const frame = nodes.find((node) => node.className?.includes("transcript-disclosure-frame"));
@@ -346,7 +370,6 @@ describe("TranscriptDisclosure", () => {
       "todo",
       "yield",
       "code",
-      "group",
     ] as const;
 
     for (const category of categories) {

@@ -14,8 +14,6 @@ export type DisclosureCategory =
   | "todo"
   | "yield"
   | "code"
-  | "group"
-  | "activity"
   | (string & {});
 
 export type DisclosureLifecycle =
@@ -55,6 +53,7 @@ export interface TranscriptDisclosureProps {
   badge?: ReactNode | undefined;
   preview?: ReactNode | undefined;
   children: ReactNode;
+  expandable?: boolean | undefined;
   open?: boolean | undefined;
   defaultOpen?: boolean | undefined;
   onOpenChange?: ((open: boolean) => void) | undefined;
@@ -169,15 +168,6 @@ export function DisclosureCategoryIcon({ category = "tool" }: { category?: Discl
           <polyline points="8 6 2 12 8 18" />
         </svg>
       );
-    case "group":
-    case "activity":
-      return (
-        <svg {...iconProps}>
-          <polygon points="12 2 2 7 12 12 22 7 12 2" />
-          <polyline points="2 17 12 22 22 17" />
-          <polyline points="2 12 12 17 22 12" />
-        </svg>
-      );
     case "tool":
     default:
       return (
@@ -186,6 +176,53 @@ export function DisclosureCategoryIcon({ category = "tool" }: { category?: Discl
         </svg>
       );
   }
+}
+
+function TranscriptDisclosureHeader({
+  badge,
+  category,
+  expandable,
+  resolvedStatus,
+  time,
+  timestamp,
+  title,
+}: {
+  badge: ReactNode;
+  category: DisclosureCategory;
+  expandable: boolean;
+  resolvedStatus: ReactNode;
+  time: ReactNode;
+  timestamp: string | undefined;
+  title: ReactNode;
+}) {
+  return (
+    <span className="transcript-disclosure-header" data-expandable={expandable}>
+      <span className="transcript-disclosure-icon" data-category={category}>
+        <DisclosureCategoryIcon category={category} />
+      </span>
+      <span className="transcript-disclosure-title">{title}</span>
+      {time ? (
+        typeof time === "string" && timestamp ? (
+          <time className="transcript-disclosure-time" dateTime={timestamp}>
+            {time}
+          </time>
+        ) : (
+          <span className="transcript-disclosure-time">{time}</span>
+        )
+      ) : null}
+      {resolvedStatus || badge ? (
+        <span className="transcript-disclosure-state">
+          {resolvedStatus ? <span className="transcript-disclosure-status">{resolvedStatus}</span> : null}
+          {badge}
+        </span>
+      ) : null}
+      {expandable ? (
+        <span aria-hidden="true" className="transcript-disclosure-chevron">
+          <DisclosureChevronIcon />
+        </span>
+      ) : null}
+    </span>
+  );
 }
 
 export function TranscriptDisclosure({
@@ -200,6 +237,7 @@ export function TranscriptDisclosure({
   badge,
   preview,
   children,
+  expandable = true,
   open,
   defaultOpen = false,
   onOpenChange,
@@ -222,6 +260,43 @@ export function TranscriptDisclosure({
   const activeAnnouncement =
     explicitAnnouncement ?? (lifecycle ? LIFECYCLE_ANNOUNCEMENT[lifecycle] : undefined);
   const resolvedStatus = status ?? (lifecycle ? LIFECYCLE_LABEL[lifecycle] : null);
+  const header = (
+    <TranscriptDisclosureHeader
+      badge={badge}
+      category={category}
+      expandable={expandable}
+      resolvedStatus={resolvedStatus}
+      time={time}
+      timestamp={timestamp}
+      title={title}
+    />
+  );
+  const announcement = activeAnnouncement ? (
+    <span
+      aria-atomic="true"
+      aria-live="polite"
+      className="transcript-disclosure-announcement sr-only"
+      role="status"
+    >
+      {activeAnnouncement}
+    </span>
+  ) : null;
+
+  if (!expandable) {
+    return (
+      <div
+        className={cn("transcript-disclosure-frame", className)}
+        data-lifecycle={lifecycle}
+        data-state="static"
+        id={id}
+      >
+        <div className="transcript-disclosure-summary">{header}</div>
+        {preview ? <div className="transcript-disclosure-preview">{preview}</div> : null}
+        {announcement}
+      </div>
+    );
+  }
+
   return (
     <Collapsible
       className={cn("transcript-disclosure-frame", className)}
@@ -237,45 +312,13 @@ export function TranscriptDisclosure({
         className="transcript-disclosure-trigger"
         type="button"
       >
-        <span className="transcript-disclosure-header">
-          <span className="transcript-disclosure-icon" data-category={category}>
-            <DisclosureCategoryIcon category={category} />
-          </span>
-          <span className="transcript-disclosure-title">{title}</span>
-          {time ? (
-            typeof time === "string" && timestamp ? (
-              <time className="transcript-disclosure-time" dateTime={timestamp}>
-                {time}
-              </time>
-            ) : (
-              <span className="transcript-disclosure-time">{time}</span>
-            )
-          ) : null}
-          {resolvedStatus || badge ? (
-            <span className="transcript-disclosure-state">
-              {resolvedStatus ? <span className="transcript-disclosure-status">{resolvedStatus}</span> : null}
-              {badge}
-            </span>
-          ) : null}
-          <span aria-hidden="true" className="transcript-disclosure-chevron">
-            <DisclosureChevronIcon />
-          </span>
-        </span>
+        {header}
       </CollapsibleTrigger>
       {preview ? <div className="transcript-disclosure-preview">{preview}</div> : null}
       <CollapsibleContent className="transcript-disclosure-panel" keepMounted={keepMounted}>
         {children}
       </CollapsibleContent>
-      {activeAnnouncement ? (
-        <span
-          aria-atomic="true"
-          aria-live="polite"
-          className="transcript-disclosure-announcement sr-only"
-          role="status"
-        >
-          {activeAnnouncement}
-        </span>
-      ) : null}
+      {announcement}
     </Collapsible>
   );
 }
