@@ -16,9 +16,9 @@ import {
   renderToolTitle,
   ToolOutputDivider,
   TranscriptEntryContent,
-  TranscriptEntryHeader,
 } from "./transcript-entry.js";
 const TOOL_TEXT_PREVIEW_LINES = 10;
+const TOOL_TEXT_PREVIEW_CHARS = 1_200;
 function formatToolTextFull(text: string): string {
   if (!/\S/.test(text)) return "No tool output";
   return text;
@@ -44,7 +44,17 @@ export function formatToolTextPreview(text: string): string {
   if (start > 0) start += 1;
 
   const preview = text.slice(start, end);
+  if (preview.length > TOOL_TEXT_PREVIEW_CHARS) {
+    return `…${preview.slice(-(TOOL_TEXT_PREVIEW_CHARS - 1))}`;
+  }
   return formatToolTextFull(preview);
+}
+
+function countDisplayedLines(text: string): number {
+  if (text.length === 0) return 1;
+  const lines = text.split(/\r\n|\n|\r/);
+  if (lines[lines.length - 1] === "") lines.pop();
+  return Math.max(1, lines.length);
 }
 
 type TranscriptEntryMessage = Session["messages"][number];
@@ -171,12 +181,15 @@ function ReadResultTranscript({
   const readImageLabel = getReadImageLabel(readTarget);
   const authorLabel = readTarget ? `Read ${readImageLabel}` : "Read";
   const hasImages = images.length > 0;
+  const expandable =
+    entry.streaming === true || hasImages || hiddenLineCount > 0 || Boolean(entry.readResolvedPath);
 
   return (
     <TranscriptDisclosure
       badge={entry.streaming ? <Badge className="streaming-badge">Streaming</Badge> : null}
       category="read"
       className="tool-message-disclosure read-result-disclosure tool-output-disclosure"
+      expandable={expandable}
       defaultOpen={false}
       keepMounted={hasImages}
       lifecycle={entry.streaming ? "running" : undefined}
@@ -244,11 +257,16 @@ export function ToolTranscriptText({ entry }: { entry: TranscriptEntryMessage })
 
   if (isRead) {
     return (
-      <div className={className}>
-        <div className="tool-message-header">
-          <TranscriptEntryHeader entry={entry} authorLabel={authorLabel} />
-        </div>
-      </div>
+      <TranscriptDisclosure
+        category="read"
+        className={className}
+        expandable={false}
+        time={formatTime(entry.timestamp)}
+        timestamp={entry.timestamp}
+        title={renderToolTitle(entry, authorLabel)}
+      >
+        {null}
+      </TranscriptDisclosure>
     );
   }
 
@@ -262,19 +280,35 @@ export function ToolTranscriptText({ entry }: { entry: TranscriptEntryMessage })
           !disclosureSegments.some((segment) => segment.kind === "image")
         ? formatToolTextPreview(disclosurePlainText)
         : "";
+  const hasDisclosureImages = disclosureSegments?.some((segment) => segment.kind === "image") ?? false;
+  const expandable =
+    entry.streaming === true ||
+    hasDisclosureImages ||
+    entry.text.length > TOOL_TEXT_PREVIEW_CHARS ||
+    countDisplayedLines(entry.text) > TOOL_TEXT_PREVIEW_LINES;
 
   return (
     <TranscriptDisclosure
       badge={entry.streaming ? <Badge className="streaming-badge">Streaming</Badge> : null}
       category={(entry.toolName as DisclosureCategory) ?? "tool"}
       className={className}
-      defaultOpen={entry.toolName === "edit" || isWrite || entry.streaming === true}
+      expandable={expandable}
+      defaultOpen={entry.toolName === "edit" || entry.streaming === true}
       lifecycle={entry.streaming ? "running" : undefined}
       preview={
         <>
           <ToolOutputDivider />
-          {isWrite ? null : entry.presentation === "diff" ? (
-            <pre className="tool-message-preview">{formatToolTextPreview(entry.text)}</pre>
+          {isWrite ? (
+            renderDisclosureTranscriptText(
+              expandable ? formatToolTextPreview(entry.text) : formatToolTextFull(entry.text),
+              false,
+            )
+          ) : entry.presentation === "diff" ? (
+            expandable ? (
+              <pre className="tool-message-preview">{formatToolTextPreview(entry.text)}</pre>
+            ) : (
+              <TranscriptEntryContent entry={entry} />
+            )
           ) : (
             renderDisclosureTranscriptContent({
               preview: disclosurePreview ?? "",

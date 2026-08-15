@@ -74,8 +74,62 @@ describe("dashboard composer keyboard", () => {
       preventDefault: vi.fn(),
     });
 
-    expect(onCommand).toHaveBeenCalledWith("session-1", "steer", "Show the latest output");
+    expect(onCommand).toHaveBeenCalledWith("session-1", "prompt", "Show the latest output");
     expect(scrollToEnd).toHaveBeenCalledOnce();
+  });
+
+  it("queues a follow-up instead of interrupting a running session", async () => {
+    const onCommand = vi.fn().mockResolvedValue(undefined);
+    const props = {
+      ...composerDashboardProps({ ...BASE_SESSION, status: "running" }),
+      onCommand,
+    };
+    let output = renderControlledDashboard(props);
+
+    (findComposerTextarea(output).props.onChange as (event: { target: { value: string } }) => void)({
+      target: { value: "Run this when the current turn finishes" },
+    });
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    const form = findElements(output, (element) => element.props.className === "composer")[0];
+    await (form?.props.onSubmit as ((event: { preventDefault(): void }) => Promise<void>) | undefined)?.({
+      preventDefault: vi.fn(),
+    });
+
+    expect(onCommand).toHaveBeenCalledWith(
+      "session-1",
+      "follow_up",
+      "Run this when the current turn finishes",
+    );
+  });
+
+  it("renders queued messages in the transcript with a cancel action", () => {
+    const onCancelQueuedMessage = vi.fn();
+    const output = renderControlledDashboard({
+      ...composerDashboardProps({ ...BASE_SESSION, status: "running" }),
+      queuedMessages: [
+        {
+          id: "queued-1",
+          sessionId: "session-1",
+          text: "Run the focused verification next",
+          createdAt: "2026-08-14T12:00:00.000Z",
+          status: "queued",
+        },
+      ],
+      onCancelQueuedMessage,
+    });
+    const queuedRow = findElements(
+      output,
+      (element) => element.props.className === "transcript-entry transcript-user transcript-queued-message",
+    )[0];
+    const cancel = findElements(
+      queuedRow,
+      (element) => element.props["aria-label"] === "Cancel queued message",
+    )[0];
+
+    expect(textContent(queuedRow)).toContain("Queued");
+    expect(textContent(queuedRow)).toContain("Run the focused verification next");
+    (cancel?.props.onClick as (() => void) | undefined)?.();
+    expect(onCancelQueuedMessage).toHaveBeenCalledWith("queued-1");
   });
 
   it("leaves Shift+Enter untouched for the textarea's native newline behavior", () => {

@@ -334,7 +334,7 @@ describe("ToolTranscriptText", () => {
     ).toContain(title);
   });
 
-  it("shows a canonical Read filename without rendering the result", () => {
+  it("shows a canonical Read filename with its icon without rendering the result", () => {
     const text = [
       "[packages/features/sessions/src/components/dashboard.tsx#ABCD]",
       "1090:export function ToolTranscriptText() {",
@@ -355,14 +355,22 @@ describe("ToolTranscriptText", () => {
     const nodes = renderTranscriptNodes(disclosure);
 
     expect(
-      textContent(nodes.find((node) => node.className === "message-author")?.props?.children as ReactNode),
+      textContent(
+        nodes.find(
+          (node) => node.className === "transcript-disclosure-title" || node.className === "message-author",
+        )?.props?.children as ReactNode,
+      ),
     ).toContain("Read: dashboard.tsx");
+    expect(
+      nodes.find((node) => node.className === "transcript-disclosure-icon")?.props?.["data-category"],
+    ).toBe("read");
+    expect(nodes.some((node) => node.className === "transcript-disclosure-trigger")).toBe(false);
     expect(nodes.some((node) => node.className === "tool-message-preview")).toBe(false);
     expect(nodes.some((node) => node.className === "tool-output-divider")).toBe(false);
     expect(nodes.some((node) => node.text.includes("1091:  return <details />;"))).toBe(false);
   });
 
-  it("renders an untargeted Read error as a closed inspectable disclosure", () => {
+  it("renders a short untargeted Read error without disclosure controls", () => {
     const text = "Error: file not found";
     const disclosure = ToolTranscriptText({
       entry: {
@@ -384,15 +392,16 @@ describe("ToolTranscriptText", () => {
         className: expect.stringContaining("read-result-disclosure"),
       }),
     );
-    expect(frame?.props?.["data-state"]).toBe("closed");
+    expect(frame?.props?.["data-state"]).toBe("static");
     expect(
       nodes.find(
         (node) => node.className === "transcript-disclosure-title" || node.className === "message-author",
       )?.text,
     ).toContain("Read");
     expect(nodes.find((node) => node.className === "read-result-preview")?.text).toBe(text);
-    expect(nodes.filter((node) => node.className === "transcript-disclosure-text")).toHaveLength(2);
+    expect(nodes.filter((node) => node.className === "transcript-disclosure-text")).toHaveLength(1);
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
+    expect(nodes.some((node) => node.className === "transcript-disclosure-trigger")).toBe(false);
   });
 
   it("shows metadata-backed Read filenames without rendering the result", () => {
@@ -410,10 +419,18 @@ describe("ToolTranscriptText", () => {
     });
     const nodes = renderTranscriptNodes(disclosure);
 
-    expect(disclosure.type).toBe("div");
+    expect(disclosure.props.category).toBe("read");
     expect(
-      textContent(nodes.find((node) => node.className === "message-author")?.props?.children as ReactNode),
+      textContent(
+        nodes.find(
+          (node) => node.className === "transcript-disclosure-title" || node.className === "message-author",
+        )?.props?.children as ReactNode,
+      ),
     ).toContain("Read: index.ts");
+    expect(
+      nodes.find((node) => node.className === "transcript-disclosure-icon")?.props?.["data-category"],
+    ).toBe("read");
+    expect(nodes.some((node) => node.className === "transcript-disclosure-trigger")).toBe(false);
     expect(nodes.some((node) => node.text.includes("canonical read result"))).toBe(false);
   });
 
@@ -431,7 +448,7 @@ describe("ToolTranscriptText", () => {
     "vault://team/secret",
     "conflict://packages/features/sessions/src/components/dashboard.tsx",
     "https://example.com/docs/read?mode=raw#result",
-  ])("renders the complete URI-like Read target in a closed inspectable disclosure: %s", (readTarget) => {
+  ])("renders a short URI-like Read target without disclosure controls: %s", (readTarget) => {
     const text = "# Heading\n**bold** and [docs](https://example.com)\n- literal";
     const disclosure = ToolTranscriptText({
       entry: {
@@ -455,15 +472,14 @@ describe("ToolTranscriptText", () => {
         className: expect.stringContaining("read-result-disclosure"),
       }),
     );
-    expect(frame?.props?.["data-state"]).toBe("closed");
+    expect(frame?.props?.["data-state"]).toBe("static");
     expect(
       nodes.find(
         (node) => node.className === "transcript-disclosure-title" || node.className === "message-author",
       )?.text,
     ).toContain(`Read ${readTarget}`);
-    expect(rawTextNodes.map((node) => node.text)).toEqual([text, text]);
+    expect(rawTextNodes.map((node) => node.text)).toEqual([text]);
     expect(nodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
-      "https://example.com",
       "https://example.com",
     ]);
     expect(nodes.filter((node) => node.type === "a").some((node) => node.props?.href === readTarget)).toBe(
@@ -473,6 +489,7 @@ describe("ToolTranscriptText", () => {
       nodes.some((node) => typeof node.type === "string" && ["strong", "code"].includes(node.type)),
     ).toBe(false);
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
+    expect(nodes.some((node) => node.className === "transcript-disclosure-trigger")).toBe(false);
   });
 
   it("infers a URI-like Read target from the snapshot header", () => {
@@ -500,7 +517,7 @@ describe("ToolTranscriptText", () => {
     ).toContain(`Read ${readTarget}`);
     expect(
       nodes.filter((node) => node.className === "transcript-disclosure-text").map((node) => node.text),
-    ).toEqual([text, text]);
+    ).toEqual([text]);
   });
 
   it("shows resolved-path metadata for an inspectable Read result", () => {
@@ -748,11 +765,11 @@ describe("ToolTranscriptText", () => {
     ];
     const rows = renderTranscriptMessageItems({ messages });
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.key).toBe("group:read-first");
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row?.key)).toEqual(["read-first", "read-second"]);
   });
 
-  it("renders edit output as an open disclosure by default", () => {
+  it("renders short edit output without disclosure controls", () => {
     const block = ToolTranscriptText({
       entry: {
         id: "edit-1",
@@ -768,11 +785,13 @@ describe("ToolTranscriptText", () => {
     const nodes = renderTranscriptNodes(block);
 
     const frame = nodes.find((node) => node.className?.includes("transcript-disclosure-frame"));
-    expect(frame?.props?.["data-state"]).toBe("open");
+    expect(frame?.props?.["data-state"]).toBe("static");
     expect(frame?.className).toContain("tool-message-disclosure");
     expect(frame?.className).toContain("transcript-disclosure-frame");
     expect(frame?.className).toContain("tool-output-disclosure");
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
+    expect(nodes.some((node) => node.className === "transcript-disclosure-trigger")).toBe(false);
+    expect(nodes.some((node) => node.className === "transcript-disclosure-panel")).toBe(false);
     expect(
       textContent(
         nodes.find(
@@ -782,7 +801,7 @@ describe("ToolTranscriptText", () => {
     ).toContain("Edit: 🟦 src/dashboard.tsx ⟦+1⟧ ⟦−1⟧");
   });
 
-  it("renders write output in the shared open frame with a labeled divider and full result", () => {
+  it("renders short write output directly in the shared static frame", () => {
     const text = ["Wrote 42 bytes to", "packages/features/sessions/src/components/dashboard.tsx"].join("\n");
     const disclosure = ToolTranscriptText({
       entry: {
@@ -799,11 +818,11 @@ describe("ToolTranscriptText", () => {
     const nodes = renderTranscriptNodes(disclosure);
 
     const frame = nodes.find((node) => node.className?.includes("transcript-disclosure-frame"));
-    expect(frame?.props?.["data-state"]).toBe("open");
+    expect(frame?.props?.["data-state"]).toBe("static");
     expect(frame?.className).toContain("tool-message-disclosure");
     expect(frame?.className).toContain("transcript-disclosure-frame");
     expect(frame?.className).toContain("tool-output-disclosure");
-    expect(nodes.some((node) => node.className === "transcript-disclosure-trigger")).toBe(true);
+    expect(nodes.some((node) => node.className === "transcript-disclosure-trigger")).toBe(false);
     expect(
       textContent(
         nodes.find(
@@ -812,10 +831,37 @@ describe("ToolTranscriptText", () => {
       ),
     ).toContain("Write: packages/features/sessions/src/components/dashboard.tsx");
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
-    expect(nodes.find((node) => node.className === "transcript-disclosure-panel")?.text).toBe(text);
+    expect(nodes.find((node) => node.className === "transcript-disclosure-text")?.text).toBe(text);
+    expect(nodes.some((node) => node.className === "transcript-disclosure-panel")).toBe(false);
   });
 
-  it.each(["", " \n\t "])("labels empty write output in the expanded disclosure: %j", (text) => {
+  it("collapses completed long Write output with a populated preview", () => {
+    const text = Array.from({ length: 14 }, (_, index) => `write line ${index + 1}`).join("\n");
+    const disclosure = ToolTranscriptText({
+      entry: {
+        id: "write-long",
+        role: "tool",
+        toolName: "write",
+        toolTitle: "Write: packages/features/sessions/src/components/dashboard.tsx",
+        text,
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    });
+    const nodes = renderTranscriptNodes(disclosure);
+    const frame = nodes.find((node) => node.className?.includes("transcript-disclosure-frame"));
+    const output = nodes.find((node) => node.className === "tool-output-divider");
+    const preview = nodes.find((node) => node.className === "transcript-disclosure-text");
+
+    expect(frame?.props?.["data-state"]).toBe("closed");
+    expect(output?.text).toBe("Output");
+    expect(preview?.text).toContain("write line 5");
+    expect(preview?.text).toContain("write line 14");
+    expect(preview?.text).not.toContain("write line 4");
+  });
+
+  it.each(["", " \n\t "])("labels empty write output without disclosure controls: %j", (text) => {
     const disclosure = ToolTranscriptText({
       entry: {
         id: "empty-write",
@@ -827,10 +873,11 @@ describe("ToolTranscriptText", () => {
         presentation: "text",
       },
     });
-    const panel = renderTranscriptNodes(disclosure).find(
-      (node) => node.className === "transcript-disclosure-panel",
+    const nodes = renderTranscriptNodes(disclosure);
+    expect(nodes.find((node) => node.className === "transcript-disclosure-text")?.text).toBe(
+      "No tool output",
     );
-    expect(panel?.text).toBe("No tool output");
+    expect(nodes.some((node) => node.className === "transcript-disclosure-trigger")).toBe(false);
   });
 
   it("routes canonical todo output to a closed progress summary and state list", () => {
@@ -1013,6 +1060,14 @@ describe("ToolTranscriptText", () => {
       renderTranscriptNodes(block).find((node) => node.className === "transcript-disclosure-text")?.text,
     ).toBe(formatToolTextPreview(text));
     expect(renderTranscriptNodes(block).some((node) => node.className === "tool-output-divider")).toBe(true);
+  });
+
+  it("bounds a long single-line preview without leaving it empty", () => {
+    const preview = formatToolTextPreview(`${"x".repeat(1_400)}tail`);
+
+    expect(preview).toHaveLength(1_200);
+    expect(preview.startsWith("…")).toBe(true);
+    expect(preview.endsWith("tail")).toBe(true);
   });
 
   it("labels an empty tool result", () => {

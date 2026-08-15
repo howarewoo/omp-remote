@@ -31,6 +31,7 @@ export default function App() {
     <>
       <Dashboard
         sessions={client.sessions}
+        queuedMessages={client.queuedMessages}
         askRequests={client.askRequests}
         savedWorkingDirectories={client.savedWorkingDirectories}
         sessionsReady={client.sessionsReady}
@@ -48,6 +49,7 @@ export default function App() {
         onSaveWorkingDirectory={client.saveWorkingDirectory}
         onRemoveWorkingDirectory={client.removeWorkingDirectory}
         onCommand={client.command}
+        onCancelQueuedMessage={client.cancelQueuedMessage}
         onAbort={client.abort}
         onKill={client.kill}
         onSetModel={client.setModel}

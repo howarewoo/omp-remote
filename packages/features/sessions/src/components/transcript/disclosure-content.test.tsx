@@ -342,10 +342,8 @@ describe("approved transcript URL surfaces", () => {
     ]);
     expect(toolNodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
       "https://tool.example/result",
-      "https://tool.example/result",
     ]);
     expect(readNodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
-      "https://docs.example/guide",
       "https://docs.example/guide",
     ]);
     expect(todoNodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([

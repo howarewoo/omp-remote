@@ -157,7 +157,8 @@
     padding-left: 0;
   }
 
-  .transcript-disclosure-trigger {
+  .transcript-disclosure-trigger,
+  .transcript-disclosure-summary {
     min-height: 2.75rem;
     padding: 0.5rem 0.625rem;
   }
@@ -170,28 +171,20 @@
     padding: 0 0.625rem 0.625rem 2rem;
   }
 
-  .transcript-disclosure-panel > .transcript-disclosure-text,
-  .transcript-disclosure-content[data-variant="expanded"],
+  .transcript-disclosure-panel > .transcript-disclosure-text {
+    padding: 0 0.625rem 0.625rem 2rem;
+  }
+
+  .transcript-disclosure-panel:has(> .transcript-disclosure-content[data-variant="expanded"]) {
+    padding: 0 0.625rem 0.625rem 2rem;
+  }
+
   .todo-tool-disclosure .transcript-disclosure-panel > .todo-phase-list {
-    padding: 0.625rem;
+    padding: 0.625rem 0.625rem 0.625rem 2rem;
   }
 
-  .transcript-activity-group-members {
-    gap: 0.625rem;
-    padding: 0.625rem;
-  }
-
-  .transcript-activity-subgroup + .transcript-activity-subgroup {
-    padding-top: 0.625rem;
-  }
-
-  .transcript-activity-subgroup-header {
-    gap: 0.375rem;
-    padding-inline: 0.375rem;
-  }
-
-  .transcript-activity-subgroup-items {
-    padding-inline-start: 0.375rem;
+  .read-result-resolved-path {
+    padding-inline-start: 2rem;
   }
 
   .code-block pre {
@@ -292,28 +285,24 @@
     gap: 0.2rem 0.375rem;
   }
 
+  .transcript-disclosure-header[data-expandable="false"] {
+    grid-template-areas:
+      "icon title title title"
+      ". time status status";
+    grid-template-columns: 1rem minmax(0, 1fr) auto auto;
+  }
+
   .transcript-disclosure-time,
-  .transcript-disclosure-status,
-  .transcript-activity-group-duration,
-  .transcript-activity-subgroup-duration {
+  .transcript-disclosure-status {
     font-size: 0.625rem;
   }
 
-  .transcript-disclosure-preview {
+  .transcript-disclosure-preview,
+  .transcript-disclosure-panel > .transcript-disclosure-text,
+  .transcript-disclosure-panel:has(> .transcript-disclosure-content[data-variant="expanded"]),
+  .todo-tool-disclosure .transcript-disclosure-panel > .todo-phase-list,
+  .read-result-resolved-path {
     padding-inline-start: 1.875rem;
-  }
-
-  .transcript-activity-group-members {
-    gap: 0.5rem;
-    padding: 0.5rem;
-  }
-
-  .transcript-activity-subgroup + .transcript-activity-subgroup {
-    padding-top: 0.5rem;
-  }
-
-  .transcript-activity-subgroup-items {
-    padding-inline-start: 0.25rem;
   }
 
   .todo-progress-copy {

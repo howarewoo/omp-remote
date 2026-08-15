@@ -7,7 +7,6 @@ import { MessageScrollerItem } from "../ui/message-scroller.js";
 import { TranscriptCodeBlock } from "./code-block.js";
 import { formatToolTextPreview, ToolTranscriptText } from "./tool-transcript.js";
 import { renderTranscriptMessageItems, TranscriptEntry } from "./transcript-entry.js";
-import { TranscriptActivityGroup } from "./activity-group.js";
 
 const reactHarness = vi.hoisted(() => ({
   effectsEnabled: true,
@@ -254,6 +253,7 @@ type ControlledDashboardProps = DashboardProps & {
 };
 
 const DASHBOARD_DEFAULTS = {
+  queuedMessages: [],
   askRequests: [] as AskRequest[],
   savedWorkingDirectories: [] as string[],
   onEnableNotifications: vi.fn().mockResolvedValue(undefined),
@@ -261,6 +261,7 @@ const DASHBOARD_DEFAULTS = {
   onSaveWorkingDirectory: vi.fn().mockResolvedValue(undefined),
   onRemoveWorkingDirectory: vi.fn().mockResolvedValue(undefined),
   onCommand: vi.fn().mockResolvedValue(undefined),
+  onCancelQueuedMessage: vi.fn(),
   onAbort: vi.fn().mockResolvedValue(undefined),
   onKill: vi.fn().mockResolvedValue(undefined),
   onSetModel: vi.fn().mockResolvedValue(undefined),
@@ -550,7 +551,7 @@ describe("structured transcript presentation", () => {
 });
 
 describe("dashboard Read transcript", () => {
-  it("groups adjacent Reads into an activity group before the assistant message", () => {
+  it("renders adjacent Reads as separate rows before the assistant message", () => {
     const readMessages: Session["messages"] = [
       {
         id: "dashboard-read-a",
@@ -592,17 +593,13 @@ describe("dashboard Read transcript", () => {
     const items = Children.toArray(content?.props.children as ReactNode) as ReactElement<
       Record<string, unknown>
     >[];
-    const group = items.find((item) => item?.props?.group !== undefined);
-    const assistantRow = items.find((item) => item?.props?.messageId === "dashboard-assistant");
 
-    expect(items).toHaveLength(2);
-    const groupData = group?.props.group as {
-      messages: readonly Session["messages"][number][];
-      summary: string;
-    };
-    expect(groupData.messages.map((m) => m.id)).toEqual(["dashboard-read-a", "dashboard-read-b"]);
-    expect(groupData.summary).toBe("Read 2 files");
-    expect(assistantRow?.props.messageId).toBe("dashboard-assistant");
+    expect(items).toHaveLength(3);
+    expect(items.map((item) => item.props.messageId)).toEqual([
+      "dashboard-read-a",
+      "dashboard-read-b",
+      "dashboard-assistant",
+    ]);
   });
 });
 
@@ -642,7 +639,7 @@ describe("ToolTranscriptText", () => {
     );
   });
 
-  it("keeps markdown-like generic output literal with one preview and expanded text style", () => {
+  it("keeps short markdown-like generic output literal without disclosure controls", () => {
     const text = "# Heading\n**bold** and [docs](https://example.com)\n- item";
     const disclosure = ToolTranscriptText({
       entry: {
@@ -666,14 +663,13 @@ describe("ToolTranscriptText", () => {
     );
 
     expect(previewContent?.props?.["data-variant"]).toBe("thumbnail");
-    expect(expandedContent?.props?.["data-variant"]).toBe("expanded");
-    expect(previewContent?.text).toBe(formatToolTextPreview(text));
-    expect(expandedContent?.text).toBe(text);
+    expect(expandedContent).toBeUndefined();
+    expect(previewContent?.text).toBe(text);
     expect(nodes.some((node) => node.type === "strong")).toBe(false);
     expect(nodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
       "https://example.com",
-      "https://example.com",
     ]);
+    expect(nodes.some((node) => node.className === "transcript-disclosure-trigger")).toBe(false);
   });
 
   it("renders every HTTPS image as an unlinked thumbnail and exact-source expanded link in order", () => {
@@ -757,8 +753,8 @@ describe("ToolTranscriptText", () => {
     ]);
   });
 });
-describe("renderTranscriptMessageItems activity grouping", () => {
-  it("groups adjacent tools into a TranscriptActivityGroup with stable key", () => {
+describe("renderTranscriptMessageItems", () => {
+  it("renders adjacent tools as separate sequential scroller items", () => {
     const messages: Session["messages"] = [
       {
         id: "read-1",
@@ -783,12 +779,13 @@ describe("renderTranscriptMessageItems activity grouping", () => {
     ];
 
     const items = renderTranscriptMessageItems({ messages });
-    expect(items).toHaveLength(1);
-    expect(items[0]?.key).toBe("group:read-1");
-    expect(items[0]?.type).toBe(TranscriptActivityGroup);
+
+    expect(items).toHaveLength(2);
+    expect(items.map((item) => item?.key)).toEqual(["read-1", "read-2"]);
+    expect(items.map((item) => item?.props.messageId)).toEqual(["read-1", "read-2"]);
   });
 
-  it("splits groups on conversational boundaries and preserves user scroll anchors", () => {
+  it("preserves message order and user scroll anchors", () => {
     const messages: Session["messages"] = [
       {
         id: "user-msg",
@@ -818,91 +815,8 @@ describe("renderTranscriptMessageItems activity grouping", () => {
     ];
 
     const items = renderTranscriptMessageItems({ messages });
-    expect(items).toHaveLength(3);
-    expect(items[0]?.key).toBe("user-msg");
-    expect(items[0]?.props.messageId).toBe("user-msg");
-    expect(items[0]?.props.scrollAnchor).toBe(true);
 
-    expect(items[1]?.key).toBe("group:read-1");
-    expect(items[1]?.type).toBe(TranscriptActivityGroup);
-
-    expect(items[2]?.key).toBe("assistant-msg");
-    expect(items[2]?.props.messageId).toBe("assistant-msg");
-    expect(items[2]?.props.scrollAnchor).toBe(false);
-  });
-
-  it("elevates explicit error tool entries into distinct boundary groups", () => {
-    const messages: Session["messages"] = [
-      {
-        id: "edit-1",
-        role: "tool",
-        toolName: "edit",
-        text: "ok",
-        timestamp: "2026-08-14T12:00:00.000Z",
-        streaming: false,
-        presentation: "text",
-        lifecycle: { state: "success" },
-      },
-      {
-        id: "edit-2",
-        role: "tool",
-        toolName: "edit",
-        text: "patch failure",
-        timestamp: "2026-08-14T12:00:01.000Z",
-        streaming: false,
-        presentation: "text",
-        lifecycle: { state: "error" },
-      },
-      {
-        id: "edit-3",
-        role: "tool",
-        toolName: "edit",
-        text: "recovered",
-        timestamp: "2026-08-14T12:00:02.000Z",
-        streaming: false,
-        presentation: "text",
-        lifecycle: { state: "success" },
-      },
-    ];
-
-    const items = renderTranscriptMessageItems({ messages });
-    expect(items).toHaveLength(3);
-    expect(items.map((i) => i?.key)).toEqual(["group:edit-1", "group:edit-2", "group:edit-3"]);
-  });
-
-  it("passes active Ask and waiting context to trailing groups", () => {
-    const messages: Session["messages"] = [
-      {
-        id: "bash-1",
-        role: "tool",
-        toolName: "bash",
-        text: "running command",
-        timestamp: "2026-08-14T12:00:00.000Z",
-        streaming: true,
-        presentation: "text",
-        lifecycle: { state: "running" },
-      },
-    ];
-
-    const validAsk: AskRequest = {
-      sessionId: "s1",
-      requestId: "r1",
-      kind: "text",
-      title: "Execute?",
-      options: [],
-      initialValue: null,
-      expiresAt: null,
-    };
-
-    const items = renderTranscriptMessageItems({
-      messages,
-      context: {
-        activeAskRequest: validAsk,
-      },
-    });
-
-    expect(items).toHaveLength(1);
-    const groupProps = items[0]?.props.group;
-    expect(groupProps.aggregateState).toBe("waiting");
+    expect(items.map((item) => item?.key)).toEqual(["user-msg", "read-1", "assistant-msg"]);
+    expect(items.map((item) => item?.props.scrollAnchor)).toEqual([true, false, false]);
   });
 });
