@@ -29,7 +29,7 @@
 }
 
 .ui-button-default:hover:not(:disabled) {
-  background: oklch(75% 0.22 340);
+  background: color-mix(in srgb, var(--primary) 85%, white);
 }
 
 .ui-button-outline {
@@ -40,7 +40,7 @@
 
 .ui-button-outline:hover:not(:disabled),
 .ui-button-ghost:hover:not(:disabled) {
-  background: oklch(100% 0 0 / 0.055);
+  background: var(--hover-background);
 }
 
 .ui-button-ghost {
@@ -54,7 +54,7 @@
 }
 
 .ui-button-destructive:hover:not(:disabled) {
-  background: oklch(67% 0.2 25);
+  background: color-mix(in srgb, var(--destructive) 85%, white);
 }
 
 .ui-button-size-sm {
@@ -93,7 +93,7 @@
   border: 1px solid var(--input);
   border-radius: var(--radius);
   color: var(--foreground);
-  background: oklch(100% 0 0 / 0.025);
+  background: var(--input-background);
   font-size: 0.875rem;
   transition:
     border-color 160ms ease,
@@ -113,13 +113,13 @@
 
 .ui-input::placeholder,
 .ui-textarea::placeholder {
-  color: oklch(61% 0.018 288);
+  color: var(--muted-foreground);
 }
 
 .ui-input:focus,
 .ui-textarea:focus {
-  border-color: oklch(70% 0.24 340 / 0.68);
-  background: oklch(100% 0 0 / 0.04);
+  border-color: color-mix(in srgb, var(--primary) 68%, transparent);
+  background: var(--input-focus-background);
 }
 
 .ui-separator {
@@ -142,7 +142,7 @@
 }
 
 .ui-dialog::backdrop {
-  background: oklch(8% 0.015 295 / 0.76);
+  background: var(--dialog-backdrop);
   backdrop-filter: blur(3px);
 }
 
@@ -190,6 +190,29 @@
   overflow-wrap: anywhere;
   pointer-events: none;
   animation: tooltip-fade 120ms ease-out;
+}
+
+.theme-toggle-button {
+  flex: 0 0 auto;
+}
+
+.ui-theme-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--input-background);
+}
+
+.ui-theme-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: calc(var(--radius) * 0.8);
+  font-size: 0.75rem;
 }
 
 @keyframes tooltip-fade {

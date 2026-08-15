@@ -74,7 +74,7 @@
   flex-direction: row;
   overflow: hidden;
   border-right: 1px solid var(--border);
-  background: oklch(17.5% 0.022 295);
+  background: var(--sidebar-background);
 }
 
 .sidebar-rail-pane {
@@ -245,12 +245,12 @@
 }
 
 .session-item:hover {
-  background: oklch(100% 0 0 / 0.035);
+  background: var(--hover-background);
 }
 
 .session-item-selected {
   border-color: var(--border);
-  background: oklch(100% 0 0 / 0.06);
+  background: var(--selected-background);
 }
 
 .session-item-selected::before {
@@ -277,7 +277,7 @@
 .session-state-running,
 .status-running > span {
   background: var(--primary);
-  box-shadow: 0 0 0 3px oklch(70% 0.24 340 / 0.12);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 20%, transparent);
 }
 
 .session-state-waiting,

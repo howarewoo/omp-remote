@@ -56,7 +56,10 @@ vi.mock("@omp-remote/session-client", () => ({
   useSessionClient: () => appMocks.sessionClient,
 }));
 
-vi.mock("@omp-remote/sessions/components", () => ({ Dashboard: vi.fn() }));
+vi.mock("@omp-remote/sessions/components", () => ({
+  Dashboard: vi.fn(),
+  ThemeProvider: ({ children }: { children: unknown }) => children,
+}));
 vi.mock("./session-notifications.js", () => ({
   useSessionNotifications: appMocks.useSessionNotifications.mockReturnValue({
     state: "enabled",

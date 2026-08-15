@@ -15,3 +15,5 @@ export const SESSION_STATUS_TONE: Record<SessionStatus, string> = {
   disconnected: "disconnected",
   history: "history",
 };
+
+export * from "./theme.js";

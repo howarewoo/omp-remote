@@ -10,6 +10,24 @@
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <title>OMP Remote</title>
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("omp-theme");
+          var isDark =
+            stored === "dark" ||
+            ((!stored || stored === "system") &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          var theme = isDark ? "dark" : "light";
+          document.documentElement.setAttribute("data-theme", theme);
+          document.documentElement.setAttribute("data-theme-setting", stored || "system");
+          document.documentElement.style.colorScheme = theme;
+          document.documentElement.classList.add(theme);
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute("content", isDark ? "#0d0c13" : "#fbfbfc");
+        } catch (_) {}
+      })();
+    </script>
   </head>
   <body>
     <!--
