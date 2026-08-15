@@ -132,7 +132,14 @@ export function normalizeExtensionMessage(
     message.role === "toolResult"
       ? formatExtensionToolTitle(toolName, toolCall?.arguments, details, appliedDiff)
       : undefined;
-
+  const lifecycle =
+    message.role === "toolResult"
+      ? streaming
+        ? ({ state: "running" } as const)
+        : message.isError === true
+          ? ({ state: "error" } as const)
+          : ({ state: "success" } as const)
+      : undefined;
   return {
     id:
       typeof message.id === "string"
@@ -155,6 +162,7 @@ export function normalizeExtensionMessage(
     ...(readResolvedPath ? { readResolvedPath } : {}),
     ...(images?.length ? { images } : {}),
     ...(toolTitle ? { toolTitle } : {}),
+    ...(lifecycle ? { lifecycle } : {}),
   };
 }
 

@@ -176,19 +176,78 @@ export function truncateTranscriptText(text: string): string {
   return `${text.slice(0, end)}…`;
 }
 
-export const TranscriptMessageSchema = z.object({
-  id: z.string().min(1),
-  role: z.enum(["user", "assistant", "tool", "system"]),
-  text: z.string(),
-  timestamp: z.string(),
-  streaming: z.boolean(),
-  presentation: TranscriptPresentationSchema.default("text"),
-  toolName: z.string().min(1).optional(),
-  readTarget: z.string().min(1).optional(),
-  readResolvedPath: z.string().min(1).optional(),
-  toolTitle: z.string().min(1).optional(),
-  images: z.array(TranscriptImageSchema).min(1).optional(),
-});
+export const TranscriptToolLifecycleStateSchema = z.enum(["running", "success", "error"]);
+export type TranscriptToolLifecycleState = z.infer<typeof TranscriptToolLifecycleStateSchema>;
+
+export const TranscriptToolLifecycleRunningSchema = z
+  .object({
+    state: z.literal("running"),
+  })
+  .strict();
+export const TranscriptToolLifecycleSuccessSchema = z
+  .object({
+    state: z.literal("success"),
+  })
+  .strict();
+export const TranscriptToolLifecycleErrorSchema = z
+  .object({
+    state: z.literal("error"),
+  })
+  .strict();
+
+export const TranscriptToolLifecycleSchema = z.discriminatedUnion("state", [
+  TranscriptToolLifecycleRunningSchema,
+  TranscriptToolLifecycleSuccessSchema,
+  TranscriptToolLifecycleErrorSchema,
+]);
+export type TranscriptToolLifecycle = z.infer<typeof TranscriptToolLifecycleSchema>;
+
+export const TranscriptMessageSchema = z
+  .object({
+    id: z.string().min(1),
+    role: z.enum(["user", "assistant", "tool", "system"]),
+    text: z.string(),
+    timestamp: z.string(),
+    streaming: z.boolean(),
+    presentation: TranscriptPresentationSchema.default("text"),
+    toolName: z.string().min(1).optional(),
+    readTarget: z.string().min(1).optional(),
+    readResolvedPath: z.string().min(1).optional(),
+    toolTitle: z.string().min(1).optional(),
+    images: z.array(TranscriptImageSchema).min(1).optional(),
+    lifecycle: TranscriptToolLifecycleSchema.optional(),
+  })
+  .superRefine((message, context) => {
+    if (!message.lifecycle) return;
+    if (message.role !== "tool") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Tool lifecycle is only supported on tool messages",
+        path: ["lifecycle"],
+      });
+    }
+    if (message.lifecycle.state === "running" && !message.streaming) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Running lifecycle requires streaming message",
+        path: ["lifecycle"],
+      });
+    }
+    if (message.lifecycle.state !== "running" && message.streaming) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Terminal lifecycle state cannot be streaming",
+        path: ["lifecycle"],
+      });
+    }
+    if (message.lifecycle.state === "error" && message.presentation === "diff") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Error lifecycle cannot have diff presentation",
+        path: ["lifecycle"],
+      });
+    }
+  });
 
 export const ActiveSubagentSchema = z.object({
   id: z.string().min(1),
