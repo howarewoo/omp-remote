@@ -743,3 +743,295 @@ describe("session model and effort selector", () => {
     await Promise.resolve();
   });
 });
+
+describe("directory session filter rail", () => {
+  const multiDirSessions: Session[] = [
+    {
+      ...BASE_SESSION,
+      id: "session-alpha-1",
+      name: "Alpha 1",
+      cwd: "/work/alpha",
+      lastActivity: "2026-07-28T10:00:00.000Z",
+    },
+    {
+      ...BASE_SESSION,
+      id: "session-beta-1",
+      name: "Beta 1",
+      cwd: "/work/beta",
+      lastActivity: "2026-07-28T14:00:00.000Z",
+    },
+    {
+      ...BASE_SESSION,
+      id: "session-alpha-2",
+      name: "Alpha 2",
+      cwd: "/work/alpha",
+      lastActivity: "2026-07-28T16:00:00.000Z",
+    },
+  ];
+
+  it("renders directory rail buttons with All first and directory initials and tooltips", () => {
+    const output = renderControlledDashboard({
+      ...DASHBOARD_DEFAULTS,
+      sessions: multiDirSessions,
+      sessionsReady: true,
+      selectedSessionId: "session-alpha-2",
+      onSelectedSessionChange: vi.fn(),
+    });
+
+    const rail = findElements(output, (el) => el.props.className === "directory-rail")[0];
+    expect(rail).toBeDefined();
+
+    const railButtons = findElements(
+      rail,
+      (el) => typeof el.props.className === "string" && el.props.className.includes("directory-rail-button"),
+    );
+    expect(railButtons).toHaveLength(3);
+
+    expect(railButtons[0]?.props["aria-label"]).toBe("All sessions, 3 live sessions");
+    expect(railButtons[0]?.props["aria-current"]).toBe("true");
+
+    expect(railButtons[1]?.props["aria-label"]).toBe("/work/alpha, 2 live sessions");
+    expect(textContent(railButtons[1])).toContain("AL");
+
+    expect(railButtons[2]?.props["aria-label"]).toBe("/work/beta, 1 live session");
+    expect(textContent(railButtons[2])).toContain("BE");
+
+    const tooltips = findElements(rail, (el) => typeof el.props.content === "string");
+    expect(tooltips.map((tooltip) => tooltip.props.content)).toEqual([
+      "All sessions (3 live sessions)",
+      "/work/alpha (2 live sessions)",
+      "/work/beta (1 live session)",
+    ]);
+  });
+
+  it("filters existing sections client-side and selects the first visible session upon clicking a directory", () => {
+    const onSelectedSessionChange = vi.fn();
+    const props = {
+      ...DASHBOARD_DEFAULTS,
+      sessions: multiDirSessions,
+      sessionsReady: true,
+      selectedSessionId: "session-alpha-2",
+      onSelectedSessionChange,
+    };
+
+    let output = renderControlledDashboard(props);
+    const railButtons = findElements(
+      output,
+      (el) => typeof el.props.className === "string" && el.props.className.includes("directory-rail-button"),
+    );
+
+    (railButtons[2]?.props.onClick as (() => void) | undefined)?.();
+    expect(onSelectedSessionChange).toHaveBeenCalledWith("session-beta-1");
+
+    output = renderControlledDashboard(
+      { ...props, selectedSessionId: "session-beta-1" },
+      { preserveState: true, effectsEnabled: false },
+    );
+
+    const sidebarSessions = findElements(
+      output,
+      (el) => typeof el.props.className === "string" && el.props.className.includes("session-item"),
+    );
+    expect(sidebarSessions).toHaveLength(1);
+    expect(textContent(sidebarSessions[0])).toContain("Beta 1");
+  });
+
+  it("returns to All without overriding a selected session outside the active directory", () => {
+    const onSelectedSessionChange = vi.fn();
+    const props = {
+      ...DASHBOARD_DEFAULTS,
+      sessions: multiDirSessions,
+      sessionsReady: true,
+      selectedSessionId: "session-alpha-2",
+      onSelectedSessionChange,
+    };
+
+    const initialOutput = renderControlledDashboard(props);
+    const railButtons = findElements(
+      initialOutput,
+      (el) => typeof el.props.className === "string" && el.props.className.includes("directory-rail-button"),
+    );
+    (railButtons[2]?.props.onClick as (() => void) | undefined)?.();
+    onSelectedSessionChange.mockClear();
+
+    renderControlledDashboard(props, { preserveState: true });
+    const recoveredOutput = renderControlledDashboard(props, {
+      preserveState: true,
+      effectsEnabled: false,
+    });
+
+    const recoveredRailButtons = findElements(
+      recoveredOutput,
+      (el) => typeof el.props.className === "string" && el.props.className.includes("directory-rail-button"),
+    );
+    expect(recoveredRailButtons[0]?.props["aria-current"]).toBe("true");
+    expect(onSelectedSessionChange).not.toHaveBeenCalled();
+
+    const selectedSessionItem = findElements(recoveredOutput, (el) => el.props["aria-current"] === "page")[0];
+    expect(textContent(selectedSessionItem)).toContain("Alpha 2");
+  });
+
+  it("recovers to All and selects the first global session when the active directory disappears", () => {
+    const onSelectedSessionChange = vi.fn();
+    const props = {
+      ...DASHBOARD_DEFAULTS,
+      sessions: multiDirSessions,
+      sessionsReady: true,
+      selectedSessionId: "session-beta-1",
+      onSelectedSessionChange,
+    };
+
+    let output = renderControlledDashboard(props);
+    const railButtons = findElements(
+      output,
+      (el) => typeof el.props.className === "string" && el.props.className.includes("directory-rail-button"),
+    );
+
+    (railButtons[2]?.props.onClick as (() => void) | undefined)?.();
+
+    const updatedSessions = multiDirSessions.filter((s) => s.cwd !== "/work/beta");
+    output = renderControlledDashboard(
+      { ...props, sessions: updatedSessions, selectedSessionId: "session-beta-1" },
+      { preserveState: true },
+    );
+
+    expect(onSelectedSessionChange).toHaveBeenCalledWith("session-alpha-1");
+  });
+
+  it("returns to All when the selected directory no longer has a connected session", () => {
+    const onSelectedSessionChange = vi.fn();
+    const props = {
+      ...DASHBOARD_DEFAULTS,
+      sessions: multiDirSessions,
+      sessionsReady: true,
+      selectedSessionId: "session-beta-1",
+      onSelectedSessionChange,
+    };
+
+    const initialOutput = renderControlledDashboard(props);
+    const initialRailButtons = findElements(
+      initialOutput,
+      (el) => typeof el.props.className === "string" && el.props.className.includes("directory-rail-button"),
+    );
+    (initialRailButtons[2]?.props.onClick as (() => void) | undefined)?.();
+    onSelectedSessionChange.mockClear();
+
+    const sessionsWithDisconnectedBeta = multiDirSessions.map((session) =>
+      session.id === "session-beta-1" ? { ...session, connected: false } : session,
+    );
+    renderControlledDashboard({ ...props, sessions: sessionsWithDisconnectedBeta }, { preserveState: true });
+    const recoveredOutput = renderControlledDashboard(
+      { ...props, sessions: sessionsWithDisconnectedBeta },
+      { preserveState: true, effectsEnabled: false },
+    );
+
+    const recoveredRailButtons = findElements(
+      recoveredOutput,
+      (el) => typeof el.props.className === "string" && el.props.className.includes("directory-rail-button"),
+    );
+    expect(recoveredRailButtons).toHaveLength(2);
+    expect(recoveredRailButtons[0]?.props["aria-current"]).toBe("true");
+    expect(recoveredRailButtons[0]?.props["aria-label"]).toBe("All sessions, 2 live sessions");
+    expect(onSelectedSessionChange).not.toHaveBeenCalled();
+  });
+  it("keeps search global upstream and excludes loaded history from directory counts", async () => {
+    const onSearchHistory = vi.fn().mockResolvedValue(undefined);
+    const props = {
+      ...DASHBOARD_DEFAULTS,
+      sessions: multiDirSessions,
+      sessionsReady: true,
+      selectedSessionId: "session-alpha-1",
+      onSearchHistory,
+      onSelectedSessionChange: vi.fn(),
+    };
+
+    let output = renderControlledDashboard(props);
+
+    const searchInput = findElements(output, (el) => el.props.id === "session-search-input")[0];
+    (searchInput?.props.onChange as ((e: { target: { value: string } }) => void) | undefined)?.({
+      target: { value: "query" },
+    });
+    output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+
+    const searchForm = findElements(output, (el) => el.props.className === "session-search")[0];
+    (searchForm?.props.onSubmit as ((e: { preventDefault(): void }) => Promise<void>) | undefined)?.({
+      preventDefault: vi.fn(),
+    });
+
+    expect(onSearchHistory).toHaveBeenCalledWith("query");
+
+    const historySession: Session = {
+      ...BASE_SESSION,
+      id: "session-history-1",
+      name: "History Session",
+      cwd: "/work/history-project",
+      source: "history",
+      status: "history",
+      connected: false,
+      lastActivity: "2026-07-28T18:00:00.000Z",
+    };
+
+    output = renderControlledDashboard(
+      { ...props, sessions: [...multiDirSessions, historySession] },
+      { preserveState: true, effectsEnabled: false },
+    );
+
+    const railButtons = findElements(
+      output,
+      (el) => typeof el.props.className === "string" && el.props.className.includes("directory-rail-button"),
+    );
+    expect(railButtons).toHaveLength(3);
+    expect(railButtons[0]?.props["aria-label"]).toBe("All sessions, 3 live sessions");
+    expect(
+      railButtons.some(
+        (button) =>
+          typeof button.props["aria-label"] === "string" &&
+          button.props["aria-label"].includes("/work/history-project"),
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps the mobile sheet open on directory selection but closes it on session selection", () => {
+    reactHarness.isMobile = true;
+    const onSelectedSessionChange = vi.fn();
+    const props = {
+      ...DASHBOARD_DEFAULTS,
+      sessions: multiDirSessions,
+      sessionsReady: true,
+      selectedSessionId: "session-alpha-1",
+      onSelectedSessionChange,
+    };
+
+    const output = renderControlledDashboard(props);
+    const railButtons = findElements(
+      output,
+      (el) => typeof el.props.className === "string" && el.props.className.includes("directory-rail-button"),
+    );
+
+    (railButtons[2]?.props.onClick as (() => void) | undefined)?.();
+    expect(reactHarness.setOpenMobile).not.toHaveBeenCalled();
+
+    const sessionItems = findElements(
+      output,
+      (el) => typeof el.props.className === "string" && el.props.className.includes("session-item"),
+    );
+    (sessionItems[0]?.props.onClick as (() => void) | undefined)?.();
+    expect(reactHarness.setOpenMobile).toHaveBeenCalledWith(false);
+  });
+
+  it("preserves the directory rail layout in the sidebar pane structure", () => {
+    const output = renderControlledDashboard({
+      ...DASHBOARD_DEFAULTS,
+      sessions: multiDirSessions,
+      sessionsReady: true,
+      selectedSessionId: "session-alpha-1",
+      onSelectedSessionChange: vi.fn(),
+    });
+
+    const railPane = findElements(output, (el) => el.props.className === "sidebar-rail-pane")[0];
+    const sessionPane = findElements(output, (el) => el.props.className === "sidebar-session-pane")[0];
+
+    expect(railPane).toBeDefined();
+    expect(sessionPane).toBeDefined();
+  });
+});
