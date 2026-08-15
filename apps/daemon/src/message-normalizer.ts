@@ -10,6 +10,7 @@ const RawContentPartSchema = z
   .object({
     type: z.string(),
     text: z.string().optional(),
+    thinking: z.string().optional(),
     data: z.unknown().optional(),
     mimeType: z.unknown().optional(),
   })
@@ -428,7 +429,15 @@ function extractText(content: RawMessageContent): string {
   if (typeof content === "string") return content;
   let text = "";
   for (const part of content) {
-    if (part.type === "text" && typeof part.text === "string") text += part.text;
+    if (part.type === "text" && typeof part.text === "string") {
+      text += part.text;
+    } else if (part.type === "thinking") {
+      if (typeof part.thinking === "string") {
+        text += part.thinking;
+      } else if (typeof part.text === "string") {
+        text += part.text;
+      }
+    }
   }
   return text;
 }
