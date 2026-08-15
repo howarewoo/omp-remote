@@ -3,40 +3,101 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { type ActivityGroupData, TranscriptActivityGroup } from "./activity-group.js";
 import { CollapsibleContent } from "../ui/collapsible.js";
+import { MessageScrollerItem } from "../ui/message-scroller.js";
 import type { TranscriptEntryMessage } from "./transcript-grouping.js";
 
 type EffectRecord = { cleanup?: () => void; dependencies: readonly unknown[] | undefined };
 const reactHarness = vi.hoisted(() => ({
+  effectsEnabled: true,
   effectIndex: 0,
   effectValues: [] as EffectRecord[],
   lifecycleEffects: false,
   refIndex: 0,
+  refValues: [] as { current: unknown }[],
   stateIndex: 0,
   stateValues: [] as unknown[],
+}));
+
+vi.mock("../ui/collapsible.js", () => ({
+  Collapsible: ({ children, ...props }: Record<string, unknown> & { children?: ReactNode }) => (
+    <div data-slot="collapsible" {...props}>
+      {children}
+    </div>
+  ),
+  CollapsibleTrigger: ({ children, ...props }: Record<string, unknown> & { children?: ReactNode }) => (
+    <button data-slot="collapsible-trigger" type="button" {...props}>
+      {children}
+    </button>
+  ),
+  CollapsibleContent: ({ children, ...props }: Record<string, unknown> & { children?: ReactNode }) => (
+    <div data-slot="collapsible-content" {...props}>
+      {children}
+    </div>
+  ),
 }));
 
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof ReactModule>();
   return {
     ...actual,
+    useCallback: <T extends (...args: never[]) => unknown>(callback: T) => callback,
+    useEffect: (
+      effect: Parameters<typeof actual.useEffect>[0],
+      dependencies?: Parameters<typeof actual.useEffect>[1],
+    ) => {
+      if (!reactHarness.lifecycleEffects) {
+        if (reactHarness.effectsEnabled) void effect();
+        return;
+      }
+      const index = reactHarness.effectIndex++;
+      if (!reactHarness.effectsEnabled) return;
+      const previous = reactHarness.effectValues[index];
+      const changed =
+        !previous ||
+        dependencies === undefined ||
+        previous.dependencies === undefined ||
+        dependencies.length !== previous.dependencies.length ||
+        dependencies.some(
+          (dependency, dependencyIndex) => !Object.is(dependency, previous.dependencies?.[dependencyIndex]),
+        );
+      if (!changed) return;
+      previous?.cleanup?.();
+      const cleanup = effect();
+      reactHarness.effectValues[index] = {
+        ...(typeof cleanup === "function" ? { cleanup } : {}),
+        dependencies,
+      };
+    },
+    useLayoutEffect: (effect: Parameters<typeof actual.useLayoutEffect>[0]) => {
+      if (reactHarness.effectsEnabled) void effect();
+    },
     useMemo: <T,>(factory: () => T) => factory(),
+    useRef: <T,>(initial: T) => {
+      const index = reactHarness.refIndex++;
+      if (!(index in reactHarness.refValues)) reactHarness.refValues[index] = { current: initial };
+      return reactHarness.refValues[index] as { current: T };
+    },
     useState: <T,>(initial: T | (() => T)) => {
       const index = reactHarness.stateIndex++;
-      if (!(index in reactHarness.stateValues))
-        reactHarness.stateValues[index] = typeof initial === "function" ? (initial as () => T)() : initial;
+      const stateValues = reactHarness.stateValues;
+      if (!(index in stateValues))
+        stateValues[index] = typeof initial === "function" ? (initial as () => T)() : initial;
       const setValue = (next: T | ((current: T) => T)) => {
-        const current = reactHarness.stateValues[index] as T;
-        reactHarness.stateValues[index] =
-          typeof next === "function" ? (next as (value: T) => T)(current) : next;
+        const current = stateValues[index] as T;
+        stateValues[index] = typeof next === "function" ? (next as (value: T) => T)(current) : next;
       };
-      return [reactHarness.stateValues[index] as T, setValue] as const;
+      return [stateValues[index] as T, setValue] as const;
     },
   };
 });
 
 beforeEach(() => {
+  reactHarness.effectIndex = 0;
+  reactHarness.refIndex = 0;
   reactHarness.stateIndex = 0;
   reactHarness.stateValues = [];
+  reactHarness.refValues = [];
+  reactHarness.effectValues = [];
 });
 
 interface RenderedNode {
@@ -53,11 +114,64 @@ function renderTranscriptNodes(node: ReactNode): RenderedNode[] {
   if (!isValidElement(node)) return [];
 
   const element = node as { type: unknown; props: Record<string, unknown> };
+
+  const isMessageScroller =
+    element.type === MessageScrollerItem ||
+    (typeof element.type === "function" &&
+      (element.type.name === "MessageScrollerItem" || element.type.name.startsWith("MessageScroller")));
+
+  if (!isMessageScroller) {
+    if (typeof element.type === "function") {
+      try {
+        return renderTranscriptNodes(
+          (element.type as (props: Record<string, unknown>) => ReactNode)(element.props),
+        );
+      } catch {
+        // Fall through
+      }
+    }
+    if (
+      typeof element.type === "object" &&
+      element.type !== null &&
+      "type" in element.type &&
+      typeof (element.type as { type: unknown }).type === "function"
+    ) {
+      try {
+        return renderTranscriptNodes(
+          (element.type as { type: (props: Record<string, unknown>) => ReactNode }).type(element.props),
+        );
+      } catch {
+        // Fall through
+      }
+    }
+    if (
+      typeof element.type === "object" &&
+      element.type !== null &&
+      "render" in element.type &&
+      typeof (element.type as { render: unknown }).render === "function"
+    ) {
+      try {
+        return renderTranscriptNodes(
+          (element.type as { render: (props: Record<string, unknown>, ref: unknown) => ReactNode }).render(
+            element.props,
+            null,
+          ),
+        );
+      } catch {
+        // Fall through
+      }
+    }
+  }
+
+  if (typeof element.type === "symbol") {
+    return renderTranscriptNodes(element.props?.children as ReactNode);
+  }
+
   const current: RenderedNode = {
     ...(typeof element.props?.className === "string" ? { className: element.props.className } : {}),
     ...(element.props !== undefined ? { props: element.props } : {}),
     text: "",
-    ...(element.type !== undefined ? { type: element.type } : {}),
+    ...(typeof element.type === "string" ? { type: element.type } : {}),
   };
 
   const children = element.props?.children as ReactNode;
@@ -74,10 +188,26 @@ function findElements(
   if (Array.isArray(node)) return node.flatMap((child) => findElements(child, predicate));
   if (!isValidElement(node)) return [];
 
-  const element = node as ReactElement<Record<string, unknown>>;
+  const element = node as ReactElement<Record<string, unknown> & { children?: ReactNode }>;
+  if (
+    typeof element.type === "function" &&
+    element.type !== MessageScrollerItem &&
+    element.type.name !== "MessageScrollerItem"
+  ) {
+    const matchThis = predicate(element) ? [element] : [];
+    try {
+      const rendered = (element.type as (props: unknown) => ReactNode)(element.props);
+      const renderedMatches = findElements(rendered, predicate);
+      return matchThis.length > 0 && renderedMatches.length > 0
+        ? renderedMatches
+        : [...matchThis, ...renderedMatches];
+    } catch {
+      return [...matchThis, ...findElements(element.props?.children, predicate)];
+    }
+  }
+
   const matches = predicate(element) ? [element] : [];
-  const children = element.props?.children as ReactNode;
-  return [...matches, ...findElements(children, predicate)];
+  return [...matches, ...findElements(element.props?.children, predicate)];
 }
 
 function makeToolMessage(
@@ -128,9 +258,10 @@ describe("TranscriptActivityGroup", () => {
     expect(tree.props["data-aggregate-state"]).toBe("running");
 
     const nodes = renderTranscriptNodes(tree);
-    const badge = nodes.find((n) => n.className?.includes("streaming-badge"));
-    expect(badge?.text).toBe("Running");
-
+    const status = nodes.find((n) => n.className === "transcript-disclosure-status");
+    expect(status?.text).toBe("Running");
+    const summary = nodes.find((n) => n.className === "transcript-activity-group-summary-text");
+    expect(summary?.text).toBe("2 files...");
     const duration = nodes.find((n) => n.className?.includes("transcript-activity-group-duration"));
     expect(duration?.text).toBe("1.5s");
   });
@@ -160,6 +291,10 @@ describe("TranscriptActivityGroup", () => {
     const tree = TranscriptActivityGroup({ group });
     expect(tree.props["data-state"]).toBe("closed");
     expect(tree.props["data-aggregate-state"]).toBe("success");
+
+    const nodes = renderTranscriptNodes(tree);
+    const summary = nodes.find((n) => n.className === "transcript-activity-group-summary-text");
+    expect(summary?.text).toBe("2 files");
   });
 
   it("ensures original member anchors remain mounted when group is collapsed via keepMounted", () => {
@@ -188,11 +323,15 @@ describe("TranscriptActivityGroup", () => {
     const tree = TranscriptActivityGroup({ group });
     expect(tree.props["data-state"]).toBe("closed");
 
-    // Verify CollapsibleContent has keepMounted=true
-    const collapsibleContent = findElements(tree, (el) => el.type === CollapsibleContent)[0];
+    const collapsibleContent = findElements(
+      tree,
+      (el) =>
+        el.type === CollapsibleContent ||
+        el.props?.["data-slot"] === "collapsible-content" ||
+        el.props?.keepMounted === true,
+    )[0];
     expect(collapsibleContent?.props.keepMounted).toBe(true);
 
-    // Verify all member MessageScrollerItem anchors remain present in the tree
     const scrollerItems = findElements(tree, (el) => el.props.messageId !== undefined);
     expect(scrollerItems.map((el) => el.props.messageId)).toEqual(["read-a", "read-b"]);
   });
@@ -201,14 +340,14 @@ describe("TranscriptActivityGroup", () => {
     const errorMsg = [makeToolMessage("read-err", "read", { lifecycle: { state: "error" } })];
     const errorGroup: ActivityGroupData = {
       key: "group:read-err",
-      summary: "Read file",
+      summary: "Read: file",
       aggregateState: "error",
       messages: errorMsg,
       subgroups: [
         {
           key: "subgroup:read:read-err",
           category: "read",
-          summary: "Read file",
+          summary: "Read: file",
           aggregateState: "error",
           messages: errorMsg,
           hasExplicitLifecycle: true,
@@ -220,8 +359,10 @@ describe("TranscriptActivityGroup", () => {
     expect(errorTree.props["data-state"]).toBe("open");
     expect(errorTree.props.className).toContain("transcript-activity-group-elevated");
     const errorNodes = renderTranscriptNodes(errorTree);
-    expect(errorNodes.some((n) => n.className?.includes("error-badge"))).toBe(true);
-
+    const errorStatus = errorNodes.find((n) => n.className === "transcript-disclosure-status");
+    expect(errorStatus?.text).toBe("Failed");
+    const errorSummary = errorNodes.find((n) => n.className === "transcript-activity-group-summary-text");
+    expect(errorSummary?.text).toBe("file");
     reactHarness.stateIndex = 0;
     const waitMsg = [makeToolMessage("bash-1", "bash", { streaming: true })];
     const waitingGroup: ActivityGroupData = {
@@ -245,8 +386,10 @@ describe("TranscriptActivityGroup", () => {
     expect(waitingTree.props["data-state"]).toBe("open");
     expect(waitingTree.props.className).toContain("transcript-activity-group-elevated");
     const waitingNodes = renderTranscriptNodes(waitingTree);
-    expect(waitingNodes.some((n) => n.className?.includes("waiting-badge"))).toBe(true);
-
+    const waitingStatus = waitingNodes.find((n) => n.className === "transcript-disclosure-status");
+    expect(waitingStatus?.text).toBe("Waiting");
+    const waitingSummary = waitingNodes.find((n) => n.className === "transcript-activity-group-summary-text");
+    expect(waitingSummary?.text).toBe("command...");
     reactHarness.stateIndex = 0;
     const cancelMsg = [makeToolMessage("bash-2", "bash", { streaming: true })];
     const canceledGroup: ActivityGroupData = {
@@ -270,7 +413,12 @@ describe("TranscriptActivityGroup", () => {
     expect(canceledTree.props["data-state"]).toBe("open");
     expect(canceledTree.props.className).toContain("transcript-activity-group-elevated");
     const canceledNodes = renderTranscriptNodes(canceledTree);
-    expect(canceledNodes.some((n) => n.className?.includes("canceled-badge"))).toBe(true);
+    const canceledStatus = canceledNodes.find((n) => n.className === "transcript-disclosure-status");
+    expect(canceledStatus?.text).toBe("Canceled");
+    const canceledSummary = canceledNodes.find(
+      (n) => n.className === "transcript-activity-group-summary-text",
+    );
+    expect(canceledSummary?.text).toBe("command...");
   });
 
   it("preserves manual user toggle across updates while mounted", () => {
@@ -293,17 +441,14 @@ describe("TranscriptActivityGroup", () => {
       hasExplicitLifecycle: true,
     };
 
-    // Initial render: running group is open by default
     reactHarness.stateIndex = 0;
     const firstRender = TranscriptActivityGroup({ group: runningGroup });
     expect(firstRender.props["data-state"]).toBe("open");
 
-    // Simulate user toggling the group closed via Collapsible onOpenChange
-    const collapsible = firstRender.props.children as ReactElement<Record<string, unknown>>;
-    const onOpenChange = collapsible.props.onOpenChange as (open: boolean) => void;
+    const disclosure = findElements(firstRender, (el) => typeof el.props?.onOpenChange === "function")[0];
+    const onOpenChange = disclosure?.props.onOpenChange as (open: boolean) => void;
     onOpenChange(false);
 
-    // Re-render with streaming update (new message added to same mounted group)
     reactHarness.stateIndex = 0;
     const updatedMsgs = [
       makeToolMessage("read-1", "read", { streaming: true }),
@@ -325,7 +470,6 @@ describe("TranscriptActivityGroup", () => {
       ],
     };
     const secondRender = TranscriptActivityGroup({ group: updatedRunningGroup });
-    // User's manual toggle to close the group is preserved!
     expect(secondRender.props["data-state"]).toBe("closed");
   });
 
@@ -395,9 +539,13 @@ describe("TranscriptActivityGroup", () => {
     };
 
     const tree = TranscriptActivityGroup({ group });
-    const triggers = findElements(tree, (el) => typeof el.props["aria-label"] === "string");
+    const nodes = renderTranscriptNodes(tree);
+    const trigger = nodes.find(
+      (node) =>
+        node.className === "transcript-disclosure-trigger" || typeof node.props?.["aria-label"] === "string",
+    );
 
-    expect(triggers.length).toBeGreaterThanOrEqual(1);
-    expect(triggers[0]?.props["aria-label"]).toBe("Edited 2 files (success)");
+    expect(trigger).toBeDefined();
+    expect(trigger?.props?.["aria-label"]).toBe("Edited 2 files (success)");
   });
 });

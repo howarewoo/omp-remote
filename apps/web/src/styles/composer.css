@@ -1,46 +1,6 @@
-.transcript-entry > :is(.system-message-disclosure, .tool-message-disclosure) {
-  color: var(--transcript-muted);
-}
-
-.transcript-disclosure-text,
-.tool-message-preview {
-  color: var(--transcript-body);
-}
-
-.transcript-system .transcript-disclosure-frame {
-  border-color: color-mix(in srgb, var(--transcript-blue) 40%, var(--transcript-separator));
-}
-
-.transcript-tool .message-disclosure-chevron {
-  border-color: var(--transcript-muted);
-}
-
-.transcript-system .message-disclosure-chevron {
-  border-color: currentColor;
-}
-
-.transcript-system .message-disclosure-chevron {
-  color: var(--transcript-blue);
-}
-
 .transcript-ask .ask-status,
 .transcript-ask .ask-progress {
   color: var(--transcript-blue);
-}
-
-.streaming-badge {
-  border-color: color-mix(in srgb, var(--transcript-blue) 45%, transparent);
-  color: var(--transcript-blue);
-}
-
-@media (min-width: 34rem) {
-  .todo-phase li {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
-  .todo-phase li > .todo-state-badge {
-    grid-column: 3;
-  }
 }
 
 .streaming-badge {

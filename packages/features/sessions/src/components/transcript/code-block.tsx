@@ -2,6 +2,7 @@ import { memo, useMemo } from "react";
 import { classifyDiffLine, parseTranscriptBlocks, type DiffLine } from "./blocks.js";
 import { tokenizeCode } from "./code-tokenizer.js";
 import { TranscriptProse } from "./inline-transcript.js";
+import { TranscriptDisclosure } from "./transcript-disclosure.js";
 import { cn } from "../ui/utils.js";
 
 const HighlightedCode = memo(function HighlightedCode({
@@ -25,19 +26,24 @@ const HighlightedCode = memo(function HighlightedCode({
 
 export function TranscriptCodeBlock({ code, language }: { code: string; language: string | null }) {
   return (
-    <details className="transcript-disclosure-frame code-block">
-      <summary>
-        <span className="code-block-chevron" aria-hidden="true" />
-        <span>{language ?? "code"}</span>
-        <span className="code-block-action">
-          <span className="code-block-action-collapsed">Show code</span>
-          <span className="code-block-action-expanded">Hide code</span>
-        </span>
-      </summary>
+    <TranscriptDisclosure
+      category="code"
+      className="code-block"
+      defaultOpen={false}
+      title={
+        <>
+          <span>{language ?? "code"}</span>
+          <span className="code-block-action">
+            <span className="code-block-action-collapsed">Show code</span>
+            <span className="code-block-action-expanded">Hide code</span>
+          </span>
+        </>
+      }
+    >
       <pre>
         <HighlightedCode code={code} language={language} />
       </pre>
-    </details>
+    </TranscriptDisclosure>
   );
 }
 

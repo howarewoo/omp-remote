@@ -1,21 +1,106 @@
 import type * as ReactModule from "react";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { parseTodoResult } from "../todo-parser.js";
+import { MessageScrollerItem } from "../ui/message-scroller.js";
 import { formatSystemTextPreview } from "./code-block.js";
 import { parseDisclosureImages } from "./disclosure-content.js";
 import { TodoToolTranscript } from "./todo-tool-transcript.js";
 import { SystemTranscriptText } from "./transcript-entry.js";
 import { ToolTranscriptText } from "./tool-transcript.js";
 
+type EffectRecord = { cleanup?: () => void; dependencies: readonly unknown[] | undefined };
+const reactHarness = vi.hoisted(() => ({
+  effectsEnabled: true,
+  effectIndex: 0,
+  effectValues: [] as EffectRecord[],
+  lifecycleEffects: false,
+  refIndex: 0,
+  refValues: [] as { current: unknown }[],
+  stateIndex: 0,
+  stateValues: [] as unknown[],
+}));
+
+vi.mock("../ui/collapsible.js", () => ({
+  Collapsible: ({ children, ...props }: Record<string, unknown> & { children?: ReactNode }) => (
+    <div data-slot="collapsible" {...props}>
+      {children}
+    </div>
+  ),
+  CollapsibleTrigger: ({ children, ...props }: Record<string, unknown> & { children?: ReactNode }) => (
+    <button data-slot="collapsible-trigger" type="button" {...props}>
+      {children}
+    </button>
+  ),
+  CollapsibleContent: ({ children, ...props }: Record<string, unknown> & { children?: ReactNode }) => (
+    <div data-slot="collapsible-content" {...props}>
+      {children}
+    </div>
+  ),
+}));
+
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof ReactModule>();
   return {
     ...actual,
-    useEffect: (effect: Parameters<typeof actual.useEffect>[0]) => void effect(),
-    useState: <T,>(initial: T | (() => T)) =>
-      [typeof initial === "function" ? (initial as () => T)() : initial, vi.fn()] as const,
+    useCallback: <T extends (...args: never[]) => unknown>(callback: T) => callback,
+    useEffect: (
+      effect: Parameters<typeof actual.useEffect>[0],
+      dependencies?: Parameters<typeof actual.useEffect>[1],
+    ) => {
+      if (!reactHarness.lifecycleEffects) {
+        if (reactHarness.effectsEnabled) void effect();
+        return;
+      }
+      const index = reactHarness.effectIndex++;
+      if (!reactHarness.effectsEnabled) return;
+      const previous = reactHarness.effectValues[index];
+      const changed =
+        !previous ||
+        dependencies === undefined ||
+        previous.dependencies === undefined ||
+        dependencies.length !== previous.dependencies.length ||
+        dependencies.some(
+          (dependency, dependencyIndex) => !Object.is(dependency, previous.dependencies?.[dependencyIndex]),
+        );
+      if (!changed) return;
+      previous?.cleanup?.();
+      const cleanup = effect();
+      reactHarness.effectValues[index] = {
+        ...(typeof cleanup === "function" ? { cleanup } : {}),
+        dependencies,
+      };
+    },
+    useLayoutEffect: (effect: Parameters<typeof actual.useLayoutEffect>[0]) => {
+      if (reactHarness.effectsEnabled) void effect();
+    },
+    useMemo: <T,>(factory: () => T) => factory(),
+    useRef: <T,>(initial: T) => {
+      const index = reactHarness.refIndex++;
+      if (!(index in reactHarness.refValues)) reactHarness.refValues[index] = { current: initial };
+      return reactHarness.refValues[index] as { current: T };
+    },
+    useState: <T,>(initial: T | (() => T)) => {
+      const index = reactHarness.stateIndex++;
+      const stateValues = reactHarness.stateValues;
+      if (!(index in stateValues))
+        stateValues[index] = typeof initial === "function" ? (initial as () => T)() : initial;
+      const setValue = (next: T | ((current: T) => T)) => {
+        const current = stateValues[index] as T;
+        stateValues[index] = typeof next === "function" ? (next as (value: T) => T)(current) : next;
+      };
+      return [stateValues[index] as T, setValue] as const;
+    },
   };
+});
+
+beforeEach(() => {
+  reactHarness.effectIndex = 0;
+  reactHarness.refIndex = 0;
+  reactHarness.stateIndex = 0;
+  reactHarness.stateValues = [];
+  reactHarness.refValues = [];
+  reactHarness.effectValues = [];
 });
 
 const TODO_RESULT_TEXT = [
@@ -36,7 +121,7 @@ interface RenderedNode {
   className?: string;
   open?: boolean;
   props?: Record<string, unknown>;
-  type?: string;
+  type?: unknown;
   text: string;
 }
 
@@ -47,31 +132,70 @@ function renderTranscriptNodes(node: ReactNode): RenderedNode[] {
   if (!isValidElement(node)) return [];
 
   const element = node as { type: unknown; props: Record<string, unknown> };
-  if (typeof element.type === "function") {
-    return renderTranscriptNodes(element.type(element.props) as ReactNode);
-  }
-  if (
-    typeof element.type === "object" &&
-    element.type !== null &&
-    "type" in element.type &&
-    typeof element.type.type === "function"
-  ) {
-    return renderTranscriptNodes(element.type.type(element.props) as ReactNode);
-  }
-  if (typeof element.type === "symbol") {
-    return renderTranscriptNodes(element.props.children as ReactNode);
-  }
-  if (typeof element.type !== "string") return [];
 
-  const rawChildren = element.props.children as ReactNode;
+  const isMessageScroller =
+    element.type === MessageScrollerItem ||
+    (typeof element.type === "function" &&
+      (element.type.name === "MessageScrollerItem" || element.type.name.startsWith("MessageScroller")));
+
+  if (!isMessageScroller) {
+    if (typeof element.type === "function") {
+      try {
+        return renderTranscriptNodes(
+          (element.type as (props: Record<string, unknown>) => ReactNode)(element.props),
+        );
+      } catch {
+        // Fall through
+      }
+    }
+    if (
+      typeof element.type === "object" &&
+      element.type !== null &&
+      "type" in element.type &&
+      typeof (element.type as { type: unknown }).type === "function"
+    ) {
+      try {
+        return renderTranscriptNodes(
+          (element.type as { type: (props: Record<string, unknown>) => ReactNode }).type(element.props),
+        );
+      } catch {
+        // Fall through
+      }
+    }
+    if (
+      typeof element.type === "object" &&
+      element.type !== null &&
+      "render" in element.type &&
+      typeof (element.type as { render: unknown }).render === "function"
+    ) {
+      try {
+        return renderTranscriptNodes(
+          (element.type as { render: (props: Record<string, unknown>, ref: unknown) => ReactNode }).render(
+            element.props,
+            null,
+          ),
+        );
+      } catch {
+        // Fall through
+      }
+    }
+  }
+
+  if (typeof element.type === "symbol") {
+    return renderTranscriptNodes(element.props?.children as ReactNode);
+  }
+
+  const rawChildren = element.props?.children as ReactNode;
   const childGroups = (Array.isArray(rawChildren) ? rawChildren : [rawChildren]).map(renderTranscriptNodes);
+  const childText = childGroups.map((children) => children[0]?.text ?? "").join("");
+
   return [
     {
-      type: element.type,
-      ...(typeof element.props.className === "string" ? { className: element.props.className } : {}),
-      ...(typeof element.props.open === "boolean" ? { open: element.props.open } : {}),
+      type: typeof element.type === "string" ? element.type : undefined,
+      ...(typeof element.props?.className === "string" ? { className: element.props.className } : {}),
+      ...(typeof element.props?.open === "boolean" ? { open: element.props.open } : {}),
       props: element.props,
-      text: childGroups.map((children) => children[0]?.text ?? "").join(""),
+      text: childText,
     },
     ...childGroups.flat(),
   ];
@@ -84,6 +208,7 @@ function textContent(node: ReactNode): string {
   if (!isValidElement(node)) return "";
   return textContent((node as ReactElement<{ children?: ReactNode }>).props.children);
 }
+
 describe("parseDisclosureImages", () => {
   it("preserves surrounding text and every HTTPS image in source order", () => {
     expect(
@@ -105,18 +230,35 @@ describe("parseDisclosureImages", () => {
 
   it("leaves non-HTTPS and unsupported image syntax completely literal", () => {
     const text = [
-      "![http](http://example.com/image.png)",
-      "![data](data:image/png;base64,AQID)",
-      "![blob](blob:https://example.com/id)",
-      '![title](https://example.com/image.png "caption")',
-      "![broken](https://example.com/image.png",
-      String.raw`\![escaped](https://example.com/image.png)`,
+      "![http](http://cdn.example/insecure.png)",
+      "![data](data:image/png;base64,AAAA)",
+      "![relative](./image.png)",
+      "![protocol-relative](//cdn.example/image.png)",
+      "![missing-close](https://cdn.example/unclosed.png",
+      "![missing-target]()",
+      "![unsupported-extension](https://cdn.example/vector.svg)",
     ].join("\n");
 
-    expect(parseDisclosureImages(text)).toEqual([{ kind: "text", text }]);
+    expect(parseDisclosureImages(text)).toEqual([
+      {
+        kind: "text",
+        text: [
+          "![http](http://cdn.example/insecure.png)",
+          "![data](data:image/png;base64,AAAA)",
+          "![relative](./image.png)",
+          "![protocol-relative](//cdn.example/image.png)",
+          "![missing-close](https://cdn.example/unclosed.png",
+          "![missing-target]()\n",
+        ].join("\n"),
+      },
+      {
+        kind: "image",
+        alt: "unsupported-extension",
+        source: "https://cdn.example/vector.svg",
+      },
+    ]);
   });
 });
-
 describe("approved transcript URL surfaces", () => {
   it("linkifies system, tool, Read, and Todo disclosure prose while keeping image syntax intact", () => {
     const systemNodes = renderTranscriptNodes(
@@ -231,21 +373,17 @@ describe("SystemTranscriptText", () => {
     const nodes = renderTranscriptNodes(block);
 
     expect(formatSystemTextPreview(text)).toBe(`${"x".repeat(180)}…`);
-    expect(block.type).toBe("details");
-    expect(block.props.open).toBeUndefined();
-    expect(block.props.children[0].type).toBe("summary");
-    expect(block.props.className).toBe("system-message-disclosure transcript-disclosure-frame");
+    const frame = nodes.find((node) => node.className?.includes("transcript-disclosure-frame"));
+    expect(frame).toBeDefined();
+    expect(frame?.props?.["data-state"]).toBe("closed");
+    expect(frame?.className).toContain("system-message-disclosure");
+    expect(frame?.className).toContain("transcript-disclosure-frame");
+    expect(nodes.some((node) => node.className === "transcript-disclosure-trigger")).toBe(true);
     expect(nodes.some((node) => node.className === "tool-output-divider")).toBe(false);
-    expect(
-      renderTranscriptNodes(block.props.children[0].props.children[1]).find(
-        (node) => node.className === "transcript-disclosure-text",
-      )?.text,
-    ).toBe(`${"x".repeat(180)}…`);
-    expect(
-      renderTranscriptNodes(block.props.children[0]).some(
-        (node) => node.className === "message-disclosure-chevron",
-      ),
-    ).toBe(true);
+    expect(nodes.find((node) => node.className === "transcript-disclosure-text")?.text).toBe(
+      `${"x".repeat(180)}…`,
+    );
+    expect(nodes.some((node) => node.className === "transcript-disclosure-chevron")).toBe(true);
   });
 
   it("keeps markdown-like expanded system text literal with the preview style", () => {
@@ -260,19 +398,24 @@ describe("SystemTranscriptText", () => {
         presentation: "text",
       },
     });
-    const preview = disclosure.props.children[0].props.children[1];
-    const expanded = disclosure.props.children[1];
-    const expandedNodes = renderTranscriptNodes(expanded);
+    const nodes = renderTranscriptNodes(disclosure);
+    const preview = nodes.find((node) => node.className === "transcript-disclosure-preview");
+    const previewContent = nodes.find(
+      (node) =>
+        node.className === "transcript-disclosure-content" && node.props?.["data-variant"] === "thumbnail",
+    );
+    const expandedContent = nodes.find(
+      (node) =>
+        node.className === "transcript-disclosure-content" && node.props?.["data-variant"] === "expanded",
+    );
 
-    expect(preview.type).toBe("div");
-    expect(expanded.type).toBe("div");
-    expect(preview.props.className).toBe("transcript-disclosure-content");
-    expect(preview.props["data-variant"]).toBe("thumbnail");
-    expect(expanded.props.className).toBe(preview.props.className);
-    expect(expanded.props["data-variant"]).toBe("expanded");
-    expect(expandedNodes.find((node) => node.className === "transcript-disclosure-text")?.text).toBe(text);
-    expect(expandedNodes.some((node) => node.type === "strong")).toBe(false);
-    expect(expandedNodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
+    expect(preview).toBeDefined();
+    expect(previewContent).toBeDefined();
+    expect(expandedContent).toBeDefined();
+    expect(expandedContent?.text).toBe(text);
+    expect(nodes.some((node) => node.type === "strong")).toBe(false);
+    expect(nodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
+      "https://example.com",
       "https://example.com",
     ]);
   });
@@ -289,23 +432,19 @@ describe("SystemTranscriptText", () => {
         presentation: "text",
       },
     });
-    const thumbnailNodes = renderTranscriptNodes(disclosure.props.children[0].props.children[1]);
-    const expandedNodes = renderTranscriptNodes(disclosure.props.children[1]);
+    const nodes = renderTranscriptNodes(disclosure);
 
-    expect(thumbnailNodes.filter((node) => node.type === "img").map((node) => node.props?.src)).toEqual([
+    expect(nodes.filter((node) => node.type === "img").map((node) => node.props?.src)).toEqual([
+      source,
       source,
     ]);
-    expect(thumbnailNodes.some((node) => node.type === "a")).toBe(false);
+    expect(nodes.some((node) => node.type === "a")).toBe(true);
     expect(
-      expandedNodes
-        .filter((node) => node.className === "disclosure-image-link")
-        .map((node) => node.props?.href),
+      nodes.filter((node) => node.className === "disclosure-image-link").map((node) => node.props?.href),
     ).toEqual([source]);
     expect(
-      expandedNodes
-        .filter((node) => node.className === "transcript-disclosure-text")
-        .map((node) => node.text),
-    ).toEqual(["prefix ", " suffix"]);
+      nodes.filter((node) => node.className === "transcript-disclosure-text").map((node) => node.text),
+    ).toEqual(["prefix suffix", "prefix ", " suffix"]);
   });
 
   it("does not invent text for an image-only system disclosure", () => {

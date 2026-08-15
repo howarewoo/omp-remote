@@ -1,15 +1,18 @@
-.transcript-message-diff > span {
-  display: block;
-  min-height: 1lh;
-}
-
 .transcript-message-diff {
+  width: 100%;
+  min-width: 0;
   max-width: 100%;
   overflow-x: auto;
+  overscroll-behavior-inline: contain;
   border-radius: var(--radius);
   background: var(--omp-tool-message);
   scrollbar-width: thin;
   scrollbar-color: var(--transcript-separator) transparent;
+}
+
+.transcript-message-diff > span {
+  display: block;
+  min-height: 1lh;
 }
 
 .transcript-message
@@ -22,58 +25,40 @@
   margin: 0;
 }
 
-.code-block summary {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  color: var(--transcript-muted);
-  font-family: var(--font-mono);
+.code-block .transcript-disclosure-title {
   font-size: 0.625rem;
-  font-weight: 600;
   letter-spacing: 0.04em;
-  line-height: 1.4;
   text-transform: lowercase;
-}
-
-.code-block summary::-webkit-details-marker {
-  display: none;
-}
-
-.code-block-chevron {
-  width: 0.42rem;
-  height: 0.42rem;
-  flex: none;
-  border-right: 1.5px solid var(--transcript-blue);
-  border-bottom: 1.5px solid var(--transcript-blue);
-  transform: rotate(-45deg);
-  transition: transform 140ms ease;
-}
-
-.code-block[open] .code-block-chevron {
-  transform: rotate(45deg);
 }
 
 .code-block-action {
   margin-inline-start: auto;
-  color: var(--transcript-subtle);
 }
 
 .code-block-action-expanded {
   display: none;
 }
 
-.code-block[open] .code-block-action-collapsed {
+.code-block[data-open] .code-block-action-collapsed {
   display: none;
 }
 
-.code-block[open] .code-block-action-expanded {
+.code-block[data-open] .code-block-action-expanded {
   display: inline;
 }
 
+.code-block .transcript-disclosure-panel {
+  overflow: hidden;
+}
+
 .code-block pre {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   margin: 0;
   overflow-x: auto;
-  padding: 0.8rem 0.9rem;
+  overscroll-behavior-inline: contain;
+  padding: 0.75rem;
   scrollbar-width: thin;
   scrollbar-color: var(--transcript-separator) transparent;
 }

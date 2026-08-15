@@ -3,7 +3,8 @@ import { memo } from "react";
 import { Badge } from "../ui/badge.js";
 import { parseTodoResult, type TodoResult, type TodoTask, type TodoTaskState } from "../todo-parser.js";
 import { renderSafeHttpText } from "./inline-transcript.js";
-import { TranscriptEntryHeader, ToolOutputDivider } from "./transcript-entry.js";
+import { formatTime, renderToolTitle, ToolOutputDivider } from "./transcript-entry.js";
+import { TranscriptDisclosure } from "./transcript-disclosure.js";
 
 const TODO_STATE_LABEL: Record<TodoTaskState, string> = {
   pending: "Pending",
@@ -135,14 +136,24 @@ export function TodoToolTranscript({
   todo: TodoResult;
 }) {
   return (
-    <details className="tool-message-disclosure transcript-disclosure-frame todo-tool-disclosure">
-      <summary>
-        <TranscriptEntryHeader entry={entry} collapsible />
-        <ToolOutputDivider />
-        <TodoProgressSummary todo={todo} />
-      </summary>
+    <TranscriptDisclosure
+      badge={entry.streaming ? <Badge className="streaming-badge">Streaming</Badge> : null}
+      category="todo"
+      className="tool-message-disclosure todo-tool-disclosure tool-output-disclosure"
+      defaultOpen={entry.streaming === true}
+      lifecycle={entry.streaming ? "running" : undefined}
+      preview={
+        <>
+          <ToolOutputDivider />
+          <TodoProgressSummary todo={todo} />
+        </>
+      }
+      time={formatTime(entry.timestamp)}
+      timestamp={entry.timestamp}
+      title={renderToolTitle(entry, "Todo")}
+    >
       <TodoPhaseList todo={todo} />
-    </details>
+    </TranscriptDisclosure>
   );
 }
 export const MemoizedTodoToolTranscript = memo(TodoToolTranscript);
