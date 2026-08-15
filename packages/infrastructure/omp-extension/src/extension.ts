@@ -170,6 +170,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
   type AskRelay = {
     context: ExtensionContext;
     nativeAskDialog: NonNullable<ExtensionContext["ui"]["askDialog"]>;
+    relayAskDialog: NonNullable<ExtensionContext["ui"]["askDialog"]>;
   };
   type PendingRemoteAsk = {
     sessionId: string;
@@ -260,19 +261,17 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
   const installAskRelay = (ctx: ExtensionContext): void => {
     if (askRelay) {
       askRelay.context = ctx;
+      if (ctx.ui && ctx.ui.askDialog !== askRelay.relayAskDialog) {
+        ctx.ui.askDialog = askRelay.relayAskDialog;
+      }
       return;
     }
-    if (!ctx.ui) return;
-    const existing = Reflect.getOwnPropertyDescriptor(ctx.ui, "askDialog")?.value as
-      | NonNullable<ExtensionContext["ui"]["askDialog"]>
-      | undefined;
-    if (!existing) return;
-    const relay: AskRelay = {
-      context: ctx,
-      nativeAskDialog: existing,
-    };
-    askRelay = relay;
-    ctx.ui.askDialog = async (
+    if (!ctx.ui || typeof ctx.ui.askDialog !== "function") return;
+    const askDialog = ctx.ui.askDialog;
+    const describedAskDialog = Reflect.getOwnPropertyDescriptor(ctx.ui, "askDialog")?.value;
+    const nativeAskDialog = typeof describedAskDialog === "function" ? describedAskDialog : askDialog;
+    let relay!: AskRelay;
+    const relayAskDialog = async (
       questions: ExtensionAskDialogQuestion[],
       dialogOptions?: ExtensionUIDialogOptions,
     ): Promise<ExtensionAskDialogResult | undefined> => {
@@ -399,6 +398,13 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
       localAbort.abort();
       return remoteResult(winner.outcome);
     };
+    relay = {
+      context: ctx,
+      nativeAskDialog,
+      relayAskDialog,
+    };
+    askRelay = relay;
+    ctx.ui.askDialog = relayAskDialog;
   };
 
   const sessionSnapshot = (ctx: ExtensionContext) => {
@@ -597,30 +603,35 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
   });
   pi.on("agent_start", async (_event, ctx) => {
     context = ctx;
+    installAskRelay(ctx);
     emitLifecycle("agent_start", null, false);
   });
   pi.on("agent_end", async (_event, ctx) => {
     context = ctx;
+    installAskRelay(ctx);
     emitLifecycle("agent_end", null, false);
   });
   pi.on("message_start", async (event, ctx) => {
     context = ctx;
+    installAskRelay(ctx);
     activeMessageId = `extension-message-${++messageSequence}`;
     emitLifecycle("message_start", event.message, true);
   });
   pi.on("message_update", async (event, ctx) => {
     context = ctx;
+    installAskRelay(ctx);
     emitLifecycle("message_update", event.message, true);
   });
   pi.on("message_end", async (event, ctx) => {
     context = ctx;
+    installAskRelay(ctx);
     emitLifecycle("message_end", event.message, false);
     activeMessageId = undefined;
   });
   pi.on("session_shutdown", async () => {
     active = false;
     loseRemoteAsks();
-    if (askRelay) askRelay.context.ui.askDialog = askRelay.nativeAskDialog;
+    if (askRelay?.context.ui) askRelay.context.ui.askDialog = askRelay.nativeAskDialog;
     askRelay = undefined;
     socket?.close();
     socket = undefined;
