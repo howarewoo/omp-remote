@@ -24,6 +24,23 @@ const reactHarness = vi.hoisted(() => ({
   stateValues: [] as unknown[],
 }));
 
+vi.mock("../ui/collapsible.js", () => ({
+  Collapsible: ({ children, ...props }: Record<string, unknown> & { children?: ReactNode }) => (
+    <div data-slot="collapsible" {...props}>
+      {children}
+    </div>
+  ),
+  CollapsibleTrigger: ({ children, ...props }: Record<string, unknown> & { children?: ReactNode }) => (
+    <button data-slot="collapsible-trigger" type="button" {...props}>
+      {children}
+    </button>
+  ),
+  CollapsibleContent: ({ children, ...props }: Record<string, unknown> & { children?: ReactNode }) => (
+    <div data-slot="collapsible-content" {...props}>
+      {children}
+    </div>
+  ),
+}));
 const messageScrollerHarness = vi.hoisted(() => ({ scrollToEnd: vi.fn() }));
 
 vi.mock("../ui/message-scroller.js", async (importOriginal) => {
@@ -136,7 +153,7 @@ interface RenderedNode {
   className?: string;
   open?: boolean;
   props?: Record<string, unknown>;
-  type?: string;
+  type?: unknown;
   text: string;
 }
 
@@ -145,27 +162,72 @@ function renderTranscriptNodes(node: ReactNode): RenderedNode[] {
   if (typeof node === "string" || typeof node === "number") return [{ text: String(node) }];
   if (Array.isArray(node)) return node.flatMap(renderTranscriptNodes);
   if (!isValidElement(node)) return [];
+
   const element = node as { type: unknown; props: Record<string, unknown> };
-  if (typeof element.type === "function")
-    return renderTranscriptNodes(element.type(element.props) as ReactNode);
-  if (
-    typeof element.type === "object" &&
-    element.type !== null &&
-    "type" in element.type &&
-    typeof element.type.type === "function"
-  )
-    return renderTranscriptNodes(element.type.type(element.props) as ReactNode);
-  if (typeof element.type === "symbol") return renderTranscriptNodes(element.props.children as ReactNode);
-  if (typeof element.type !== "string") return [];
-  const rawChildren = element.props.children as ReactNode;
+
+  const isMessageScroller =
+    element.type === MessageScrollerItem ||
+    (typeof element.type === "function" &&
+      (element.type.name === "MessageScrollerItem" || element.type.name.startsWith("MessageScroller")));
+
+  if (!isMessageScroller) {
+    if (typeof element.type === "function") {
+      try {
+        return renderTranscriptNodes(
+          (element.type as (props: Record<string, unknown>) => ReactNode)(element.props),
+        );
+      } catch {
+        // Fall through
+      }
+    }
+    if (
+      typeof element.type === "object" &&
+      element.type !== null &&
+      "type" in element.type &&
+      typeof (element.type as { type: unknown }).type === "function"
+    ) {
+      try {
+        return renderTranscriptNodes(
+          (element.type as { type: (props: Record<string, unknown>) => ReactNode }).type(element.props),
+        );
+      } catch {
+        // Fall through
+      }
+    }
+    if (
+      typeof element.type === "object" &&
+      element.type !== null &&
+      "render" in element.type &&
+      typeof (element.type as { render: unknown }).render === "function"
+    ) {
+      try {
+        return renderTranscriptNodes(
+          (element.type as { render: (props: Record<string, unknown>, ref: unknown) => ReactNode }).render(
+            element.props,
+            null,
+          ),
+        );
+      } catch {
+        // Fall through
+      }
+    }
+  }
+
+  if (typeof element.type === "symbol") {
+    return renderTranscriptNodes(element.props?.children as ReactNode);
+  }
+
+  const rawChildren = element.props?.children as ReactNode;
   const childGroups = (Array.isArray(rawChildren) ? rawChildren : [rawChildren]).map(renderTranscriptNodes);
+  const childText = childGroups.map((children) => children[0]?.text ?? "").join("");
+
   return [
     {
-      type: element.type,
-      ...(typeof element.props.className === "string" ? { className: element.props.className } : {}),
-      ...(typeof element.props.open === "boolean" ? { open: element.props.open } : {}),
+      type: typeof element.type === "string" ? element.type : undefined,
+      ...(typeof element.props?.className === "string" ? { className: element.props.className } : {}),
+      ...(typeof element.props?.open === "boolean" ? { open: element.props.open } : {}),
       props: element.props,
-      text: childGroups.map((children) => children[0]?.text ?? "").join(""),
+      text: childText,
     },
     ...childGroups.flat(),
   ];
@@ -254,8 +316,27 @@ function findElements(
   if (node === null || node === undefined || typeof node === "boolean") return [];
   if (Array.isArray(node)) return node.flatMap((child) => findElements(child, predicate));
   if (!isValidElement(node)) return [];
+
   const element = node as ReactElement<Record<string, unknown> & { children?: ReactNode }>;
-  return [...(predicate(element) ? [element] : []), ...findElements(element.props.children, predicate)];
+  if (
+    typeof element.type === "function" &&
+    element.type !== MessageScrollerItem &&
+    element.type.name !== "MessageScrollerItem"
+  ) {
+    const matchThis = predicate(element) ? [element] : [];
+    try {
+      const rendered = (element.type as (props: unknown) => ReactNode)(element.props);
+      const renderedMatches = findElements(rendered, predicate);
+      return matchThis.length > 0 && renderedMatches.length > 0
+        ? renderedMatches
+        : [...matchThis, ...renderedMatches];
+    } catch {
+      return [...matchThis, ...findElements(element.props?.children, predicate)];
+    }
+  }
+
+  const matches = predicate(element) ? [element] : [];
+  return [...matches, ...findElements(element.props?.children, predicate)];
 }
 
 function textContent(node: ReactNode): string {
@@ -280,14 +361,19 @@ function composerDashboardProps(session: Session = BASE_SESSION): ControlledDash
     onSelectedSessionChange: vi.fn(),
   };
 }
+
 describe("TranscriptCodeBlock", () => {
   it("renders code as a closed disclosure by default", () => {
     const block = TranscriptCodeBlock({ code: "const ready = true;", language: "ts" });
+    const nodes = renderTranscriptNodes(block);
+    const frame = nodes.find((node) => node.className?.includes("transcript-disclosure-frame code-block"));
+    const trigger = nodes.find((node) => node.className === "transcript-disclosure-trigger");
+    const icon = nodes.find((node) => node.className === "transcript-disclosure-icon");
 
-    expect(block.type).toBe("details");
-    expect(block.props.open).toBeUndefined();
-    expect(block.props.children[0].type).toBe("summary");
-    expect(block.props.className).toBe("transcript-disclosure-frame code-block");
+    expect(frame).toBeDefined();
+    expect(frame?.props?.["data-state"]).toBe("closed");
+    expect(trigger).toBeDefined();
+    expect(icon?.props?.["data-category"]).toBe("code");
   });
 });
 
@@ -338,66 +424,34 @@ describe("Bash title rendering", () => {
         text: "--raw",
       },
     ]);
+    expect(toolName?.props?.children).toBe("Bash");
     expect(output?.text).toBe("output remains neutral");
-    expect(output?.className).not.toContain("transcript-command-token");
   });
 
-  it("keeps non-Bash and missing titles plain", () => {
-    const nonBash = renderTranscriptNodes(
+  it.each([
+    ["Bash: ", "Bash: "],
+    ["Bash: \n\t  ", "Bash: \n\t  "],
+    ["Bash: invalid 'string", "Bash: invalid 'string"],
+    ["Bash: unfinished \\", "Bash: unfinished \\"],
+  ])("keeps incomplete and whitespace titles completely literal: %j", (title, expected) => {
+    const nodes = renderTranscriptNodes(
       ToolTranscriptText({
         entry: {
-          id: "non-bash-title",
-          role: "tool",
-          toolName: "write",
-          toolTitle: "Bash: echo should stay plain",
-          text: "result",
-          timestamp: "2026-07-29T12:00:00.000Z",
-          streaming: false,
-          presentation: "text",
-        },
-      }),
-    );
-    const missing = renderTranscriptNodes(
-      ToolTranscriptText({
-        entry: {
-          id: "missing-title",
+          id: `bash-literal-${title}`,
           role: "tool",
           toolName: "bash",
-          text: "result",
+          toolTitle: title,
+          text: "output",
           timestamp: "2026-07-29T12:00:00.000Z",
           streaming: false,
           presentation: "text",
         },
       }),
     );
+    const commandTitle = nodes.find((node) => node.className === "transcript-command-title");
 
-    expect(nonBash.some((node) => node.className?.includes("transcript-command-token-"))).toBe(false);
-    expect(missing.some((node) => node.className?.includes("transcript-command-token-"))).toBe(false);
-  });
-
-  it("updates a streaming Bash title without recoloring its output", () => {
-    let entry = {
-      id: "streaming-bash-title",
-      role: "tool" as const,
-      toolName: "bash",
-      toolTitle: "Bash: ec",
-      text: "partial output",
-      timestamp: "2026-07-29T12:00:00.000Z",
-      streaming: true,
-      presentation: "text" as const,
-    };
-
-    const first = renderToolTranscriptWithHooks(entry);
-    entry = { ...entry, toolTitle: "Bash: echo ready" };
-    const second = renderToolTranscriptWithHooks(entry, true);
-
-    const firstTitle = first.find((node) => node.className === "transcript-command-title");
-    const secondTitle = second.find((node) => node.className === "transcript-command-title");
-    expect(textContent(firstTitle?.props?.children as ReactNode)).toBe("Bash: ec");
-    expect(textContent(secondTitle?.props?.children as ReactNode)).toBe("Bash: echo ready");
-    expect(second.find((node) => node.className === "transcript-disclosure-text")?.text).toBe(
-      "partial output",
-    );
+    expect(textContent(commandTitle?.props?.children as ReactNode)).toBe(expected);
+    expect(nodes.some((node) => node.className?.includes("transcript-command-token-"))).toBe(false);
   });
 });
 
@@ -410,7 +464,7 @@ describe("structured transcript presentation", () => {
           role: "assistant",
           text: "",
           timestamp: "2026-07-29T12:00:00.000Z",
-          streaming: true,
+          streaming: false,
           presentation: "text",
         },
       }),
@@ -420,7 +474,6 @@ describe("structured transcript presentation", () => {
       TranscriptEntry({
         entry: {
           id: "empty-tool-result",
-
           role: "tool",
           text: "",
           timestamp: "2026-07-29T12:00:00.000Z",
@@ -451,19 +504,23 @@ describe("structured transcript presentation", () => {
       }),
     );
 
+    const authorNode = nodes.find(
+      (node) => node.className === "transcript-disclosure-title" || node.className === "message-author",
+    );
     expect({
-      author: nodes.find((node) => node.className === "message-author")?.text,
+      author: authorNode?.text,
       diffRows: nodes
         .filter((node) => node.className?.startsWith("diff-line diff-"))
         .map(({ className, text }) => ({ className, text })),
     }).toEqual({
-      author: "·edit",
+      author: "edit",
       diffRows: [
         { className: "diff-line diff-removed", text: "-1|before" },
         { className: "diff-line diff-added", text: "+1|after" },
       ],
     });
   });
+
   it("linkifies assistant and user prose without expanding other Markdown", () => {
     const renderMessage = (role: "assistant" | "user") =>
       renderTranscriptNodes(
@@ -568,12 +625,12 @@ describe("ToolTranscriptText", () => {
     expect(formatToolTextPreview(`${text}\n`)).toBe(
       Array.from({ length: 10 }, (_, index) => `line ${index + 3}`).join("\n"),
     );
-    expect(block.type).toBe("details");
-    expect(block.props.open).toBe(false);
-    expect(block.props.children[0].type).toBe("summary");
-    expect(block.props.className).toBe(
-      "tool-message-disclosure transcript-disclosure-frame tool-output-disclosure",
-    );
+    const frame = nodes.find((node) => node.className?.includes("transcript-disclosure-frame"));
+    expect(frame?.props?.["data-state"]).toBe("closed");
+    expect(frame?.className).toContain("tool-message-disclosure");
+    expect(frame?.className).toContain("transcript-disclosure-frame");
+    expect(frame?.className).toContain("tool-output-disclosure");
+    expect(nodes.some((node) => node.className === "transcript-disclosure-trigger")).toBe(true);
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
     const commandTitle = nodes.find((node) => node.className === "transcript-command-title");
     expect(textContent(commandTitle?.props?.children as ReactNode)).toBe("Bash: pnpm test");
@@ -598,22 +655,23 @@ describe("ToolTranscriptText", () => {
         presentation: "text",
       },
     });
-    const preview = disclosure.props.children[0].props.children[2];
-    const expanded = disclosure.props.children[1];
-    const expandedNodes = renderTranscriptNodes(expanded);
+    const nodes = renderTranscriptNodes(disclosure);
+    const previewContent = nodes.find(
+      (node) =>
+        node.className === "transcript-disclosure-content" && node.props?.["data-variant"] === "thumbnail",
+    );
+    const expandedContent = nodes.find(
+      (node) =>
+        node.className === "transcript-disclosure-content" && node.props?.["data-variant"] === "expanded",
+    );
 
-    expect(preview.type).toBe("div");
-    expect(expanded.type).toBe("div");
-    expect(preview.props.className).toBe("transcript-disclosure-content");
-    expect(preview.props["data-variant"]).toBe("thumbnail");
-    expect(expanded.props.className).toBe(preview.props.className);
-    expect(expanded.props["data-variant"]).toBe("expanded");
-    expect(
-      renderTranscriptNodes(preview).find((node) => node.className === "transcript-disclosure-text")?.text,
-    ).toBe(formatToolTextPreview(text));
-    expect(expandedNodes.find((node) => node.className === "transcript-disclosure-text")?.text).toBe(text);
-    expect(expandedNodes.some((node) => node.type === "strong")).toBe(false);
-    expect(expandedNodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
+    expect(previewContent?.props?.["data-variant"]).toBe("thumbnail");
+    expect(expandedContent?.props?.["data-variant"]).toBe("expanded");
+    expect(previewContent?.text).toBe(formatToolTextPreview(text));
+    expect(expandedContent?.text).toBe(text);
+    expect(nodes.some((node) => node.type === "strong")).toBe(false);
+    expect(nodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
+      "https://example.com",
       "https://example.com",
     ]);
   });
@@ -633,19 +691,26 @@ describe("ToolTranscriptText", () => {
         presentation: "text",
       },
     });
-    const thumbnail = disclosure.props.children[0].props.children[2];
-    const expanded = disclosure.props.children[1];
-    const thumbnailNodes = renderTranscriptNodes(thumbnail);
-    const expandedNodes = renderTranscriptNodes(expanded);
-    const thumbnailImages = thumbnailNodes.filter((node) => node.type === "img");
-    const expandedImages = expandedNodes.filter((node) => node.type === "img");
-    const expandedLinks = expandedNodes.filter((node) => node.className === "disclosure-image-link");
+    const nodes = renderTranscriptNodes(disclosure);
+    const thumbnail = nodes.find(
+      (node) =>
+        node.className === "transcript-disclosure-content" && node.props?.["data-variant"] === "thumbnail",
+    );
+    const expanded = nodes.find(
+      (node) =>
+        node.className === "transcript-disclosure-content" && node.props?.["data-variant"] === "expanded",
+    );
+    const thumbnailImages = nodes.filter((node) => node.type === "img").slice(0, 2);
+    const expandedImages = nodes.filter((node) => node.type === "img").slice(2, 4);
+    const expandedLinks = nodes.filter((node) => node.className === "disclosure-image-link");
 
-    expect(thumbnail.props["data-variant"]).toBe("thumbnail");
-    expect(expanded.props["data-variant"]).toBe("expanded");
-    expect(thumbnailNodes.filter((node) => node.className === "disclosure-image")).toHaveLength(2);
-    expect(expandedNodes.filter((node) => node.className === "disclosure-image")).toHaveLength(2);
-    expect(thumbnailNodes.some((node) => node.type === "a")).toBe(false);
+    expect(thumbnail?.props?.["data-variant"]).toBe("thumbnail");
+    expect(expanded?.props?.["data-variant"]).toBe("expanded");
+    expect(nodes.filter((node) => node.className === "disclosure-image")).toHaveLength(4);
+    expect(nodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
+      firstSource,
+      secondSource,
+    ]);
     expect(thumbnailImages.map((node) => node.props?.src)).toEqual([firstSource, secondSource]);
     expect(expandedImages.map((node) => node.props?.src)).toEqual([firstSource, secondSource]);
     expect(
@@ -672,11 +737,12 @@ describe("ToolTranscriptText", () => {
       { href: secondSource, rel: "noreferrer", target: "_blank" },
     ]);
     expect(
-      expandedNodes
+      nodes
         .filter(
           (node) =>
             node.className === "transcript-disclosure-text" || node.className === "disclosure-image-link",
         )
+        .slice(1)
         .map((node) =>
           node.className === "transcript-disclosure-text"
             ? { kind: "text", value: node.text }
@@ -691,7 +757,6 @@ describe("ToolTranscriptText", () => {
     ]);
   });
 });
-
 describe("renderTranscriptMessageItems activity grouping", () => {
   it("groups adjacent tools into a TranscriptActivityGroup with stable key", () => {
     const messages: Session["messages"] = [

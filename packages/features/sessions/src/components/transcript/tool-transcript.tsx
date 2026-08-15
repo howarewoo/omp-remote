@@ -1,5 +1,6 @@
 import { type Session, type TranscriptImage } from "@omp-remote/protocol";
 import { memo, useEffect, useState } from "react";
+import { Badge } from "../ui/badge.js";
 import { parseTodoResult } from "../todo-parser.js";
 import {
   DisclosureImage,
@@ -9,8 +10,14 @@ import {
   renderDisclosureTranscriptText,
 } from "./disclosure-content.js";
 import { MemoizedTodoToolTranscript } from "./todo-tool-transcript.js";
-import { TranscriptEntryContent, TranscriptEntryHeader, ToolOutputDivider } from "./transcript-entry.js";
-
+import { TranscriptDisclosure, type DisclosureCategory } from "./transcript-disclosure.js";
+import {
+  formatTime,
+  renderToolTitle,
+  ToolOutputDivider,
+  TranscriptEntryContent,
+  TranscriptEntryHeader,
+} from "./transcript-entry.js";
 const TOOL_TEXT_PREVIEW_LINES = 10;
 function formatToolTextFull(text: string): string {
   if (!/\S/.test(text)) return "No tool output";
@@ -150,11 +157,9 @@ function renderReadImageDisclosureContent({
 
 function ReadResultTranscript({
   entry,
-  className,
   readTarget,
 }: {
   entry: TranscriptEntryMessage;
-  className: string;
   readTarget: string | undefined;
 }) {
   const images = entry.images ?? EMPTY_TRANSCRIPT_IMAGES;
@@ -168,10 +173,15 @@ function ReadResultTranscript({
   const hasImages = images.length > 0;
 
   return (
-    <div className={`${className} read-result-disclosure`}>
-      <details className="read-result-content" open={false}>
-        <summary>
-          <TranscriptEntryHeader entry={entry} authorLabel={authorLabel} collapsible />
+    <TranscriptDisclosure
+      badge={entry.streaming ? <Badge className="streaming-badge">Streaming</Badge> : null}
+      category="read"
+      className="tool-message-disclosure read-result-disclosure tool-output-disclosure"
+      defaultOpen={false}
+      keepMounted={hasImages}
+      lifecycle={entry.streaming ? "running" : undefined}
+      preview={
+        <>
           <ToolOutputDivider />
           <div className="read-result-preview">
             {hasImages
@@ -186,16 +196,20 @@ function ReadResultTranscript({
               <span className="read-result-more">… {hiddenLineCount} more lines</span>
             ) : null}
           </div>
-        </summary>
-        {hasImages
-          ? renderReadImageDisclosureContent({
-              imageSources,
-              readTarget: readImageLabel,
-              text: entry.text,
-              variant: "expanded",
-            })
-          : renderDisclosureTranscriptText(entry.text)}
-      </details>
+        </>
+      }
+      time={formatTime(entry.timestamp)}
+      timestamp={entry.timestamp}
+      title={renderToolTitle(entry, authorLabel)}
+    >
+      {hasImages
+        ? renderReadImageDisclosureContent({
+            imageSources,
+            readTarget: readImageLabel,
+            text: entry.text,
+            variant: "expanded",
+          })
+        : renderDisclosureTranscriptText(entry.text)}
       {!hasImages && entry.readResolvedPath ? (
         <div className="read-result-output">
           <div className="read-result-resolved-path">
@@ -203,7 +217,7 @@ function ReadResultTranscript({
           </div>
         </div>
       ) : null}
-    </div>
+    </TranscriptDisclosure>
   );
 }
 
@@ -222,10 +236,10 @@ export function ToolTranscriptText({ entry }: { entry: TranscriptEntryMessage })
   const authorLabel =
     entry.toolTitle ??
     (readFilename ? `Read: ${readFilename}` : isRead ? "Read" : (entry.toolName ?? entry.role));
-  const className = "tool-message-disclosure transcript-disclosure-frame tool-output-disclosure";
+  const className = "tool-message-disclosure tool-output-disclosure";
 
   if (isInspectableRead) {
-    return <ReadResultTranscript className={className} entry={entry} readTarget={readTarget} />;
+    return <ReadResultTranscript entry={entry} readTarget={readTarget} />;
   }
 
   if (isRead) {
@@ -250,20 +264,30 @@ export function ToolTranscriptText({ entry }: { entry: TranscriptEntryMessage })
         : "";
 
   return (
-    <details className={className} open={entry.toolName === "edit" || isWrite}>
-      <summary>
-        <TranscriptEntryHeader entry={entry} authorLabel={authorLabel} collapsible />
-        <ToolOutputDivider />
-        {isWrite ? null : entry.presentation === "diff" ? (
-          <pre className="tool-message-preview">{formatToolTextPreview(entry.text)}</pre>
-        ) : (
-          renderDisclosureTranscriptContent({
-            preview: disclosurePreview ?? "",
-            segments: disclosureSegments ?? [],
-            variant: "thumbnail",
-          })
-        )}
-      </summary>
+    <TranscriptDisclosure
+      badge={entry.streaming ? <Badge className="streaming-badge">Streaming</Badge> : null}
+      category={(entry.toolName as DisclosureCategory) ?? "tool"}
+      className={className}
+      defaultOpen={entry.toolName === "edit" || isWrite || entry.streaming === true}
+      lifecycle={entry.streaming ? "running" : undefined}
+      preview={
+        <>
+          <ToolOutputDivider />
+          {isWrite ? null : entry.presentation === "diff" ? (
+            <pre className="tool-message-preview">{formatToolTextPreview(entry.text)}</pre>
+          ) : (
+            renderDisclosureTranscriptContent({
+              preview: disclosurePreview ?? "",
+              segments: disclosureSegments ?? [],
+              variant: "thumbnail",
+            })
+          )}
+        </>
+      }
+      time={formatTime(entry.timestamp)}
+      timestamp={entry.timestamp}
+      title={renderToolTitle(entry, authorLabel)}
+    >
       {entry.presentation === "diff" ? (
         <TranscriptEntryContent entry={entry} />
       ) : isWrite ? (
@@ -274,7 +298,7 @@ export function ToolTranscriptText({ entry }: { entry: TranscriptEntryMessage })
           variant: "expanded",
         })
       )}
-    </details>
+    </TranscriptDisclosure>
   );
 }
 

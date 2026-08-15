@@ -17,12 +17,12 @@ export type {
   TodoTaskState,
 } from "./todo-parser.js";
 export { parseTodoResult } from "./todo-parser.js";
-export type { BashTitleToken, BashTitleTokenKind } from "./transcript/bash-title.js";
 export {
   MemoizedTranscriptActivityGroup,
   TranscriptActivityGroup,
   type TranscriptActivityGroupProps,
 } from "./transcript/activity-group.js";
+export type { BashTitleToken, BashTitleTokenKind } from "./transcript/bash-title.js";
 export { tokenizeBashTitle } from "./transcript/bash-title.js";
 export { parseTranscriptBlocks } from "./transcript/blocks.js";
 export { formatSystemTextPreview, TranscriptCodeBlock, TranscriptText } from "./transcript/code-block.js";
@@ -61,3 +61,11 @@ export {
   type TranscriptEntryMessage,
   type TranscriptGroupingContext,
 } from "./transcript/transcript-grouping.js";
+export {
+  DisclosureCategoryIcon,
+  DisclosureChevronIcon,
+  TranscriptDisclosure,
+  type DisclosureCategory,
+  type DisclosureLifecycle,
+  type TranscriptDisclosureProps,
+} from "./transcript/transcript-disclosure.js";

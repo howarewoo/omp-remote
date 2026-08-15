@@ -13,6 +13,7 @@ import {
 import { tokenizeBashTitle } from "./bash-title.js";
 import { ToolTranscriptText } from "./tool-transcript.js";
 import { TranscriptActivityGroup } from "./activity-group.js";
+import { TranscriptDisclosure } from "./transcript-disclosure.js";
 import { deriveTranscriptDisplayItems, type TranscriptGroupingContext } from "./transcript-grouping.js";
 
 const BASH_TITLE_PREFIX = "Bash: ";
@@ -62,7 +63,7 @@ const MemoizedBashTitle = memo(function BashTitle({ title }: { title: string }) 
   );
 });
 
-const TOOL_NAME_COLOR_CLASS: Record<string, string> = {
+export const TOOL_NAME_COLOR_CLASS: Record<string, string> = {
   bash: "transcript-tool-name-bash",
   edit: "transcript-tool-name-edit",
   grep: "transcript-tool-name-grep",
@@ -81,7 +82,7 @@ const TOOL_TITLE_LABEL: Record<string, string> = {
   write: "Write",
 };
 
-function renderToolTitle(entry: TranscriptEntryMessage, fallbackLabel: string) {
+export function renderToolTitle(entry: TranscriptEntryMessage, fallbackLabel: string) {
   const title = entry.toolTitle;
   const toolName = entry.toolName;
   const displayedTitle = title ?? fallbackLabel;
@@ -136,15 +137,22 @@ export function SystemTranscriptText({ entry }: { entry: TranscriptEntryMessage 
     plainText.trim().length > 0 || !segments.some((segment) => segment.kind === "image")
       ? formatSystemTextPreview(plainText)
       : "";
+  const resolvedAuthorLabel = entry.toolName ?? "System";
 
   return (
-    <details className="system-message-disclosure transcript-disclosure-frame">
-      <summary>
-        <TranscriptEntryHeader entry={entry} collapsible />
-        {renderDisclosureTranscriptContent({ preview, segments, variant: "thumbnail" })}
-      </summary>
+    <TranscriptDisclosure
+      badge={entry.streaming ? <Badge className="streaming-badge">Streaming</Badge> : null}
+      category="system"
+      className="system-message-disclosure"
+      defaultOpen={false}
+      lifecycle={entry.streaming ? "running" : undefined}
+      preview={renderDisclosureTranscriptContent({ preview, segments, variant: "thumbnail" })}
+      time={formatTime(entry.timestamp)}
+      timestamp={entry.timestamp}
+      title={renderToolTitle(entry, resolvedAuthorLabel)}
+    >
       {renderDisclosureTranscriptContent({ segments, variant: "expanded" })}
-    </details>
+    </TranscriptDisclosure>
   );
 }
 
@@ -214,7 +222,7 @@ export function renderTranscriptMessageItems({
   });
 }
 
-function formatTime(timestamp: string): string {
+export function formatTime(timestamp: string): string {
   const date = new Date(timestamp);
   return Number.isNaN(date.getTime())
     ? "Unknown"

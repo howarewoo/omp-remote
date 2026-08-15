@@ -1,8 +1,8 @@
 .todo-tool-summary {
   display: grid;
   min-width: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0.4rem 0.75rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.4rem;
   color: var(--transcript-muted);
 }
 
@@ -155,6 +155,10 @@
   gap: 0.9rem;
 }
 
+.todo-tool-disclosure .transcript-disclosure-panel > .todo-phase-list {
+  padding: 0.75rem;
+}
+
 .todo-phase {
   display: grid;
   gap: 0.45rem;
@@ -235,4 +239,14 @@
 
 .todo-state-dropped.ui-badge {
   color: var(--transcript-red);
+}
+
+@media (min-width: 34rem) {
+  .todo-phase li {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .todo-phase li > .todo-state-badge {
+    grid-column: 3;
+  }
 }

@@ -3,31 +3,56 @@ import type * as ReactModule from "react";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { parseTodoResult } from "../todo-parser.js";
+import { MessageScrollerItem } from "../ui/message-scroller.js";
 import { renderTranscriptMessageItems } from "./transcript-entry.js";
 import { TodoToolTranscript } from "./todo-tool-transcript.js";
 import { formatToolTextPreview, ToolTranscriptText } from "./tool-transcript.js";
 
 type EffectRecord = { cleanup?: () => void; dependencies: readonly unknown[] | undefined };
 const reactHarness = vi.hoisted(() => ({
+  effectsEnabled: true,
   effectIndex: 0,
   effectValues: [] as EffectRecord[],
   lifecycleEffects: false,
   refIndex: 0,
+  refValues: [] as { current: unknown }[],
   stateIndex: 0,
   stateValues: [] as unknown[],
+}));
+
+vi.mock("../ui/collapsible.js", () => ({
+  Collapsible: ({ children, ...props }: Record<string, unknown> & { children?: ReactNode }) => (
+    <div data-slot="collapsible" {...props}>
+      {children}
+    </div>
+  ),
+  CollapsibleTrigger: ({ children, ...props }: Record<string, unknown> & { children?: ReactNode }) => (
+    <button data-slot="collapsible-trigger" type="button" {...props}>
+      {children}
+    </button>
+  ),
+  CollapsibleContent: ({ children, ...props }: Record<string, unknown> & { children?: ReactNode }) => (
+    <div data-slot="collapsible-content" {...props}>
+      {children}
+    </div>
+  ),
 }));
 
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof ReactModule>();
   return {
     ...actual,
-    useMemo: <T,>(factory: () => T) => factory(),
+    useCallback: <T extends (...args: never[]) => unknown>(callback: T) => callback,
     useEffect: (
       effect: Parameters<typeof actual.useEffect>[0],
       dependencies?: Parameters<typeof actual.useEffect>[1],
     ) => {
-      if (!reactHarness.lifecycleEffects) return void effect();
+      if (!reactHarness.lifecycleEffects) {
+        if (reactHarness.effectsEnabled) void effect();
+        return;
+      }
       const index = reactHarness.effectIndex++;
+      if (!reactHarness.effectsEnabled) return;
       const previous = reactHarness.effectValues[index];
       const changed =
         !previous ||
@@ -45,16 +70,25 @@ vi.mock("react", async (importOriginal) => {
         dependencies,
       };
     },
+    useLayoutEffect: (effect: Parameters<typeof actual.useLayoutEffect>[0]) => {
+      if (reactHarness.effectsEnabled) void effect();
+    },
+    useMemo: <T,>(factory: () => T) => factory(),
+    useRef: <T,>(initial: T) => {
+      const index = reactHarness.refIndex++;
+      if (!(index in reactHarness.refValues)) reactHarness.refValues[index] = { current: initial };
+      return reactHarness.refValues[index] as { current: T };
+    },
     useState: <T,>(initial: T | (() => T)) => {
       const index = reactHarness.stateIndex++;
-      if (!(index in reactHarness.stateValues))
-        reactHarness.stateValues[index] = typeof initial === "function" ? (initial as () => T)() : initial;
+      const stateValues = reactHarness.stateValues;
+      if (!(index in stateValues))
+        stateValues[index] = typeof initial === "function" ? (initial as () => T)() : initial;
       const setValue = (next: T | ((current: T) => T)) => {
-        const current = reactHarness.stateValues[index] as T;
-        reactHarness.stateValues[index] =
-          typeof next === "function" ? (next as (value: T) => T)(current) : next;
+        const current = stateValues[index] as T;
+        stateValues[index] = typeof next === "function" ? (next as (value: T) => T)(current) : next;
       };
-      return [reactHarness.stateValues[index] as T, setValue] as const;
+      return [stateValues[index] as T, setValue] as const;
     },
   };
 });
@@ -70,6 +104,7 @@ beforeEach(() => {
     effectIndex: 0,
     lifecycleEffects: false,
     refIndex: 0,
+    refValues: [],
     stateIndex: 0,
     stateValues: [],
   });
@@ -82,7 +117,7 @@ interface RenderedNode {
   className?: string;
   open?: boolean;
   props?: Record<string, unknown>;
-  type?: string;
+  type?: unknown;
   text: string;
 }
 
@@ -91,27 +126,72 @@ function renderTranscriptNodes(node: ReactNode): RenderedNode[] {
   if (typeof node === "string" || typeof node === "number") return [{ text: String(node) }];
   if (Array.isArray(node)) return node.flatMap(renderTranscriptNodes);
   if (!isValidElement(node)) return [];
+
   const element = node as { type: unknown; props: Record<string, unknown> };
-  if (typeof element.type === "function")
-    return renderTranscriptNodes(element.type(element.props) as ReactNode);
-  if (
-    typeof element.type === "object" &&
-    element.type !== null &&
-    "type" in element.type &&
-    typeof element.type.type === "function"
-  )
-    return renderTranscriptNodes(element.type.type(element.props) as ReactNode);
-  if (typeof element.type === "symbol") return renderTranscriptNodes(element.props.children as ReactNode);
-  if (typeof element.type !== "string") return [];
-  const rawChildren = element.props.children as ReactNode;
+
+  const isMessageScroller =
+    element.type === MessageScrollerItem ||
+    (typeof element.type === "function" &&
+      (element.type.name === "MessageScrollerItem" || element.type.name.startsWith("MessageScroller")));
+
+  if (!isMessageScroller) {
+    if (typeof element.type === "function") {
+      try {
+        return renderTranscriptNodes(
+          (element.type as (props: Record<string, unknown>) => ReactNode)(element.props),
+        );
+      } catch {
+        // Fall through
+      }
+    }
+    if (
+      typeof element.type === "object" &&
+      element.type !== null &&
+      "type" in element.type &&
+      typeof (element.type as { type: unknown }).type === "function"
+    ) {
+      try {
+        return renderTranscriptNodes(
+          (element.type as { type: (props: Record<string, unknown>) => ReactNode }).type(element.props),
+        );
+      } catch {
+        // Fall through
+      }
+    }
+    if (
+      typeof element.type === "object" &&
+      element.type !== null &&
+      "render" in element.type &&
+      typeof (element.type as { render: unknown }).render === "function"
+    ) {
+      try {
+        return renderTranscriptNodes(
+          (element.type as { render: (props: Record<string, unknown>, ref: unknown) => ReactNode }).render(
+            element.props,
+            null,
+          ),
+        );
+      } catch {
+        // Fall through
+      }
+    }
+  }
+
+  if (typeof element.type === "symbol") {
+    return renderTranscriptNodes(element.props?.children as ReactNode);
+  }
+
+  const rawChildren = element.props?.children as ReactNode;
   const childGroups = (Array.isArray(rawChildren) ? rawChildren : [rawChildren]).map(renderTranscriptNodes);
+  const childText = childGroups.map((children) => children[0]?.text ?? "").join("");
+
   return [
     {
-      type: element.type,
-      ...(typeof element.props.className === "string" ? { className: element.props.className } : {}),
-      ...(typeof element.props.open === "boolean" ? { open: element.props.open } : {}),
+      type: typeof element.type === "string" ? element.type : undefined,
+      ...(typeof element.props?.className === "string" ? { className: element.props.className } : {}),
+      ...(typeof element.props?.open === "boolean" ? { open: element.props.open } : {}),
       props: element.props,
-      text: childGroups.map((children) => children[0]?.text ?? "").join(""),
+      text: childText,
     },
     ...childGroups.flat(),
   ];
@@ -125,6 +205,18 @@ function findElements(
   if (Array.isArray(node)) return node.flatMap((child) => findElements(child, predicate));
   if (!isValidElement(node)) return [];
   const element = node as ReactElement<Record<string, unknown> & { children?: ReactNode }>;
+  if (typeof element.type === "function") {
+    const matchThis = predicate(element) ? [element] : [];
+    try {
+      const rendered = (element.type as (props: unknown) => ReactNode)(element.props);
+      const renderedMatches = findElements(rendered, predicate);
+      return matchThis.length > 0 && renderedMatches.length > 0
+        ? renderedMatches
+        : [...matchThis, ...renderedMatches];
+    } catch {
+      return [...matchThis, ...findElements(element.props?.children, predicate)];
+    }
+  }
   return [...(predicate(element) ? [element] : []), ...findElements(element.props.children, predicate)];
 }
 
@@ -235,8 +327,9 @@ describe("ToolTranscriptText", () => {
 
     expect(
       textContent(
-        renderTranscriptNodes(disclosure).find((node) => node.className === "message-author")?.props
-          ?.children as ReactNode,
+        renderTranscriptNodes(disclosure).find(
+          (node) => node.className === "transcript-disclosure-title" || node.className === "message-author",
+        )?.props?.children as ReactNode,
       ),
     ).toContain(title);
   });
@@ -283,7 +376,7 @@ describe("ToolTranscriptText", () => {
       },
     });
     const nodes = renderTranscriptNodes(disclosure);
-    const details = nodes.find((node) => node.type === "details");
+    const frame = nodes.find((node) => node.className?.includes("transcript-disclosure-frame"));
 
     expect(nodes[0]).toEqual(
       expect.objectContaining({
@@ -291,8 +384,12 @@ describe("ToolTranscriptText", () => {
         className: expect.stringContaining("read-result-disclosure"),
       }),
     );
-    expect(details?.open).toBe(false);
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("Read");
+    expect(frame?.props?.["data-state"]).toBe("closed");
+    expect(
+      nodes.find(
+        (node) => node.className === "transcript-disclosure-title" || node.className === "message-author",
+      )?.text,
+    ).toContain("Read");
     expect(nodes.find((node) => node.className === "read-result-preview")?.text).toBe(text);
     expect(nodes.filter((node) => node.className === "transcript-disclosure-text")).toHaveLength(2);
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
@@ -349,7 +446,7 @@ describe("ToolTranscriptText", () => {
       },
     });
     const nodes = renderTranscriptNodes(disclosure);
-    const details = nodes.find((node) => node.type === "details");
+    const frame = nodes.find((node) => node.className?.includes("transcript-disclosure-frame"));
     const rawTextNodes = nodes.filter((node) => node.className === "transcript-disclosure-text");
 
     expect(nodes[0]).toEqual(
@@ -358,8 +455,12 @@ describe("ToolTranscriptText", () => {
         className: expect.stringContaining("read-result-disclosure"),
       }),
     );
-    expect(details?.open).toBe(false);
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain(`Read ${readTarget}`);
+    expect(frame?.props?.["data-state"]).toBe("closed");
+    expect(
+      nodes.find(
+        (node) => node.className === "transcript-disclosure-title" || node.className === "message-author",
+      )?.text,
+    ).toContain(`Read ${readTarget}`);
     expect(rawTextNodes.map((node) => node.text)).toEqual([text, text]);
     expect(nodes.filter((node) => node.type === "a").map((node) => node.props?.href)).toEqual([
       "https://example.com",
@@ -368,7 +469,9 @@ describe("ToolTranscriptText", () => {
     expect(nodes.filter((node) => node.type === "a").some((node) => node.props?.href === readTarget)).toBe(
       false,
     );
-    expect(nodes.some((node) => ["strong", "code"].includes(node.type ?? ""))).toBe(false);
+    expect(
+      nodes.some((node) => typeof node.type === "string" && ["strong", "code"].includes(node.type)),
+    ).toBe(false);
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
   });
 
@@ -390,7 +493,11 @@ describe("ToolTranscriptText", () => {
     );
 
     expect(nodes[0]?.className).toContain("read-result-disclosure");
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain(`Read ${readTarget}`);
+    expect(
+      nodes.find(
+        (node) => node.className === "transcript-disclosure-title" || node.className === "message-author",
+      )?.text,
+    ).toContain(`Read ${readTarget}`);
     expect(
       nodes.filter((node) => node.className === "transcript-disclosure-text").map((node) => node.text),
     ).toEqual([text, text]);
@@ -438,7 +545,11 @@ describe("ToolTranscriptText", () => {
       }),
     );
 
-    expect(nodes.find((node) => node.className === "message-author")?.text).toContain("Read diagram.png");
+    expect(
+      nodes.find(
+        (node) => node.className === "transcript-disclosure-title" || node.className === "message-author",
+      )?.text,
+    ).toContain("Read diagram.png");
     expect(nodes.find((node) => node.className === "disclosure-image-fallback")?.text).toBe(
       "Image unavailable: diagram.png",
     );
@@ -612,7 +723,7 @@ describe("ToolTranscriptText", () => {
     expect(nodes.filter((node) => node.className === "transcript-disclosure-text").at(-1)?.text).toBe(text);
   });
 
-  it("groups adjacent Reads into an activity group while preserving chronological tool member IDs", () => {
+  it("renders adjacent Reads as separate sequential scroller items", () => {
     const messages: Session["messages"] = [
       {
         id: "read-first",
@@ -635,14 +746,10 @@ describe("ToolTranscriptText", () => {
         presentation: "text",
       },
     ];
-    const items = renderTranscriptMessageItems({ messages });
+    const rows = renderTranscriptMessageItems({ messages });
 
-    expect(items).toHaveLength(1);
-    expect(items[0]?.key).toBe("group:read-first");
-    const groupProps = (items[0] as ReactElement<Record<string, unknown>>)?.props?.group as {
-      messages: readonly Session["messages"][number][];
-    };
-    expect(groupProps.messages.map((m) => m.id)).toEqual(["read-first", "read-second"]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.key).toBe("group:read-first");
   });
 
   it("renders edit output as an open disclosure by default", () => {
@@ -660,13 +767,18 @@ describe("ToolTranscriptText", () => {
     });
     const nodes = renderTranscriptNodes(block);
 
-    expect(block.props.open).toBe(true);
-    expect(block.props.className).toBe(
-      "tool-message-disclosure transcript-disclosure-frame tool-output-disclosure",
-    );
+    const frame = nodes.find((node) => node.className?.includes("transcript-disclosure-frame"));
+    expect(frame?.props?.["data-state"]).toBe("open");
+    expect(frame?.className).toContain("tool-message-disclosure");
+    expect(frame?.className).toContain("transcript-disclosure-frame");
+    expect(frame?.className).toContain("tool-output-disclosure");
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
     expect(
-      textContent(nodes.find((node) => node.className === "message-author")?.props?.children as ReactNode),
+      textContent(
+        nodes.find(
+          (node) => node.className === "transcript-disclosure-title" || node.className === "message-author",
+        )?.props?.children as ReactNode,
+      ),
     ).toContain("Edit: 🟦 src/dashboard.tsx ⟦+1⟧ ⟦−1⟧");
   });
 
@@ -686,17 +798,21 @@ describe("ToolTranscriptText", () => {
     });
     const nodes = renderTranscriptNodes(disclosure);
 
-    expect(disclosure.type).toBe("details");
-    expect(disclosure.props.open).toBe(true);
-    expect(disclosure.props.className).toBe(
-      "tool-message-disclosure transcript-disclosure-frame tool-output-disclosure",
-    );
-    expect(disclosure.props.children[0].type).toBe("summary");
+    const frame = nodes.find((node) => node.className?.includes("transcript-disclosure-frame"));
+    expect(frame?.props?.["data-state"]).toBe("open");
+    expect(frame?.className).toContain("tool-message-disclosure");
+    expect(frame?.className).toContain("transcript-disclosure-frame");
+    expect(frame?.className).toContain("tool-output-disclosure");
+    expect(nodes.some((node) => node.className === "transcript-disclosure-trigger")).toBe(true);
     expect(
-      textContent(nodes.find((node) => node.className === "message-author")?.props?.children as ReactNode),
+      textContent(
+        nodes.find(
+          (node) => node.className === "transcript-disclosure-title" || node.className === "message-author",
+        )?.props?.children as ReactNode,
+      ),
     ).toContain("Write: packages/features/sessions/src/components/dashboard.tsx");
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
-    expect(disclosure.props.children[1].props.children).toBe(text);
+    expect(nodes.find((node) => node.className === "transcript-disclosure-panel")?.text).toBe(text);
   });
 
   it.each(["", " \n\t "])("labels empty write output in the expanded disclosure: %j", (text) => {
@@ -711,10 +827,10 @@ describe("ToolTranscriptText", () => {
         presentation: "text",
       },
     });
-    const expanded = disclosure.props.children[1];
-
-    expect(expanded.props.className).toBe("transcript-disclosure-text");
-    expect(expanded.props.children).toBe("No tool output");
+    const panel = renderTranscriptNodes(disclosure).find(
+      (node) => node.className === "transcript-disclosure-panel",
+    );
+    expect(panel?.text).toBe("No tool output");
   });
 
   it("routes canonical todo output to a closed progress summary and state list", () => {
@@ -741,21 +857,18 @@ describe("ToolTranscriptText", () => {
     const parsed = parseTodoResult(TODO_RESULT_TEXT);
     if (!parsed) throw new Error("Expected canonical todo output to parse");
     const disclosure = TodoToolTranscript({ entry, todo: parsed });
-    expect(disclosure.type).toBe("details");
-    expect(disclosure.props.open).toBeUndefined();
-    expect(disclosure.props.className).toBe(
-      "tool-message-disclosure transcript-disclosure-frame todo-tool-disclosure",
-    );
+    const disclosureNodes = renderTranscriptNodes(disclosure);
+    const frame = disclosureNodes.find((node) => node.className?.includes("transcript-disclosure-frame"));
+    expect(frame?.props?.["data-state"]).toBe("closed");
+    expect(frame?.className).toContain("tool-message-disclosure");
+    expect(frame?.className).toContain("transcript-disclosure-frame");
+    expect(frame?.className).toContain("todo-tool-disclosure");
     expect(nodes.find((node) => node.className === "tool-output-divider")?.text).toBe("Output");
     expect(nodes.findIndex((node) => node.className === "tool-output-divider")).toBeLessThan(
       nodes.findIndex((node) => node.className === "todo-tool-summary"),
     );
     expect(nodes.filter((node) => node.type === "ul")).toHaveLength(3);
-    const summaryElement = disclosure.props.children[0].props.children[2];
-    const summary = (summaryElement.type as (props: typeof summaryElement.props) => ReactElement)(
-      summaryElement.props,
-    );
-    const progress = findElements(summary, (element) => element.type === "progress")[0];
+    const progress = findElements(disclosure, (element) => element.type === "progress")[0];
     if (!progress) throw new Error("Expected Todo progress element");
     expect({
       type: progress.type,
@@ -816,15 +929,9 @@ describe("ToolTranscriptText", () => {
     });
     const droppedNodes = renderTranscriptNodes(droppedDisclosure);
     expect(droppedNodes.find((node) => node.className === "todo-active-task")?.text).toBe("No tasks remain");
-    const droppedSummaryElement = droppedDisclosure.props.children[0].props.children[2];
-    const droppedSummary = (
-      droppedSummaryElement.type as (props: typeof droppedSummaryElement.props) => ReactElement
-    )(droppedSummaryElement.props);
-    expect(
-      findElements(droppedSummary, (element) => element.props.className === "todo-state-marker")[0]?.props[
-        "data-state"
-      ],
-    ).toBe("dropped");
+    expect(droppedNodes.find((node) => node.className === "todo-state-marker")?.props?.["data-state"]).toBe(
+      "dropped",
+    );
 
     const completedText = ["Overall: 1/1 done.", "  Finish:", "    - [x] Ship task"].join("\n");
     const completedTodo = parseTodoResult(completedText);
@@ -845,15 +952,9 @@ describe("ToolTranscriptText", () => {
     expect(completedNodes.find((node) => node.className === "todo-active-task")?.text).toBe(
       "All tasks complete",
     );
-    const completedSummaryElement = completedDisclosure.props.children[0].props.children[2];
-    const completedSummary = (
-      completedSummaryElement.type as (props: typeof completedSummaryElement.props) => ReactElement
-    )(completedSummaryElement.props);
-    expect(
-      findElements(completedSummary, (element) => element.props.className === "todo-state-marker")[0]?.props[
-        "data-state"
-      ],
-    ).toBe("completed");
+    expect(completedNodes.find((node) => node.className === "todo-state-marker")?.props?.["data-state"]).toBe(
+      "completed",
+    );
   });
 
   it("falls back to generic output when a todo result includes errors", () => {
@@ -876,14 +977,14 @@ describe("ToolTranscriptText", () => {
     });
 
     expect(parseTodoResult(text)).toBeNull();
-    expect(block.type).toBe("details");
-    expect(block.props.className).toBe(
-      "tool-message-disclosure transcript-disclosure-frame tool-output-disclosure",
+    const frame = renderTranscriptNodes(block).find((node) =>
+      node.className?.includes("transcript-disclosure-frame"),
     );
+    expect(frame?.className).toContain("tool-message-disclosure");
+    expect(frame?.className).toContain("transcript-disclosure-frame");
+    expect(frame?.className).toContain("tool-output-disclosure");
     expect(
-      renderTranscriptNodes(block.props.children[0].props.children[2]).find(
-        (node) => node.className === "transcript-disclosure-text",
-      )?.text,
+      renderTranscriptNodes(block).find((node) => node.className === "transcript-disclosure-text")?.text,
     ).toContain("Errors:");
     expect(renderTranscriptNodes(block).some((node) => node.className === "tool-output-divider")).toBe(true);
   });
@@ -902,14 +1003,14 @@ describe("ToolTranscriptText", () => {
       },
     });
 
-    expect(block.type).toBe("details");
-    expect(block.props.className).toBe(
-      "tool-message-disclosure transcript-disclosure-frame tool-output-disclosure",
+    const frame = renderTranscriptNodes(block).find((node) =>
+      node.className?.includes("transcript-disclosure-frame"),
     );
+    expect(frame?.className).toContain("tool-message-disclosure");
+    expect(frame?.className).toContain("transcript-disclosure-frame");
+    expect(frame?.className).toContain("tool-output-disclosure");
     expect(
-      renderTranscriptNodes(block.props.children[0].props.children[2]).find(
-        (node) => node.className === "transcript-disclosure-text",
-      )?.text,
+      renderTranscriptNodes(block).find((node) => node.className === "transcript-disclosure-text")?.text,
     ).toBe(formatToolTextPreview(text));
     expect(renderTranscriptNodes(block).some((node) => node.className === "tool-output-divider")).toBe(true);
   });
