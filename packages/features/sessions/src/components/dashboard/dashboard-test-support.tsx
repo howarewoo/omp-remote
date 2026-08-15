@@ -4,7 +4,28 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { beforeEach, vi } from "vitest";
 import { Dashboard, type DashboardProps } from "../dashboard.js";
 
-const reactHarness = vi.hoisted(() => ({
+interface ReactHarness {
+  callbackIndex: number;
+  callbackValues: {
+    callback: (...args: never[]) => unknown;
+    dependencies: readonly unknown[];
+  }[];
+  effectsEnabled: boolean;
+  effectIndex: number;
+  effectValues: {
+    cleanup?: () => void;
+    dependencies: readonly unknown[] | undefined;
+  }[];
+  lifecycleEffects: boolean;
+  isMobile: boolean;
+  setOpenMobile(open: boolean): void;
+  stateIndex: number;
+  refIndex: number;
+  refValues: { current: unknown }[];
+  stateValues: unknown[];
+}
+
+const reactHarness: ReactHarness = vi.hoisted(() => ({
   callbackIndex: 0,
   callbackValues: [] as {
     callback: (...args: never[]) => unknown;
@@ -18,6 +39,7 @@ const reactHarness = vi.hoisted(() => ({
   }[],
   lifecycleEffects: false,
   isMobile: false,
+  setOpenMobile: vi.fn(),
   stateIndex: 0,
   refIndex: 0,
   refValues: [] as { current: unknown }[],
@@ -33,7 +55,7 @@ const messageScrollerHarness: {
   scrollToEnd: vi.fn<(options: { behavior: "auto" }) => void>(),
 }));
 
-export function getReactHarness() {
+export function getReactHarness(): ReactHarness {
   return reactHarness;
 }
 
@@ -48,6 +70,20 @@ vi.mock("../ui/message-scroller.js", async (importOriginal) => {
     useMessageScroller: () => ({ scrollToEnd: messageScrollerHarness.scrollToEnd }),
   };
 });
+
+vi.mock("../ui/tooltip.js", () => ({
+  Tooltip: ({ children, content }: { children: ReactNode; content: ReactNode }) => (
+    <span data-slot="tooltip-wrapper" data-tooltip={typeof content === "string" ? content : undefined}>
+      {children}
+    </span>
+  ),
+  TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipRoot: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipPortal: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipPositioner: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipPopup: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
 
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof ReactModule>();
@@ -125,7 +161,7 @@ vi.mock("../ui/sidebar.js", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
     ...actual,
-    useSidebar: () => ({ isMobile: reactHarness.isMobile, setOpenMobile: vi.fn() }),
+    useSidebar: () => ({ isMobile: reactHarness.isMobile, setOpenMobile: reactHarness.setOpenMobile }),
   };
 });
 
@@ -144,6 +180,7 @@ beforeEach(() => {
   reactHarness.effectValues = [];
   reactHarness.isMobile = false;
   reactHarness.lifecycleEffects = false;
+  reactHarness.setOpenMobile = vi.fn();
   reactHarness.refIndex = 0;
   reactHarness.refValues = [];
   reactHarness.stateIndex = 0;

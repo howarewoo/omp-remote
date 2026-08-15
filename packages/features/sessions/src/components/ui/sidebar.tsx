@@ -20,9 +20,9 @@ import { cn } from "./utils.js";
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state";
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
-const SIDEBAR_WIDTH = "19rem";
-const SIDEBAR_WIDTH_MOBILE = "21rem";
-const SIDEBAR_WIDTH_ICON = "4.5rem";
+const SIDEBAR_WIDTH = "23rem";
+const SIDEBAR_WIDTH_MOBILE = "23.5rem";
+const SIDEBAR_WIDTH_ICON = "3.75rem";
 const SIDEBAR_KEYBOARD_SHORTCUT = "b";
 
 type SidebarContextValue = {

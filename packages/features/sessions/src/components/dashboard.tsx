@@ -16,8 +16,10 @@ import { SessionSidebar } from "./dashboard/session-sidebar.js";
 import { SessionTranscript, WorkingIndicator } from "./dashboard/session-transcript.js";
 import { TodoDrawer } from "./dashboard/todo-drawer.js";
 import {
+  filterSessionsByDirectory,
   getActiveAskRequest,
   getComposerAction,
+  getDirectoryRailEntries,
   getSkillSuggestions,
   groupSessionsForSidebar,
 } from "./dashboard-actions.js";
@@ -128,9 +130,10 @@ function DashboardContent({
   const [killOpen, setKillOpen] = useState(false);
   const [todoOpenSessionId, setTodoOpenSessionId] = useState<string | null>(null);
   const [costDrawerOpen, setCostDrawerOpen] = useState(false);
+  const [selectedDirectory, setSelectedDirectory] = useState<string | null>(null);
+  const [transcriptLoadingId, setTranscriptLoadingId] = useState<string | null>(null);
   const [historyQuery, setHistoryQuery] = useState("");
   const [activeHistoryQuery, setActiveHistoryQuery] = useState("");
-  const [transcriptLoadingId, setTranscriptLoadingId] = useState<string | null>(null);
   const loadedTranscriptIdRef = useRef<string | null>(null);
   const transcriptScrollToEndRef = useRef<(() => void) | null>(null);
   const registerTranscriptScrollToEnd = useCallback((handler: (() => void) | null) => {
@@ -158,13 +161,41 @@ function DashboardContent({
   const { isMobile, setOpenMobile } = useSidebar();
 
   const mainSessions = useMemo(() => filterMainSessions(sessions), [sessions]);
-  const sessionSections = useMemo(() => groupSessionsForSidebar(mainSessions), [mainSessions]);
+  const directoryEntries = useMemo(() => getDirectoryRailEntries(mainSessions), [mainSessions]);
+
+  const selectedDirectoryHasLiveSessions =
+    selectedDirectory !== null &&
+    mainSessions.some((session) => session.connected && session.cwd === selectedDirectory);
+
+  useEffect(() => {
+    if (selectedDirectory !== null && !selectedDirectoryHasLiveSessions) {
+      setSelectedDirectory(null);
+    }
+  }, [selectedDirectory, selectedDirectoryHasLiveSessions]);
+
+  const activeDirectory = selectedDirectoryHasLiveSessions ? selectedDirectory : null;
+  const visibleSessions = useMemo(
+    () => filterSessionsByDirectory(mainSessions, activeDirectory),
+    [mainSessions, activeDirectory],
+  );
+  const selectedMainSession = useMemo(
+    () => mainSessions.find((session) => session.id === selectedSessionId) ?? null,
+    [mainSessions, selectedSessionId],
+  );
+
+  useEffect(() => {
+    if (
+      activeDirectory !== null &&
+      selectedMainSession !== null &&
+      selectedMainSession.cwd !== activeDirectory
+    ) {
+      setSelectedDirectory(null);
+    }
+  }, [activeDirectory, selectedMainSession]);
+  const sessionSections = useMemo(() => groupSessionsForSidebar(visibleSessions), [visibleSessions]);
   const selectedSession = useMemo(
-    () =>
-      mainSessions.find((session) => session.id === selectedSessionId) ??
-      sessionSections[0]?.sessions[0] ??
-      null,
-    [mainSessions, selectedSessionId, sessionSections],
+    () => selectedMainSession ?? sessionSections[0]?.sessions[0] ?? null,
+    [selectedMainSession, sessionSections],
   );
   const canViewSelectedSessionBranches =
     selectedSession !== null &&
@@ -566,6 +597,7 @@ function DashboardContent({
     setLaunchError(null);
     try {
       const sessionId = await onLaunch(cwd, resume || null);
+      setSelectedDirectory(null);
       onSelectedSessionChange(sessionId);
       setLaunchOpen(false);
       setLaunchCwd("");
@@ -671,6 +703,20 @@ function DashboardContent({
     }
   };
 
+  const handleSelectDirectory = useCallback(
+    (cwd: string | null) => {
+      setSelectedDirectory(cwd);
+      const filtered = filterSessionsByDirectory(mainSessions, cwd);
+      const grouped = groupSessionsForSidebar(filtered);
+      const firstSession = grouped[0]?.sessions[0] ?? null;
+      if (firstSession && firstSession.id !== selectedSessionId) {
+        onSelectedSessionChange(firstSession.id);
+        setViewedSubagent(null);
+      }
+    },
+    [mainSessions, onSelectedSessionChange, selectedSessionId],
+  );
+
   const selectBranch = async (branch: string) => {
     if (
       !selectedSession ||
@@ -707,7 +753,10 @@ function DashboardContent({
     <div className="app-shell">
       {SessionSidebar({
         mainSessions,
+        visibleSessions,
         sessionSections,
+        directoryEntries,
+        selectedDirectory: activeDirectory,
         selectedSessionId: selectedSession?.id ?? null,
         askingSessionIds,
         historyLoading,
@@ -715,6 +764,7 @@ function DashboardContent({
         historyQuery,
         activeHistoryQuery,
         connection,
+        onSelectDirectory: handleSelectDirectory,
         onHistoryQueryChange: setHistoryQuery,
         onSubmitHistorySearch: submitHistorySearch,
         onClearHistorySearch: () => {

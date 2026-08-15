@@ -1,10 +1,16 @@
 export { AskToolCall, type AskToolCallProps } from "./ask/ask-tool-call.js";
+export { DirectoryRail, type DirectoryRailProps } from "./dashboard/directory-rail.js";
 export { WorkingIndicator } from "./dashboard/session-transcript.js";
 export {
   canKillSession,
+  type DirectoryRailEntry,
+  filterSessionsByDirectory,
   formatSubagentActivityLabel,
   getActiveAskRequest,
   getComposerAction,
+  getDirectoryBasename,
+  getDirectoryInitials,
+  getDirectoryRailEntries,
   getSkillSuggestions,
   groupSessionsForSidebar,
 } from "./dashboard-actions.js";
@@ -30,16 +36,16 @@ export { parseInlineTranscript } from "./transcript/inline-markup.js";
 export { findLatestTodoResult, TodoToolTranscript } from "./transcript/todo-tool-transcript.js";
 export { formatToolTextPreview, ToolTranscriptText } from "./transcript/tool-transcript.js";
 export {
+  type DisclosureCategory,
+  DisclosureCategoryIcon,
+  DisclosureChevronIcon,
+  type DisclosureLifecycle,
+  TranscriptDisclosure,
+  type TranscriptDisclosureProps,
+} from "./transcript/transcript-disclosure.js";
+export {
   MessageScrollerScrollController,
   renderTranscriptMessageItems,
   SystemTranscriptText,
   TranscriptEntry,
 } from "./transcript/transcript-entry.js";
-export {
-  DisclosureCategoryIcon,
-  DisclosureChevronIcon,
-  TranscriptDisclosure,
-  type DisclosureCategory,
-  type DisclosureLifecycle,
-  type TranscriptDisclosureProps,
-} from "./transcript/transcript-disclosure.js";

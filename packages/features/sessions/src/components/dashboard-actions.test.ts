@@ -2,9 +2,13 @@ import type { AskRequest, Session } from "@omp-remote/protocol";
 import { describe, expect, it } from "vitest";
 import {
   canKillSession,
+  filterSessionsByDirectory,
   formatSubagentActivityLabel,
   getActiveAskRequest,
   getComposerAction,
+  getDirectoryBasename,
+  getDirectoryInitials,
+  getDirectoryRailEntries,
   getSkillSuggestions,
   groupSessionsForSidebar,
 } from "./dashboard-actions.js";
@@ -172,5 +176,158 @@ describe("getActiveAskRequest", () => {
     expect(getActiveAskRequest(requests, "missing-session")).toBeNull();
     expect(getActiveAskRequest(requests, null)).toBeNull();
     expect(getActiveAskRequest([], "session-1")).toBeNull();
+  });
+});
+
+describe("getDirectoryBasename", () => {
+  it.each([
+    ["/work/omp-remote", "omp-remote"],
+    ["/work/project/nested-module", "nested-module"],
+    ["C:\\Users\\dev\\project", "project"],
+    ["/", "/"],
+    ["", "root"],
+  ])("extracts basename from %s as %s", (cwd, expected) => {
+    expect(getDirectoryBasename(cwd)).toBe(expected);
+  });
+});
+
+describe("getDirectoryInitials", () => {
+  it.each([
+    ["/work/omp-remote", "OR"],
+    ["/work/api_service", "AS"],
+    ["/work/web.dashboard", "WD"],
+    ["/work/frontend", "FR"],
+    ["/work/a", "A"],
+    ["/work/123-tool", "1T"],
+  ])("derives compact initials from %s as %s", (cwd, expected) => {
+    expect(getDirectoryInitials(cwd)).toBe(expected);
+  });
+
+  it("allows duplicate basenames with different paths to share initials", () => {
+    expect(getDirectoryInitials("/team-a/backend")).toBe("BA");
+    expect(getDirectoryInitials("/team-b/backend")).toBe("BA");
+  });
+});
+
+describe("getDirectoryRailEntries", () => {
+  it("places All first with the total live-session count", () => {
+    const sessions: Session[] = [
+      { ...BASE_SESSION, id: "s1", cwd: "/work/repo-a", lastActivity: "2026-07-28T10:00:00.000Z" },
+      { ...BASE_SESSION, id: "s2", cwd: "/work/repo-b", lastActivity: "2026-07-28T12:00:00.000Z" },
+      { ...BASE_SESSION, id: "s3", cwd: "/work/repo-a", lastActivity: "2026-07-28T14:00:00.000Z" },
+    ];
+
+    const entries = getDirectoryRailEntries(sessions);
+    expect(entries[0]).toEqual({
+      id: "all",
+      cwd: null,
+      name: "All",
+      initials: "All",
+      count: 3,
+      label: "All sessions, 3 live sessions",
+      tooltip: "All sessions (3 live sessions)",
+    });
+  });
+
+  it("groups by exact cwd and keeps path ordering stable when activity changes", () => {
+    const sessions: Session[] = [
+      { ...BASE_SESSION, id: "s1", cwd: "/work/alpha", lastActivity: "2026-07-28T10:00:00.000Z" },
+      { ...BASE_SESSION, id: "s2", cwd: "/work/beta", lastActivity: "2026-07-28T15:00:00.000Z" },
+      { ...BASE_SESSION, id: "s3", cwd: "/work/gamma", lastActivity: "2026-07-28T12:00:00.000Z" },
+      { ...BASE_SESSION, id: "s4", cwd: "/work/alpha", lastActivity: "2026-07-28T16:00:00.000Z" },
+    ];
+
+    const entries = getDirectoryRailEntries(sessions);
+    expect(entries.map((entry) => entry.cwd)).toEqual([null, "/work/alpha", "/work/beta", "/work/gamma"]);
+    expect(entries[1]?.count).toBe(2);
+    expect(entries[1]?.label).toBe("/work/alpha, 2 live sessions");
+    expect(entries[1]?.tooltip).toBe("/work/alpha (2 live sessions)");
+
+    const reorderedActivity = sessions.map((session, index) => ({
+      ...session,
+      lastActivity: `2026-07-29T0${index}:00:00.000Z`,
+    }));
+    expect(getDirectoryRailEntries(reorderedActivity).map((entry) => entry.cwd)).toEqual([
+      null,
+      "/work/alpha",
+      "/work/beta",
+      "/work/gamma",
+    ]);
+  });
+
+  it("keeps the All entry key distinct from a relative cwd named all", () => {
+    const entries = getDirectoryRailEntries([{ ...BASE_SESSION, cwd: "all" }]);
+
+    expect(entries.map((entry) => entry.id)).toEqual(["all", "directory:all"]);
+  });
+
+  it("breaks ties deterministically by exact cwd path comparison", () => {
+    const sessions: Session[] = [
+      { ...BASE_SESSION, id: "s1", cwd: "/work/zoo", lastActivity: "2026-07-28T12:00:00.000Z" },
+      { ...BASE_SESSION, id: "s2", cwd: "/work/apple", lastActivity: "2026-07-28T12:00:00.000Z" },
+    ];
+
+    const entries = getDirectoryRailEntries(sessions);
+    expect(entries.map((entry) => entry.cwd)).toEqual([null, "/work/apple", "/work/zoo"]);
+  });
+
+  it("preserves exact cwd identity for duplicate basenames in different directories", () => {
+    const sessions: Session[] = [
+      { ...BASE_SESSION, id: "s1", cwd: "/frontend/app", lastActivity: "2026-07-28T10:00:00.000Z" },
+      { ...BASE_SESSION, id: "s2", cwd: "/backend/app", lastActivity: "2026-07-28T12:00:00.000Z" },
+    ];
+
+    const entries = getDirectoryRailEntries(sessions);
+    expect(entries.map((entry) => ({ cwd: entry.cwd, name: entry.name, initials: entry.initials }))).toEqual([
+      { cwd: null, name: "All", initials: "All" },
+      { cwd: "/backend/app", name: "app", initials: "AP" },
+      { cwd: "/frontend/app", name: "app", initials: "AP" },
+    ]);
+  });
+
+  it("counts only connected sessions and omits disconnected-only directories", () => {
+    const sessions: Session[] = [
+      { ...BASE_SESSION, id: "live-alpha", cwd: "/work/alpha", lastActivity: "2026-07-28T10:00:00.000Z" },
+      {
+        ...BASE_SESSION,
+        id: "disconnected-alpha",
+        cwd: "/work/alpha",
+        connected: false,
+        status: "history",
+        lastActivity: "2026-07-28T15:00:00.000Z",
+      },
+      {
+        ...BASE_SESSION,
+        id: "disconnected-history",
+        cwd: "/work/history-only",
+        connected: false,
+        status: "history",
+        lastActivity: "2026-07-28T16:00:00.000Z",
+      },
+    ];
+
+    const entries = getDirectoryRailEntries(sessions);
+
+    expect(entries.map((entry) => entry.cwd)).toEqual([null, "/work/alpha"]);
+    expect(entries.map((entry) => entry.count)).toEqual([1, 1]);
+    expect(entries[1]?.tooltip).toBe("/work/alpha (1 live session)");
+  });
+});
+
+describe("filterSessionsByDirectory", () => {
+  const sessions: Session[] = [
+    { ...BASE_SESSION, id: "s1", cwd: "/work/alpha" },
+    { ...BASE_SESSION, id: "s2", cwd: "/work/beta" },
+    { ...BASE_SESSION, id: "s3", cwd: "/work/alpha" },
+  ];
+
+  it("returns all main sessions when no directory is selected", () => {
+    expect(filterSessionsByDirectory(sessions, null)).toEqual(sessions);
+  });
+
+  it("filters sessions by exact cwd matching", () => {
+    expect(filterSessionsByDirectory(sessions, "/work/alpha")).toEqual([sessions[0], sessions[2]]);
+    expect(filterSessionsByDirectory(sessions, "/work/beta")).toEqual([sessions[1]]);
+    expect(filterSessionsByDirectory(sessions, "/work/missing")).toEqual([]);
   });
 });
