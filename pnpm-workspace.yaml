@@ -14,7 +14,7 @@ catalog:
   '@biomejs/biome': 2.5.6
   '@fastify/static': 10.1.2
   '@fastify/websocket': 11.3.0
-  '@oh-my-pi/pi-coding-agent': 17.1.8
+  '@oh-my-pi/pi-coding-agent': 17.3.4
   '@shadcn/react': 0.3.0
   '@types/ws': 8.18.1
   '@types/node': 24.13.3
@@ -46,20 +46,20 @@ minimumReleaseAgeExclude:
   - '@biomejs/cli-linux-x64@2.5.6'
   - '@biomejs/cli-win32-arm64@2.5.6'
   - '@biomejs/cli-win32-x64@2.5.6'
-  - '@oh-my-pi/hashline@17.1.8'
-  - '@oh-my-pi/omp-stats@17.1.8'
-  - '@oh-my-pi/pi-agent-core@17.1.8'
-  - '@oh-my-pi/pi-ai@17.1.8'
-  - '@oh-my-pi/pi-catalog@17.1.8'
-  - '@oh-my-pi/pi-coding-agent@17.1.8'
-  - '@oh-my-pi/pi-mnemopi@17.1.8'
-  - '@oh-my-pi/pi-natives-darwin-arm64@17.1.8'
-  - '@oh-my-pi/pi-natives-darwin-x64@17.1.8'
-  - '@oh-my-pi/pi-natives-linux-arm64@17.1.8'
-  - '@oh-my-pi/pi-natives-linux-x64@17.1.8'
-  - '@oh-my-pi/pi-natives-win32-x64@17.1.8'
-  - '@oh-my-pi/pi-natives@17.1.8'
-  - '@oh-my-pi/pi-tui@17.1.8'
-  - '@oh-my-pi/pi-utils@17.1.8'
-  - '@oh-my-pi/pi-wire@17.1.8'
-  - '@oh-my-pi/snapcompact@17.1.8'
+  - '@oh-my-pi/hashline@17.3.4'
+  - '@oh-my-pi/omp-stats@17.3.4'
+  - '@oh-my-pi/pi-agent-core@17.3.4'
+  - '@oh-my-pi/pi-ai@17.3.4'
+  - '@oh-my-pi/pi-catalog@17.3.4'
+  - '@oh-my-pi/pi-coding-agent@17.3.4'
+  - '@oh-my-pi/pi-mnemopi@17.3.4'
+  - '@oh-my-pi/pi-natives-darwin-arm64@17.3.4'
+  - '@oh-my-pi/pi-natives-darwin-x64@17.3.4'
+  - '@oh-my-pi/pi-natives-linux-arm64@17.3.4'
+  - '@oh-my-pi/pi-natives-linux-x64@17.3.4'
+  - '@oh-my-pi/pi-natives-win32-x64@17.3.4'
+  - '@oh-my-pi/pi-natives@17.3.4'
+  - '@oh-my-pi/pi-tui@17.3.4'
+  - '@oh-my-pi/pi-utils@17.3.4'
+  - '@oh-my-pi/pi-wire@17.3.4'
+  - '@oh-my-pi/snapcompact@17.3.4'
