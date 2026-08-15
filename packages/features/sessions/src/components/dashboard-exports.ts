@@ -49,3 +49,13 @@ export {
   SystemTranscriptText,
   TranscriptEntry,
 } from "./transcript/transcript-entry.js";
+export {
+  type ThemeContextValue,
+  ThemeProvider,
+  type ThemeProviderProps,
+  ThemeSelector,
+  type ThemeSelectorProps,
+  ThemeToggle,
+  type ThemeToggleProps,
+  useTheme,
+} from "./ui/theme-provider.js";

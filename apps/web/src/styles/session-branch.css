@@ -123,7 +123,7 @@
 }
 
 .session-branch-option:hover:not([data-disabled]) {
-  background: oklch(100% 0 0 / 0.045);
+  background: var(--hover-background);
 }
 
 .session-branch-option:focus-visible {

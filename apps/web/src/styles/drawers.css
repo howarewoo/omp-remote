@@ -3,7 +3,7 @@
   inset: 0;
   z-index: 50;
   min-height: 100dvh;
-  background: oklch(8% 0.015 295 / 0.56);
+  background: var(--overlay-background);
   opacity: max(var(--drawer-overlay-min-opacity, 0), calc(1 - var(--drawer-swipe-progress, 0)));
   transition: opacity 450ms cubic-bezier(0.32, 0.72, 0, 1);
   user-select: none;
@@ -447,7 +447,7 @@
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) * 1.5);
   color: var(--foreground);
-  background: oklch(100% 0 0 / 0.025);
+  background: var(--input-background);
   text-align: left;
 }
 
@@ -479,7 +479,7 @@
   padding: 0.3rem 0.45rem;
   border-radius: var(--radius);
   color: var(--accent);
-  background: oklch(70% 0.24 340 / 0.1);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   font-family: var(--font-mono);
   font-size: 0.625rem;
   font-weight: 650;
@@ -578,13 +578,13 @@
 }
 
 .model-option.selected {
-  background: oklch(100% 0 0 / 0.055);
+  background: var(--selected-background);
 }
 
 .model-option.selected .selection-indicator {
   border-color: var(--primary);
   background: var(--primary);
-  box-shadow: 0 2px 8px oklch(70% 0.24 340 / 0.25);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--primary) 30%, transparent);
 }
 
 .effort-options {
@@ -600,7 +600,7 @@
 .effort-option.selected {
   border-color: var(--primary);
   color: var(--foreground);
-  background: oklch(70% 0.24 340 / 0.12);
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
 }
 
 .model-settings-empty {
@@ -614,7 +614,7 @@
 .model-settings-unavailable {
   border: 1px solid var(--border);
   border-radius: calc(var(--radius) * 1.5);
-  background: oklch(100% 0 0 / 0.03);
+  background: var(--input-background);
 }
 
 .model-settings-error {

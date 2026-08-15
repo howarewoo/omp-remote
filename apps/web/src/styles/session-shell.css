@@ -7,7 +7,7 @@
   gap: 1rem;
   padding: calc(0.6rem + var(--safe-area-top)) clamp(0.75rem, 2vw, 1.5rem) 0.6rem;
   border-bottom: 1px solid var(--border);
-  background: oklch(13.5% 0.018 295 / 0.92);
+  background: var(--header-background);
 }
 
 .session-header-primary {
@@ -403,7 +403,7 @@
 }
 
 .subagent-list button:hover {
-  background: oklch(100% 0 0 / 0.045);
+  background: var(--hover-background);
 }
 
 .subagent-list span {

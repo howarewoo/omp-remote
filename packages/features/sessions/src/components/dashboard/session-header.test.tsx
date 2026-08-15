@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SidebarHeader, SidebarTrigger } from "../ui/sidebar.js";
+import { ThemeToggle } from "../ui/theme-provider.js";
 import {
   BASE_SESSION,
   composerDashboardProps,
@@ -17,6 +18,13 @@ describe("dashboard session header", () => {
 
     expect(textContent(root)).toBe("…/GitHub/omp-remote");
     expect(root?.props.title).toBe(cwd);
+  });
+
+  it("renders the theme toggle button in session header actions", () => {
+    const output = renderControlledDashboard(composerDashboardProps(BASE_SESSION));
+    const themeToggle = findElements(output, (element) => element.type === ThemeToggle)[0];
+
+    expect(themeToggle).toBeDefined();
   });
 });
 

@@ -4,6 +4,7 @@ import { canKillSession } from "../dashboard-actions.js";
 import { Badge } from "../ui/badge.js";
 import { Button } from "../ui/button.js";
 import { SidebarTrigger } from "../ui/sidebar.js";
+import { ThemeToggle } from "../ui/theme-provider.js";
 import { cn } from "../ui/utils.js";
 import { compactPath } from "./session-path.js";
 
@@ -13,11 +14,14 @@ type DashboardIconName =
   | "bell"
   | "close"
   | "down"
+  | "laptop"
+  | "moon"
   | "plus"
   | "power"
   | "search"
   | "send"
   | "stop"
+  | "sun"
   | "trash"
   | "up";
 
@@ -73,6 +77,7 @@ export function SessionHeader({
         )}
       </div>
       <div className="session-header-actions">
+        <ThemeToggle />
         <Button
           className="notification-button"
           type="button"
@@ -104,6 +109,13 @@ export function DashboardIcon({ name }: { name: DashboardIconName }) {
     ),
     close: <path d="m6 6 12 12M18 6 6 18" />,
     down: <path d="m6 9 6 6 6-6" />,
+    laptop: (
+      <>
+        <rect x="3" y="4" width="18" height="12" rx="2" />
+        <path d="M2 20h20" />
+      </>
+    ),
+    moon: <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />,
     plus: <path d="M12 5v14M5 12h14" />,
     power: (
       <>
@@ -114,6 +126,12 @@ export function DashboardIcon({ name }: { name: DashboardIconName }) {
     search: <path d="m21 21-4.4-4.4m2.4-5.1a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z" />,
     send: <path d="m4 4 17 8-17 8 3-8-3-8Zm3 8h14" />,
     stop: <rect x="7" y="7" width="10" height="10" rx="1" />,
+    sun: (
+      <>
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+      </>
+    ),
     trash: (
       <>
         <path d="M4 7h16" />
