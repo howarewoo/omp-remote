@@ -175,7 +175,10 @@
     padding: 0 0.625rem 0.625rem 2rem;
   }
 
-  .transcript-disclosure-content[data-variant="expanded"],
+  .transcript-disclosure-panel:has(> .transcript-disclosure-content[data-variant="expanded"]) {
+    padding: 0 0.625rem 0.625rem 2rem;
+  }
+
   .todo-tool-disclosure .transcript-disclosure-panel > .todo-phase-list {
     padding: 0.625rem 0.625rem 0.625rem 2rem;
   }
@@ -296,7 +299,7 @@
 
   .transcript-disclosure-preview,
   .transcript-disclosure-panel > .transcript-disclosure-text,
-  .transcript-disclosure-content[data-variant="expanded"],
+  .transcript-disclosure-panel:has(> .transcript-disclosure-content[data-variant="expanded"]),
   .todo-tool-disclosure .transcript-disclosure-panel > .todo-phase-list,
   .read-result-resolved-path {
     padding-inline-start: 1.875rem;

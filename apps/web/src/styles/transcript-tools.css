@@ -316,8 +316,8 @@
   gap: 0.35rem;
 }
 
-.transcript-disclosure-content[data-variant="expanded"] {
-  padding: 0.75rem 0.75rem 0.75rem 2.25rem;
+.transcript-disclosure-panel:has(> .transcript-disclosure-content[data-variant="expanded"]) {
+  padding: 0 0.75rem 0.75rem 2.25rem;
 }
 
 .system-message-disclosure
