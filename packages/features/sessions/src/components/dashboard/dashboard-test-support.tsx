@@ -223,6 +223,7 @@ export type ControlledDashboardProps = DashboardProps & {
 
 export const DASHBOARD_DEFAULTS: DashboardProps = {
   sessions: [],
+  queuedMessages: [],
   askRequests: [] as AskRequest[],
   savedWorkingDirectories: [] as string[],
   sessionsReady: false,
@@ -240,6 +241,7 @@ export const DASHBOARD_DEFAULTS: DashboardProps = {
   onSaveWorkingDirectory: vi.fn().mockResolvedValue(undefined),
   onRemoveWorkingDirectory: vi.fn().mockResolvedValue(undefined),
   onCommand: vi.fn().mockResolvedValue(undefined),
+  onCancelQueuedMessage: vi.fn(),
   onAbort: vi.fn().mockResolvedValue(undefined),
   onKill: vi.fn().mockResolvedValue(undefined),
   onSetModel: vi.fn().mockResolvedValue(undefined),

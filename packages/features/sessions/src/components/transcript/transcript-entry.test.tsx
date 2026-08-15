@@ -253,6 +253,7 @@ type ControlledDashboardProps = DashboardProps & {
 };
 
 const DASHBOARD_DEFAULTS = {
+  queuedMessages: [],
   askRequests: [] as AskRequest[],
   savedWorkingDirectories: [] as string[],
   onEnableNotifications: vi.fn().mockResolvedValue(undefined),
@@ -260,6 +261,7 @@ const DASHBOARD_DEFAULTS = {
   onSaveWorkingDirectory: vi.fn().mockResolvedValue(undefined),
   onRemoveWorkingDirectory: vi.fn().mockResolvedValue(undefined),
   onCommand: vi.fn().mockResolvedValue(undefined),
+  onCancelQueuedMessage: vi.fn(),
   onAbort: vi.fn().mockResolvedValue(undefined),
   onKill: vi.fn().mockResolvedValue(undefined),
   onSetModel: vi.fn().mockResolvedValue(undefined),

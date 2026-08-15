@@ -11,9 +11,18 @@ import type { NotificationState } from "./dashboard/session-header.js";
 type ComposerMode = "prompt" | "steer" | "follow_up";
 type NotificationEventKey = "inputRequired" | "sessionIdle";
 type NotificationEventPreferences = Record<NotificationEventKey, boolean>;
+export interface QueuedMessage {
+  id: string;
+  sessionId: string;
+  text: string;
+  createdAt: string;
+  status: "queued" | "failed";
+  error?: string;
+}
 
 export interface DashboardProps {
   sessions: Session[];
+  queuedMessages: readonly QueuedMessage[];
   askRequests: AskRequest[];
   savedWorkingDirectories: string[];
   sessionsReady: boolean;
@@ -31,6 +40,7 @@ export interface DashboardProps {
   onSaveWorkingDirectory(cwd: string): Promise<void>;
   onRemoveWorkingDirectory(cwd: string): Promise<void>;
   onCommand(sessionId: string, command: ComposerMode, text: string): Promise<void>;
+  onCancelQueuedMessage(messageId: string): void;
   onAbort(sessionId: string): Promise<void>;
   onKill(sessionId: string): Promise<void>;
   onSetModel(sessionId: string, model: string): Promise<void>;

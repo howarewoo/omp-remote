@@ -51,6 +51,7 @@ export function Dashboard(props: DashboardProps) {
 function DashboardContent({
   sessionsReady,
   sessions,
+  queuedMessages,
   askRequests,
   savedWorkingDirectories,
   historyLoading,
@@ -67,6 +68,7 @@ function DashboardContent({
   onSaveWorkingDirectory,
   onRemoveWorkingDirectory,
   onCommand,
+  onCancelQueuedMessage,
   onAbort,
   onKill,
   onSetModel,
@@ -537,7 +539,11 @@ function DashboardContent({
     setCommandState("sending");
     setCommandError(null);
     try {
-      await onCommand(selectedSession.id, "steer", message.trim());
+      await onCommand(
+        selectedSession.id,
+        selectedSession.status === "running" ? "follow_up" : "prompt",
+        message.trim(),
+      );
       transcriptScrollToEndRef.current?.();
       setMessage("");
     } catch (commandFailure) {
@@ -752,12 +758,14 @@ function DashboardContent({
           >
             {SessionTranscript({
               session: selectedSession,
+              queuedMessages: queuedMessages.filter((message) => message.sessionId === selectedSession.id),
               transcriptLoading: transcriptLoadingId === selectedSession.id,
               activeAskRequest,
               connection,
               onRespondToAsk: (request, response) =>
                 onRespondToAsk(request.sessionId, request.requestId, response),
               onAskActivity: (request) => onAskActivity(request.sessionId, request.requestId),
+              onCancelQueuedMessage,
               onViewSubagent: setViewedSubagent,
               onRegisterScrollToEnd: registerTranscriptScrollToEnd,
             })}

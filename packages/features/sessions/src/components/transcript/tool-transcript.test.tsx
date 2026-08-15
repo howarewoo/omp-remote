@@ -835,6 +835,32 @@ describe("ToolTranscriptText", () => {
     expect(nodes.some((node) => node.className === "transcript-disclosure-panel")).toBe(false);
   });
 
+  it("collapses completed long Write output with a populated preview", () => {
+    const text = Array.from({ length: 14 }, (_, index) => `write line ${index + 1}`).join("\n");
+    const disclosure = ToolTranscriptText({
+      entry: {
+        id: "write-long",
+        role: "tool",
+        toolName: "write",
+        toolTitle: "Write: packages/features/sessions/src/components/dashboard.tsx",
+        text,
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    });
+    const nodes = renderTranscriptNodes(disclosure);
+    const frame = nodes.find((node) => node.className?.includes("transcript-disclosure-frame"));
+    const output = nodes.find((node) => node.className === "tool-output-divider");
+    const preview = nodes.find((node) => node.className === "transcript-disclosure-text");
+
+    expect(frame?.props?.["data-state"]).toBe("closed");
+    expect(output?.text).toBe("Output");
+    expect(preview?.text).toContain("write line 5");
+    expect(preview?.text).toContain("write line 14");
+    expect(preview?.text).not.toContain("write line 4");
+  });
+
   it.each(["", " \n\t "])("labels empty write output without disclosure controls: %j", (text) => {
     const disclosure = ToolTranscriptText({
       entry: {
@@ -1034,6 +1060,14 @@ describe("ToolTranscriptText", () => {
       renderTranscriptNodes(block).find((node) => node.className === "transcript-disclosure-text")?.text,
     ).toBe(formatToolTextPreview(text));
     expect(renderTranscriptNodes(block).some((node) => node.className === "tool-output-divider")).toBe(true);
+  });
+
+  it("bounds a long single-line preview without leaving it empty", () => {
+    const preview = formatToolTextPreview(`${"x".repeat(1_400)}tail`);
+
+    expect(preview).toHaveLength(1_200);
+    expect(preview.startsWith("…")).toBe(true);
+    expect(preview.endsWith("tail")).toBe(true);
   });
 
   it("labels an empty tool result", () => {

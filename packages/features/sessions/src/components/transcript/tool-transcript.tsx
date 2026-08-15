@@ -18,6 +18,7 @@ import {
   TranscriptEntryContent,
 } from "./transcript-entry.js";
 const TOOL_TEXT_PREVIEW_LINES = 10;
+const TOOL_TEXT_PREVIEW_CHARS = 1_200;
 function formatToolTextFull(text: string): string {
   if (!/\S/.test(text)) return "No tool output";
   return text;
@@ -43,6 +44,9 @@ export function formatToolTextPreview(text: string): string {
   if (start > 0) start += 1;
 
   const preview = text.slice(start, end);
+  if (preview.length > TOOL_TEXT_PREVIEW_CHARS) {
+    return `…${preview.slice(-(TOOL_TEXT_PREVIEW_CHARS - 1))}`;
+  }
   return formatToolTextFull(preview);
 }
 
@@ -280,6 +284,7 @@ export function ToolTranscriptText({ entry }: { entry: TranscriptEntryMessage })
   const expandable =
     entry.streaming === true ||
     hasDisclosureImages ||
+    entry.text.length > TOOL_TEXT_PREVIEW_CHARS ||
     countDisplayedLines(entry.text) > TOOL_TEXT_PREVIEW_LINES;
 
   return (
@@ -288,14 +293,15 @@ export function ToolTranscriptText({ entry }: { entry: TranscriptEntryMessage })
       category={(entry.toolName as DisclosureCategory) ?? "tool"}
       className={className}
       expandable={expandable}
-      defaultOpen={entry.toolName === "edit" || isWrite || entry.streaming === true}
+      defaultOpen={entry.toolName === "edit" || entry.streaming === true}
       lifecycle={entry.streaming ? "running" : undefined}
       preview={
         <>
           <ToolOutputDivider />
           {isWrite ? (
-            expandable ? null : (
-              renderDisclosureTranscriptText(formatToolTextFull(entry.text), false)
+            renderDisclosureTranscriptText(
+              expandable ? formatToolTextPreview(entry.text) : formatToolTextFull(entry.text),
+              false,
             )
           ) : entry.presentation === "diff" ? (
             expandable ? (

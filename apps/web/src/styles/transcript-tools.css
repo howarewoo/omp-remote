@@ -15,7 +15,7 @@
   min-width: 0;
   max-width: 100%;
   overflow: clip;
-  border-block: 1px solid var(--transcript-separator);
+  border-block-start: 1px solid var(--transcript-separator);
   border-inline: 0;
   border-radius: 0;
   background: transparent;
@@ -54,6 +54,13 @@
   grid-template-columns: 1rem minmax(0, 1fr) auto auto 0.75rem;
   align-items: center;
   gap: 0.5rem;
+}
+
+.transcript-disclosure-title > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .transcript-disclosure-header[data-expandable="false"] {
@@ -115,8 +122,21 @@
   font-weight: 600;
   letter-spacing: 0.01em;
   line-height: 1.45;
-  overflow-wrap: anywhere;
-  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcript-tool-name {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.transcript-tool-title-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .transcript-disclosure-time,
@@ -192,6 +212,10 @@
 }
 
 .transcript-disclosure-frame[data-open] > .transcript-disclosure-preview {
+  padding-bottom: 0.375rem;
+}
+
+.transcript-disclosure-frame[data-open] > .transcript-disclosure-preview > :not(.tool-output-divider) {
   display: none;
 }
 
@@ -200,7 +224,7 @@
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  border-top: 1px solid var(--transcript-separator);
+  border-top: 0;
 }
 
 .transcript-disclosure-announcement {
@@ -215,7 +239,7 @@
 }
 
 .transcript-disclosure-frame[data-lifecycle="running"] {
-  border-block-color: color-mix(in srgb, var(--transcript-blue) 50%, var(--transcript-separator));
+  border-block-start-color: color-mix(in srgb, var(--transcript-blue) 50%, var(--transcript-separator));
 }
 
 .transcript-disclosure-frame[data-lifecycle="running"] .transcript-disclosure-status {
@@ -223,7 +247,7 @@
 }
 
 .transcript-disclosure-frame[data-lifecycle="error"] {
-  border-block-color: color-mix(in srgb, var(--transcript-red) 55%, var(--transcript-separator));
+  border-block-start-color: color-mix(in srgb, var(--transcript-red) 55%, var(--transcript-separator));
 }
 
 .transcript-disclosure-frame[data-lifecycle="error"] .transcript-disclosure-status {
@@ -232,7 +256,7 @@
 }
 
 .transcript-disclosure-frame[data-lifecycle="waiting"] {
-  border-block-color: color-mix(in srgb, var(--transcript-yellow) 50%, var(--transcript-separator));
+  border-block-start-color: color-mix(in srgb, var(--transcript-yellow) 50%, var(--transcript-separator));
 }
 
 .transcript-disclosure-frame[data-lifecycle="waiting"] .transcript-disclosure-status {
@@ -240,7 +264,7 @@
 }
 
 .transcript-disclosure-frame[data-lifecycle="canceled"] {
-  border-block-style: dashed;
+  border-block-start-style: dashed;
 }
 
 .transcript-disclosure-frame[data-lifecycle="canceled"] .transcript-disclosure-status,

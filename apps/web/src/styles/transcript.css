@@ -111,6 +111,40 @@
   border-radius: calc(var(--radius) + 0.125rem);
   background: var(--omp-user-message);
 }
+.transcript-queued-message {
+  border: 1px dashed color-mix(in srgb, var(--transcript-cyan) 45%, var(--border));
+  background: color-mix(in srgb, var(--omp-user-message) 72%, transparent);
+}
+
+.transcript-queued-message > .transcript-entry-header {
+  flex-wrap: nowrap;
+}
+
+.transcript-queued-message .ui-badge {
+  color: var(--transcript-cyan);
+}
+
+.transcript-queued-message .queued-message-failed,
+.queued-message-error {
+  color: var(--destructive);
+}
+
+.queued-message-cancel {
+  width: 1.75rem;
+  height: 1.75rem;
+  margin-left: auto;
+  flex: 0 0 auto;
+}
+
+.queued-message-cancel svg {
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+.queued-message-error {
+  margin: 0;
+  font-size: 0.75rem;
+}
 
 .transcript-entry header {
   display: flex;

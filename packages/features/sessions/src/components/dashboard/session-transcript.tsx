@@ -1,4 +1,5 @@
 import { type ActiveSubagent, type AskRequest, type AskResponse, type Session } from "@omp-remote/protocol";
+import type { QueuedMessage } from "../dashboard-props.js";
 import { AskToolCall } from "../ask/ask-tool-call.js";
 import { formatSubagentActivityLabel } from "../dashboard-actions.js";
 import {
@@ -9,6 +10,7 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "../ui/message-scroller.js";
+import { Button } from "../ui/button.js";
 import { Badge } from "../ui/badge.js";
 import {
   MessageScrollerScrollController,
@@ -18,10 +20,12 @@ import { DashboardIcon } from "./session-header.js";
 import { formatSessionTime } from "./session-sidebar.js";
 
 export interface SessionTranscriptProps {
+  queuedMessages: readonly QueuedMessage[];
   session: Session;
   transcriptLoading: boolean;
   activeAskRequest: AskRequest | null;
   connection: "connecting" | "connected" | "disconnected";
+  onCancelQueuedMessage(messageId: string): void;
   onRespondToAsk(request: AskRequest, response: AskResponse): Promise<void>;
   onAskActivity(request: AskRequest): Promise<void>;
   onViewSubagent(subagent: ActiveSubagent): void;
@@ -29,10 +33,12 @@ export interface SessionTranscriptProps {
 }
 
 export function SessionTranscript({
+  queuedMessages,
   session,
   transcriptLoading,
   activeAskRequest,
   connection,
+  onCancelQueuedMessage,
   onRespondToAsk,
   onAskActivity,
   onViewSubagent,
@@ -62,7 +68,7 @@ export function SessionTranscript({
                     <p>Large transcripts stay on the host and load only when selected.</p>
                   </div>
                 </MessageScrollerItem>
-              ) : session.messages.length === 0 && !activeAskRequest ? (
+              ) : session.messages.length === 0 && queuedMessages.length === 0 && !activeAskRequest ? (
                 <MessageScrollerItem messageId={`transcript-empty:${session.id}`}>
                   <div className="empty-transcript">
                     <span className="terminal-prompt" aria-hidden="true">
@@ -83,6 +89,32 @@ export function SessionTranscript({
               ) : (
                 renderTranscriptMessageItems({ messages: session.messages })
               )}
+              {queuedMessages.map((message) => (
+                <MessageScrollerItem key={message.id} messageId={`queued:${message.id}`}>
+                  <article className="transcript-entry transcript-user transcript-queued-message">
+                    <header className="transcript-entry-header">
+                      <span className="message-author">You</span>
+                      <Badge className={message.status === "failed" ? "queued-message-failed" : undefined}>
+                        {message.status === "failed" ? "Not sent" : "Queued"}
+                      </Badge>
+                      <time dateTime={message.createdAt}>{formatSessionTime(message.createdAt)}</time>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="queued-message-cancel"
+                        aria-label="Cancel queued message"
+                        title="Cancel queued message"
+                        onClick={() => onCancelQueuedMessage(message.id)}
+                      >
+                        <DashboardIcon name="close" />
+                      </Button>
+                    </header>
+                    <div className="transcript-message">{message.text}</div>
+                    {message.error ? <p className="queued-message-error">{message.error}</p> : null}
+                  </article>
+                </MessageScrollerItem>
+              ))}
               {activeAskRequest ? (
                 <MessageScrollerItem
                   key={`${activeAskRequest.sessionId}:${activeAskRequest.requestId}`}

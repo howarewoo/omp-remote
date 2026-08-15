@@ -22,6 +22,7 @@ import {
   snapshotSessionsWithCurrentMessages,
   upsertAskRequest,
   upsertLoadedSession,
+  type QueuedUserMessage,
   upsertTranscriptMessage,
   useSessionClient,
 } from "./index.js";
@@ -118,6 +119,40 @@ const SNAPSHOT_FRAME = {
   askRequests: [],
   savedWorkingDirectories: [],
 } as const;
+
+describe("queued follow-up commands", () => {
+  beforeEach(() => {
+    hookHarness.effects.length = 0;
+    hookHarness.stateSetters.length = 0;
+  });
+
+  it("stores follow-ups locally and lets the user remove them before dispatch", async () => {
+    const client = useSessionClient();
+    const queuedMessagesSetter = hookHarness.stateSetters.at(-1);
+    if (!queuedMessagesSetter) throw new Error("Expected queued message state");
+
+    await client.command("session-1", "follow_up", "Run this next");
+    const enqueue = queuedMessagesSetter.mock.calls[0]?.[0] as
+      | ((messages: QueuedUserMessage[]) => QueuedUserMessage[])
+      | undefined;
+    if (!enqueue) throw new Error("Expected queued message updater");
+    const queued = enqueue([]);
+
+    expect(queued).toMatchObject([
+      {
+        sessionId: "session-1",
+        text: "Run this next",
+        status: "queued",
+      },
+    ]);
+
+    client.cancelQueuedMessage(queued[0]?.id ?? "");
+    const remove = queuedMessagesSetter.mock.calls[1]?.[0] as
+      | ((messages: QueuedUserMessage[]) => QueuedUserMessage[])
+      | undefined;
+    expect(remove?.(queued)).toEqual([]);
+  });
+});
 
 describe("session WebSocket lifecycle", () => {
   let browserTarget: FakeBrowserTarget;

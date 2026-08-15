@@ -41,6 +41,15 @@ type PendingCommand = {
   timeoutId?: ReturnType<typeof globalThis.setTimeout>;
 };
 export type NotificationEventListener = (event: NotificationEvent) => void;
+export interface QueuedUserMessage {
+  id: string;
+  sessionId: string;
+  text: string;
+  createdAt: string;
+  status: "queued" | "failed";
+  error?: string;
+}
+
 export function createConnectionFreshnessTracker() {
   let snapshotReceived = false;
   let recoveryInFlight = false;
@@ -66,6 +75,7 @@ export function createConnectionFreshnessTracker() {
 
 export interface SessionClient {
   sessions: Session[];
+  queuedMessages: QueuedUserMessage[];
   askRequests: AskRequest[];
   savedWorkingDirectories: string[];
   sessionsReady: boolean;
@@ -78,6 +88,7 @@ export interface SessionClient {
   saveWorkingDirectory(cwd: string): Promise<void>;
   removeWorkingDirectory(cwd: string): Promise<void>;
   command(sessionId: string, command: "prompt" | "steer" | "follow_up", text: string): Promise<void>;
+  cancelQueuedMessage(messageId: string): void;
   abort(sessionId: string): Promise<void>;
   kill(sessionId: string): Promise<void>;
   setModel(sessionId: string, model: string): Promise<void>;
@@ -201,6 +212,7 @@ export function useSessionClient(): SessionClient {
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
+  const [queuedMessages, setQueuedMessages] = useState<QueuedUserMessage[]>([]);
 
   useEffect(() => {
     let disposed = false;
@@ -522,16 +534,62 @@ export function useSessionClient(): SessionClient {
     [sendVoid],
   );
   const command = useCallback(
-    (sessionId: string, commandName: "prompt" | "steer" | "follow_up", text: string) =>
-      sendVoid({
+    (sessionId: string, commandName: "prompt" | "steer" | "follow_up", text: string) => {
+      if (commandName === "follow_up") {
+        setQueuedMessages((current) => [
+          ...current,
+          {
+            id: crypto.randomUUID(),
+            sessionId,
+            text,
+            createdAt: new Date().toISOString(),
+            status: "queued",
+          },
+        ]);
+        return Promise.resolve();
+      }
+      return sendVoid({
         type: "session_command",
         requestId: crypto.randomUUID(),
         sessionId,
         command: commandName,
         text,
-      }),
+      });
+    },
     [sendVoid],
   );
+  const cancelQueuedMessage = useCallback((messageId: string) => {
+    setQueuedMessages((current) => current.filter((message) => message.id !== messageId));
+  }, []);
+  useEffect(() => {
+    if (connection !== "connected") return;
+    const dispatchable = queuedMessages.find(
+      (message) =>
+        message.status === "queued" &&
+        liveSessions.some(
+          (session) => session.id === message.sessionId && session.connected && session.status === "idle",
+        ),
+    );
+    if (!dispatchable) return;
+
+    setQueuedMessages((current) => current.filter((message) => message.id !== dispatchable.id));
+    void sendVoid({
+      type: "session_command",
+      requestId: crypto.randomUUID(),
+      sessionId: dispatchable.sessionId,
+      command: "prompt",
+      text: dispatchable.text,
+    }).catch((failure: unknown) => {
+      setQueuedMessages((current) => [
+        {
+          ...dispatchable,
+          status: "failed",
+          error: failure instanceof Error ? failure.message : "The queued message could not be sent",
+        },
+        ...current,
+      ]);
+    });
+  }, [connection, liveSessions, queuedMessages, sendVoid]);
   const abort = useCallback(
     (sessionId: string) =>
       sendVoid({ type: "session_command", requestId: crypto.randomUUID(), sessionId, command: "abort" }),
@@ -647,6 +705,7 @@ export function useSessionClient(): SessionClient {
 
   return {
     sessions,
+    queuedMessages,
     askRequests,
     savedWorkingDirectories,
     sessionsReady: sessionSourcesReady(liveSessionsReady, historySessionsReady),
@@ -660,6 +719,7 @@ export function useSessionClient(): SessionClient {
     removeWorkingDirectory,
     command,
     abort,
+    cancelQueuedMessage,
     kill,
     setModel,
     setEffort,
