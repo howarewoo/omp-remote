@@ -1,12 +1,13 @@
 import type { AskRequest, Session } from "@omp-remote/protocol";
 import type * as ReactModule from "react";
-import { isValidElement, type ReactElement, type ReactNode } from "react";
+import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Dashboard, type DashboardProps } from "../dashboard.js";
 import { MessageScrollerItem } from "../ui/message-scroller.js";
 import { TranscriptCodeBlock } from "./code-block.js";
 import { formatToolTextPreview, ToolTranscriptText } from "./tool-transcript.js";
-import { TranscriptEntry } from "./transcript-entry.js";
+import { renderTranscriptMessageItems, TranscriptEntry } from "./transcript-entry.js";
+import { TranscriptActivityGroup } from "./activity-group.js";
 
 const reactHarness = vi.hoisted(() => ({
   effectsEnabled: true,
@@ -492,7 +493,7 @@ describe("structured transcript presentation", () => {
 });
 
 describe("dashboard Read transcript", () => {
-  it("renders adjacent Reads as separate rows without their output", () => {
+  it("groups adjacent Reads into an activity group before the assistant message", () => {
     const readMessages: Session["messages"] = [
       {
         id: "dashboard-read-a",
@@ -527,21 +528,24 @@ describe("dashboard Read transcript", () => {
       composerDashboardProps({ ...BASE_SESSION, messages: readMessages }),
     );
     const transcript = findElements(output, (element) => element.props.className === "transcript")[0];
-    const rows = findElements(transcript, (element) => element.type === MessageScrollerItem);
-    const nodes = rows.slice(0, 2).flatMap((row) => renderTranscriptNodes(row.props.children as ReactNode));
+    const content = findElements(
+      transcript,
+      (element) => element.props.className === "transcript-messages",
+    )[0];
+    const items = Children.toArray(content?.props.children as ReactNode) as ReactElement<
+      Record<string, unknown>
+    >[];
+    const group = items.find((item) => item?.props?.group !== undefined);
+    const assistantRow = items.find((item) => item?.props?.messageId === "dashboard-assistant");
 
-    expect(rows.map((row) => row.props.messageId)).toEqual([
-      "dashboard-read-a",
-      "dashboard-read-b",
-      "dashboard-assistant",
-    ]);
-    expect(
-      nodes
-        .filter((node) => node.className === "message-author")
-        .map((node) => textContent(node.props?.children as ReactNode)),
-    ).toEqual(expect.arrayContaining(["·Read: a.ts", "·Read: b.ts"]));
-    expect(nodes.some((node) => node.text.includes("alpha dashboard contents"))).toBe(false);
-    expect(nodes.some((node) => node.text.includes("beta dashboard contents"))).toBe(false);
+    expect(items).toHaveLength(2);
+    const groupData = group?.props.group as {
+      messages: readonly Session["messages"][number][];
+      summary: string;
+    };
+    expect(groupData.messages.map((m) => m.id)).toEqual(["dashboard-read-a", "dashboard-read-b"]);
+    expect(groupData.summary).toBe("Read 2 files");
+    expect(assistantRow?.props.messageId).toBe("dashboard-assistant");
   });
 });
 
@@ -685,5 +689,155 @@ describe("ToolTranscriptText", () => {
       { kind: "image", value: secondSource },
       { kind: "text", value: " after" },
     ]);
+  });
+});
+
+describe("renderTranscriptMessageItems activity grouping", () => {
+  it("groups adjacent tools into a TranscriptActivityGroup with stable key", () => {
+    const messages: Session["messages"] = [
+      {
+        id: "read-1",
+        role: "tool",
+        toolName: "read",
+        readTarget: "src/a.ts",
+        text: "content of a",
+        timestamp: "2026-08-14T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+      {
+        id: "read-2",
+        role: "tool",
+        toolName: "read",
+        readTarget: "src/b.ts",
+        text: "content of b",
+        timestamp: "2026-08-14T12:00:01.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    ];
+
+    const items = renderTranscriptMessageItems({ messages });
+    expect(items).toHaveLength(1);
+    expect(items[0]?.key).toBe("group:read-1");
+    expect(items[0]?.type).toBe(TranscriptActivityGroup);
+  });
+
+  it("splits groups on conversational boundaries and preserves user scroll anchors", () => {
+    const messages: Session["messages"] = [
+      {
+        id: "user-msg",
+        role: "user",
+        text: "Check the status",
+        timestamp: "2026-08-14T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+      {
+        id: "read-1",
+        role: "tool",
+        toolName: "read",
+        text: "done",
+        timestamp: "2026-08-14T12:00:01.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+      {
+        id: "assistant-msg",
+        role: "assistant",
+        text: "All clear.",
+        timestamp: "2026-08-14T12:00:02.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    ];
+
+    const items = renderTranscriptMessageItems({ messages });
+    expect(items).toHaveLength(3);
+    expect(items[0]?.key).toBe("user-msg");
+    expect(items[0]?.props.messageId).toBe("user-msg");
+    expect(items[0]?.props.scrollAnchor).toBe(true);
+
+    expect(items[1]?.key).toBe("group:read-1");
+    expect(items[1]?.type).toBe(TranscriptActivityGroup);
+
+    expect(items[2]?.key).toBe("assistant-msg");
+    expect(items[2]?.props.messageId).toBe("assistant-msg");
+    expect(items[2]?.props.scrollAnchor).toBe(false);
+  });
+
+  it("elevates explicit error tool entries into distinct boundary groups", () => {
+    const messages: Session["messages"] = [
+      {
+        id: "edit-1",
+        role: "tool",
+        toolName: "edit",
+        text: "ok",
+        timestamp: "2026-08-14T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+        lifecycle: { state: "success" },
+      },
+      {
+        id: "edit-2",
+        role: "tool",
+        toolName: "edit",
+        text: "patch failure",
+        timestamp: "2026-08-14T12:00:01.000Z",
+        streaming: false,
+        presentation: "text",
+        lifecycle: { state: "error" },
+      },
+      {
+        id: "edit-3",
+        role: "tool",
+        toolName: "edit",
+        text: "recovered",
+        timestamp: "2026-08-14T12:00:02.000Z",
+        streaming: false,
+        presentation: "text",
+        lifecycle: { state: "success" },
+      },
+    ];
+
+    const items = renderTranscriptMessageItems({ messages });
+    expect(items).toHaveLength(3);
+    expect(items.map((i) => i?.key)).toEqual(["group:edit-1", "group:edit-2", "group:edit-3"]);
+  });
+
+  it("passes active Ask and waiting context to trailing groups", () => {
+    const messages: Session["messages"] = [
+      {
+        id: "bash-1",
+        role: "tool",
+        toolName: "bash",
+        text: "running command",
+        timestamp: "2026-08-14T12:00:00.000Z",
+        streaming: true,
+        presentation: "text",
+        lifecycle: { state: "running" },
+      },
+    ];
+
+    const validAsk: AskRequest = {
+      sessionId: "s1",
+      requestId: "r1",
+      kind: "text",
+      title: "Execute?",
+      options: [],
+      initialValue: null,
+      expiresAt: null,
+    };
+
+    const items = renderTranscriptMessageItems({
+      messages,
+      context: {
+        activeAskRequest: validAsk,
+      },
+    });
+
+    expect(items).toHaveLength(1);
+    const groupProps = items[0]?.props.group;
+    expect(groupProps.aggregateState).toBe("waiting");
   });
 });

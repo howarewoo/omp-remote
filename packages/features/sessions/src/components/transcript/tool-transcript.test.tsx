@@ -612,7 +612,7 @@ describe("ToolTranscriptText", () => {
     expect(nodes.filter((node) => node.className === "transcript-disclosure-text").at(-1)?.text).toBe(text);
   });
 
-  it("renders adjacent Reads as separate sequential scroller items", () => {
+  it("groups adjacent Reads into an activity group while preserving chronological tool member IDs", () => {
     const messages: Session["messages"] = [
       {
         id: "read-first",
@@ -635,11 +635,14 @@ describe("ToolTranscriptText", () => {
         presentation: "text",
       },
     ];
-    const rows = renderTranscriptMessageItems({ messages });
+    const items = renderTranscriptMessageItems({ messages });
 
-    expect(rows).toHaveLength(2);
-    expect(rows.map((row) => row?.key)).toEqual(["read-first", "read-second"]);
-    expect(rows.map((row) => row?.props.messageId)).toEqual(["read-first", "read-second"]);
+    expect(items).toHaveLength(1);
+    expect(items[0]?.key).toBe("group:read-first");
+    const groupProps = (items[0] as ReactElement<Record<string, unknown>>)?.props?.group as {
+      messages: readonly Session["messages"][number][];
+    };
+    expect(groupProps.messages.map((m) => m.id)).toEqual(["read-first", "read-second"]);
   });
 
   it("renders edit output as an open disclosure by default", () => {

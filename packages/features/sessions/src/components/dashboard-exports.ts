@@ -18,6 +18,11 @@ export type {
 } from "./todo-parser.js";
 export { parseTodoResult } from "./todo-parser.js";
 export type { BashTitleToken, BashTitleTokenKind } from "./transcript/bash-title.js";
+export {
+  MemoizedTranscriptActivityGroup,
+  TranscriptActivityGroup,
+  type TranscriptActivityGroupProps,
+} from "./transcript/activity-group.js";
 export { tokenizeBashTitle } from "./transcript/bash-title.js";
 export { parseTranscriptBlocks } from "./transcript/blocks.js";
 export { formatSystemTextPreview, TranscriptCodeBlock, TranscriptText } from "./transcript/code-block.js";
@@ -35,3 +40,24 @@ export {
   SystemTranscriptText,
   TranscriptEntry,
 } from "./transcript/transcript-entry.js";
+export {
+  calculateGroupDuration,
+  computeActivityGroupKey,
+  computeSubgroupKey,
+  deriveAggregateLifecycle,
+  deriveTranscriptDisplayItems,
+  formatGroupDuration,
+  formatOuterGroupSummary,
+  formatSubgroupSummary,
+  getCategoryActivityLabel,
+  getCategoryOutcomeLabel,
+  getToolCategory,
+  type ActivityCategorySubgroup,
+  type ActivityGroupAggregateState,
+  type ActivityGroupData,
+  type ActivityGroupDuration,
+  type OmpToolCategory,
+  type TranscriptDisplayItem,
+  type TranscriptEntryMessage,
+  type TranscriptGroupingContext,
+} from "./transcript/transcript-grouping.js";

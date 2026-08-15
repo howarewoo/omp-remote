@@ -12,6 +12,8 @@ import {
 } from "./disclosure-content.js";
 import { tokenizeBashTitle } from "./bash-title.js";
 import { ToolTranscriptText } from "./tool-transcript.js";
+import { TranscriptActivityGroup } from "./activity-group.js";
+import { deriveTranscriptDisplayItems, type TranscriptGroupingContext } from "./transcript-grouping.js";
 
 const BASH_TITLE_PREFIX = "Bash: ";
 type TranscriptEntryMessage = Session["messages"][number];
@@ -188,14 +190,28 @@ export function TranscriptEntry({ entry }: { entry: TranscriptEntryMessage }) {
   );
 }
 
-export function renderTranscriptMessageItems({ messages }: { messages: readonly TranscriptEntryMessage[] }) {
-  return messages.map((entry) =>
-    !entry.text && entry.role !== "tool" ? null : (
-      <MessageScrollerItem key={entry.id} messageId={entry.id} scrollAnchor={entry.role === "user"}>
-        <TranscriptEntry entry={entry} />
+export function renderTranscriptMessageItems({
+  messages,
+  context,
+}: {
+  messages: readonly TranscriptEntryMessage[];
+  context?: TranscriptGroupingContext;
+}) {
+  const displayItems = deriveTranscriptDisplayItems(messages, context);
+  return displayItems.map((item) => {
+    if (item.kind === "group") {
+      return <TranscriptActivityGroup key={item.key} group={item} />;
+    }
+    return (
+      <MessageScrollerItem
+        key={item.key}
+        messageId={item.message.id}
+        scrollAnchor={item.message.role === "user"}
+      >
+        <TranscriptEntry entry={item.message} />
       </MessageScrollerItem>
-    ),
-  );
+    );
+  });
 }
 
 function formatTime(timestamp: string): string {
