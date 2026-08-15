@@ -66,6 +66,11 @@ const CanonicalEditDetailsSchema = z
     perFileResults: z.array(z.object({ path: z.unknown().optional() }).passthrough()).optional(),
   })
   .passthrough();
+const CanonicalEvalDetailsSchema = z
+  .object({
+    isError: z.boolean().optional(),
+  })
+  .passthrough();
 const CanonicalGrepDetailsSchema = z
   .object({
     matchCount: z.number().int().nonnegative().optional(),
@@ -209,11 +214,18 @@ export function normalizeRawMessage(
     data.role === "toolResult"
       ? formatToolTitle(toolName, toolCall?.arguments, data.details, appliedDiff)
       : undefined;
+  const canonicalEvalDetails =
+    data.role === "toolResult" && toolName === "eval"
+      ? CanonicalEvalDetailsSchema.safeParse(data.details)
+      : null;
+  const isError =
+    data.isError === true ||
+    (canonicalEvalDetails?.success === true && canonicalEvalDetails.data.isError === true);
   const lifecycle =
     data.role === "toolResult"
       ? streaming
         ? ({ state: "running" } as const)
-        : data.isError === true
+        : isError
           ? ({ state: "error" } as const)
           : ({ state: "success" } as const)
       : undefined;

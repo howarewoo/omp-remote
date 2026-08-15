@@ -247,6 +247,7 @@
 }
 
 .transcript-disclosure-frame[data-lifecycle="error"] {
+  background: color-mix(in srgb, var(--transcript-red) 10%, transparent);
   border-block-start-color: color-mix(in srgb, var(--transcript-red) 55%, var(--transcript-separator));
 }
 
