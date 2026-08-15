@@ -25,7 +25,15 @@ type TrackedToolCall = {
 type RawExtensionMessage = {
   id?: unknown;
   role: string;
-  content: string | Array<{ type: string; text?: string; data?: unknown; mimeType?: unknown }>;
+  content:
+    | string
+    | Array<{
+        type: string;
+        text?: string;
+        thinking?: string;
+        data?: unknown;
+        mimeType?: unknown;
+      }>;
   timestamp?: unknown;
   toolName?: unknown;
   toolCallId?: unknown;
@@ -205,7 +213,9 @@ export function materializeExtensionReadImages(
   return images.length ? { ...message, images } : message;
 }
 
-function isContent(value: unknown): value is string | Array<{ type: string; text?: string }> {
+function isContent(
+  value: unknown,
+): value is string | Array<{ type: string; text?: string; thinking?: string }> {
   return (
     typeof value === "string" ||
     (Array.isArray(value) &&
@@ -215,16 +225,25 @@ function isContent(value: unknown): value is string | Array<{ type: string; text
           part !== null &&
           "type" in part &&
           typeof part.type === "string" &&
-          (!("text" in part) || part.text === undefined || typeof part.text === "string"),
+          (!("text" in part) || part.text === undefined || typeof part.text === "string") &&
+          (!("thinking" in part) || part.thinking === undefined || typeof part.thinking === "string"),
       ))
   );
 }
 
-function extractText(content: string | Array<{ type: string; text?: string }>): string {
+function extractText(content: string | Array<{ type: string; text?: string; thinking?: string }>): string {
   if (typeof content === "string") return content;
   let text = "";
   for (const part of content) {
-    if (part.type === "text" && typeof part.text === "string") text += part.text;
+    if (part.type === "text" && typeof part.text === "string") {
+      text += part.text;
+    } else if (part.type === "thinking") {
+      if (typeof part.thinking === "string") {
+        text += part.thinking;
+      } else if (typeof part.text === "string") {
+        text += part.text;
+      }
+    }
   }
   return text;
 }

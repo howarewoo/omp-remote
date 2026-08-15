@@ -55,10 +55,79 @@ afterEach(async () => {
 });
 
 describe("normalizeExtensionMessage", () => {
-  it("drops non-text assistant content", () => {
+  it("preserves thinking-only assistant content as transcript text", () => {
     expect(
       normalizeExtensionMessage(
-        { id: "assistant-thinking", role: "assistant", content: [{ type: "thinking" }] },
+        {
+          id: "assistant-thinking",
+          role: "assistant",
+          content: [{ type: "thinking", text: "Evaluating approaches", signature: "sig-123" }],
+        },
+        true,
+        "fallback-id",
+      ),
+    ).toEqual({
+      id: "assistant-thinking",
+      role: "assistant",
+      text: "Evaluating approaches",
+      timestamp: expect.any(String),
+      streaming: true,
+      presentation: "text",
+    });
+  });
+
+  it("preserves mixed thinking and text parts in exact source order", () => {
+    expect(
+      normalizeExtensionMessage(
+        {
+          id: "assistant-mixed",
+          role: "assistant",
+          content: [
+            { type: "thinking", text: "Planning step 1. " },
+            { type: "text", text: "Executing step 1.\n" },
+            { type: "thinking", thinking: "Step 1 complete." },
+          ],
+        },
+        false,
+        "fallback-id",
+      ),
+    ).toMatchObject({
+      id: "assistant-mixed",
+      role: "assistant",
+      text: "Planning step 1. Executing step 1.\nStep 1 complete.",
+      streaming: false,
+    });
+  });
+
+  it("ignores unsupported parts and rejects malformed thinking payloads", () => {
+    expect(
+      normalizeExtensionMessage(
+        {
+          id: "assistant-filtered",
+          role: "assistant",
+          content: [
+            { type: "status", text: "ignored" },
+            { type: "thinking", thinking: "Valid thought" },
+            { type: "toolCall", name: "bash", arguments: { command: "ls" } },
+            { type: "text", text: " and valid text" },
+          ],
+        },
+        false,
+        "fallback-id",
+      ),
+    ).toMatchObject({
+      id: "assistant-filtered",
+      role: "assistant",
+      text: "Valid thought and valid text",
+    });
+
+    expect(
+      normalizeExtensionMessage(
+        {
+          id: "assistant-empty-thinking",
+          role: "assistant",
+          content: [{ type: "thinking", thinking: 42 }, { type: "status" }],
+        },
         true,
         "fallback-id",
       ),

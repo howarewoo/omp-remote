@@ -87,6 +87,43 @@ describe("SessionCatalog transcript and file changes", () => {
     expect(messages[0]).toMatchObject({ id: "message-5", text: "Message 5", streaming: false });
     expect(messages.at(-1)).toMatchObject({ id: "message-204", text: "Message 204" });
   });
+
+  it("hydrates thinking-only assistant messages from persisted session history", async () => {
+    const root = await makeTemporaryDirectory();
+    const sessionPath = join(root, "project", "thinking-session.jsonl");
+    await writeSession(
+      sessionPath,
+      {
+        id: "session-thinking",
+        title: "Thinking session",
+        cwd: "/workspace/project",
+        timestamp: "2026-07-29T12:00:00.000Z",
+      },
+      [
+        {
+          type: "message",
+          id: "message-thinking-1",
+          timestamp: "2026-07-29T12:01:00.000Z",
+          message: {
+            role: "assistant",
+            content: [{ type: "thinking", text: "Consider alternative approaches" }],
+          },
+        },
+      ],
+    );
+    const catalog = new SessionCatalog([root]);
+    await catalog.refresh();
+
+    const messages = await catalog.transcript("session-thinking");
+    expect(messages).toEqual([
+      expect.objectContaining({
+        id: "message-thinking-1",
+        role: "assistant",
+        text: "Consider alternative approaches",
+        streaming: false,
+      }),
+    ]);
+  });
   it("selects one root and all descendants while excluding unrelated roots", async () => {
     const historyRoot = await makeTemporaryDirectory();
     const worktreeA = join(historyRoot, "worktree-a");
