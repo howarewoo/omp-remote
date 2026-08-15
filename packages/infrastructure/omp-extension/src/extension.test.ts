@@ -429,6 +429,98 @@ describe("ompRemoteExtension", () => {
     expect(terminalHandlers.size).toBe(0);
   });
 
+  it("reinstalls the ask relay across fresh proxied UI contexts on session_switch and agent_start without recursing", async () => {
+    process.argv.splice(0, process.argv.length, "node", "omp", "--mode", "text");
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const nativeResult = { kind: "chat" as const };
+    const nativeAskDialog = vi.fn(function (this: unknown, _questions: unknown, _options?: unknown) {
+      return { ...nativeResult, receiver: this };
+    });
+
+    class BaseUi {
+      askDialog = nativeAskDialog;
+      onTerminalInput = vi.fn(() => () => {});
+    }
+
+    const createFreshUi = () => {
+      const base = new BaseUi();
+      return new Proxy(base, {
+        get(target, property, receiver) {
+          return Reflect.get(target, property, receiver);
+        },
+        set(target, property, value, receiver) {
+          return Reflect.set(target, property, value, receiver);
+        },
+      });
+    };
+
+    const model = { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" };
+    const contextFor = (sessionId: string) => ({
+      cwd: "/workspace/project",
+      ui: createFreshUi(),
+      isIdle: () => true,
+      hasPendingMessages: () => false,
+      getContextUsage: () => undefined,
+      models: { current: () => model, list: () => [model] },
+      sessionManager: {
+        getBranch: () => [],
+        getSessionId: () => sessionId,
+        getSessionName: () => "Test session",
+        getSessionFile: () => null,
+      },
+      setInterval: vi.fn(),
+      setTimeout: vi.fn(),
+    });
+
+    const pi = {
+      zod: { z: compatibilityZ },
+      on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => handlers.set(event, handler)),
+      getThinkingLevel: vi.fn(() => "high"),
+      getCommands: vi.fn(() => []),
+    };
+
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    ompRemoteExtension(pi as unknown as ExtensionAPI);
+
+    const initialContext = contextFor("session-1");
+    await handlers.get("session_start")?.({}, initialContext);
+
+    const switchContext = contextFor("session-2");
+    await handlers.get("session_switch")?.({}, switchContext);
+
+    const agentContext = contextFor("session-2");
+    await handlers.get("agent_start")?.({}, agentContext);
+
+    const socket = FakeWebSocket.instances[0];
+    if (!socket) throw new Error("The extension did not open its host connection");
+
+    const questions = [{ id: "q1", question: "Continue?", options: [{ label: "Yes" }] }];
+    const options = { timeout: 300 };
+
+    const resultPromise = agentContext.ui.askDialog(questions, options);
+    const sentRequests = socket.sent
+      .map((entry) => JSON.parse(entry))
+      .filter((entry) => entry.type === "ask_request");
+
+    expect(sentRequests).toHaveLength(1);
+    expect(sentRequests[0]).toMatchObject({
+      type: "ask_request",
+      request: { sessionId: "session-2", kind: "rich", questions },
+    });
+
+    await socket.emit("message", {
+      data: JSON.stringify({
+        command: "ask_unavailable",
+        requestId: sentRequests[0].request.requestId,
+      }),
+    });
+
+    const result = await resultPromise;
+    expect(result).toMatchObject(nativeResult);
+    expect(nativeAskDialog).toHaveBeenCalledTimes(1);
+    expect(nativeAskDialog).toHaveBeenCalledWith(questions, options);
+  });
+
   it("waits for admission, disables the competitor timeout, emits activity, and honors parent abort", async () => {
     process.argv.splice(0, process.argv.length, "node", "omp", "--mode", "text");
     const handlers = new Map<string, (...args: unknown[]) => unknown>();

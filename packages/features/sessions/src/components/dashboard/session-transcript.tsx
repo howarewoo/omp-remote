@@ -115,10 +115,16 @@ export function SessionTranscript({
                   </article>
                 </MessageScrollerItem>
               ))}
+              {session.status === "running" ? (
+                <MessageScrollerItem messageId={`working:${session.id}`} hidden={Boolean(activeAskRequest)}>
+                  {activeAskRequest ? null : <WorkingIndicator status={session.status} />}
+                </MessageScrollerItem>
+              ) : null}
               {activeAskRequest ? (
                 <MessageScrollerItem
                   key={`${activeAskRequest.sessionId}:${activeAskRequest.requestId}`}
                   messageId={`ask:${activeAskRequest.sessionId}:${activeAskRequest.requestId}`}
+                  scrollAnchor
                 >
                   <AskToolCall
                     request={activeAskRequest}
@@ -126,11 +132,6 @@ export function SessionTranscript({
                     onRespond={(response) => onRespondToAsk(activeAskRequest, response)}
                     onActivity={() => void onAskActivity(activeAskRequest)}
                   />
-                </MessageScrollerItem>
-              ) : null}
-              {session.status === "running" ? (
-                <MessageScrollerItem messageId={`working:${session.id}`}>
-                  <WorkingIndicator status={session.status} />
                 </MessageScrollerItem>
               ) : null}
             </MessageScrollerContent>

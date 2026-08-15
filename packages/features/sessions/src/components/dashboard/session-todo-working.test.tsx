@@ -5,6 +5,7 @@ import {
   getMessageScrollerHarness,
   renderControlledDashboard,
   renderTranscriptNodes,
+  SELECT_ASK,
 } from "./dashboard-test-support.js";
 import type { ReactElement, ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -52,6 +53,25 @@ describe("dashboard working status", () => {
     ).toHaveLength(0);
   });
 
+  it("suppresses the Working status when a running session has an active ask", () => {
+    const runningWithAskOutput = renderControlledDashboard({
+      ...composerDashboardProps({ ...BASE_SESSION, status: "running" }),
+      askRequests: [SELECT_ASK],
+    });
+    const transcript = findElements(
+      runningWithAskOutput,
+      (element) => element.props.className === "transcript",
+    )[0];
+
+    expect(findElements(transcript, (element) => element.type === WorkingIndicator)).toHaveLength(0);
+    const workingRows = findElements(
+      transcript,
+      (element) => element.type === MessageScrollerItem && element.props.messageId === "working:session-1",
+    );
+    expect(workingRows).toHaveLength(1);
+    expect(workingRows[0]?.props.hidden).toBe(true);
+  });
+
   it("appends the same Working status to a viewed running subagent transcript", () => {
     const subagent = {
       id: "subagent-1",
@@ -96,6 +116,7 @@ describe("dashboard working status", () => {
     ).toEqual([expect.objectContaining({ text: "Working" })]);
   });
 });
+
 describe("message scroller controls", () => {
   it("uses immediate jump controls so reduced-motion preferences are respected", () => {
     expect(MessageScrollerButton({}).props.behavior).toBe("auto");
