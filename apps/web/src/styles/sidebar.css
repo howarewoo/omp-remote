@@ -74,7 +74,7 @@
   flex-direction: column;
   overflow: hidden;
   border-right: 1px solid var(--border);
-  background: oklch(15.5% 0.02 295);
+  background: oklch(17.5% 0.022 295);
 }
 
 .sidebar-root[data-side="right"] .sidebar {
