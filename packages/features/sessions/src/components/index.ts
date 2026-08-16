@@ -9,3 +9,4 @@ export {
   type ThemeToggleProps,
   useTheme,
 } from "./ui/theme-provider.js";
+export { Toaster, type ToasterProps } from "./ui/sonner.js";

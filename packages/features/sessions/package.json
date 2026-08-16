@@ -23,7 +23,8 @@
     "@omp-remote/protocol": "workspace:*",
     "@omp-remote/ui": "workspace:*",
     "@shadcn/react": "catalog:",
-    "react": "catalog:"
+    "react": "catalog:",
+    "sonner": "2.0.7"
   },
   "devDependencies": {
     "@types/react": "catalog:",

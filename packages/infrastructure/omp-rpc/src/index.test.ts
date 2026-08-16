@@ -96,6 +96,51 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     }
   });
 
+  it("force-kills an RPC process that ignores graceful termination", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "omp-remote-rpc-force-kill-"));
+    const executable = join(directory, "rpc-force-kill-fixture.cjs");
+    await writeFile(
+      executable,
+      `#!/usr/bin/env node
+const readline = require("node:readline");
+process.on("SIGTERM", () => undefined);
+process.stdout.write(JSON.stringify({ type: "ready", supportedProtocolVersions: [] }) + "\\n");
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const frame = JSON.parse(line);
+  process.stdout.write(JSON.stringify({
+    type: "response",
+    id: frame.id,
+    success: true,
+    data: { sessionId: "force-kill-session", isStreaming: false },
+  }) + "\\n");
+});
+`,
+    );
+    await chmod(executable, 0o755);
+
+    let rpc: RpcSession | undefined;
+    try {
+      rpc = new RpcSession({
+        cwd: directory,
+        ompPath: executable,
+        resume: null,
+        onStderr: () => undefined,
+      });
+      let processExit: Record<string, unknown> | undefined;
+      rpc.subscribe((frame) => {
+        if (frame.type === "process_exit") processExit = frame;
+      });
+
+      await rpc.start();
+      await rpc.terminate();
+
+      expect(processExit).toMatchObject({ type: "process_exit", signal: "SIGKILL" });
+    } finally {
+      await rpc?.terminate().catch(() => undefined);
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("times out a request without terminating the RPC session", async () => {
     const directory = await mkdtemp(join(tmpdir(), "omp-remote-rpc-timeout-"));
     const executable = join(directory, "rpc-timeout-fixture.cjs");
@@ -264,4 +309,29 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+});
+
+it("rejects promptly when the RPC process exits before ready", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "omp-remote-rpc-early-exit-"));
+  const executable = join(directory, "rpc-early-exit-fixture.cjs");
+  await writeFile(
+    executable,
+    `#!/usr/bin/env node
+process.exit(1);
+`,
+  );
+  await chmod(executable, 0o755);
+
+  try {
+    const rpc = new RpcSession({
+      cwd: directory,
+      ompPath: executable,
+      resume: null,
+      onStderr: () => undefined,
+    });
+
+    await expect(rpc.start()).rejects.toThrow("OMP RPC process exited (1)");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });

@@ -38,6 +38,7 @@ import { renderTranscriptMessageItems } from "./transcript/transcript-entry.js";
 import { Button } from "./ui/button.js";
 import { MessageScrollerItem } from "./ui/message-scroller.js";
 import { SidebarInset, SidebarProvider, useSidebar } from "./ui/sidebar.js";
+import { toast } from "sonner";
 
 export * from "./dashboard-exports.js";
 export type { DashboardProps } from "./dashboard-props.js";
@@ -603,9 +604,10 @@ function DashboardContent({
       setLaunchCwd("");
       formElement.reset();
     } catch (launchFailure) {
-      setLaunchError(
-        launchFailure instanceof Error ? launchFailure.message : "OMP could not start the session",
-      );
+      const message =
+        launchFailure instanceof Error ? launchFailure.message : "OMP could not start the session";
+      setLaunchError(message);
+      toast.error(message);
     } finally {
       setLaunchState("idle");
     }
@@ -663,9 +665,10 @@ function DashboardContent({
       const sessionId = await onLaunch(selectedSession.cwd, selectedSession.sessionPath);
       onSelectedSessionChange(sessionId);
     } catch (resumeFailure) {
-      setCommandError(
-        resumeFailure instanceof Error ? resumeFailure.message : "The session could not be resumed",
-      );
+      const message =
+        resumeFailure instanceof Error ? resumeFailure.message : "The session could not be resumed";
+      setCommandError(message);
+      toast.error(message);
     } finally {
       setCommandState("idle");
     }

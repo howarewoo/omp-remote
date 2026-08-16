@@ -13,7 +13,8 @@ import {
 } from "./dashboard-test-support.js";
 import type { Session } from "@omp-remote/protocol";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AskToolCall, type DashboardProps } from "../dashboard.js";
 import { Drawer } from "../ui/drawer.js";
 import {
@@ -276,6 +277,13 @@ describe("dashboard launch selection", () => {
     selectedSessionId: BASE_SESSION.id,
   };
 
+  beforeEach(() => {
+    vi.spyOn(toast, "error").mockReturnValue("toast-id");
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
   it("opens the launch dialog from the mobile sidebar", () => {
     reactHarness.isMobile = true;
     const props = { ...baseProps, onLaunch: vi.fn() };
@@ -334,6 +342,7 @@ describe("dashboard launch selection", () => {
     expect(onSelectedSessionChange).toHaveBeenCalledOnce();
     expect(onSelectedSessionChange).toHaveBeenCalledWith("new-session-id");
     expect(reset).toHaveBeenCalledOnce();
+    expect(toast.error).not.toHaveBeenCalled();
     output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
     expect(
       findElements(output, (element) => element.props.title === "Start an OMP session")[0]?.props.open,
@@ -363,6 +372,7 @@ describe("dashboard launch selection", () => {
     expect(onLaunch).toHaveBeenCalledWith(historySession.cwd, historySession.sessionPath);
     expect(onSelectedSessionChange).toHaveBeenCalledOnce();
     expect(onSelectedSessionChange).toHaveBeenCalledWith("resumed-session-id");
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("does not select a session when resume fails", async () => {
@@ -385,6 +395,17 @@ describe("dashboard launch selection", () => {
     await Promise.resolve();
 
     expect(onSelectedSessionChange).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledOnce();
+    expect(toast.error).toHaveBeenCalledWith("resume failed");
+    renderControlledDashboard(
+      {
+        ...baseProps,
+        sessions: [historySession],
+        selectedSessionId: historySession.id,
+      },
+      { preserveState: true, effectsEnabled: false },
+    );
+    expect(toast.error).toHaveBeenCalledOnce();
   });
 
   it("does not select or reset the modal when a new launch fails", async () => {
@@ -422,7 +443,10 @@ describe("dashboard launch selection", () => {
 
     expect(onSelectedSessionChange).not.toHaveBeenCalled();
     expect(reset).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledOnce();
+    expect(toast.error).toHaveBeenCalledWith("launch failed");
     output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
+    expect(toast.error).toHaveBeenCalledOnce();
     expect(textContent(output)).toContain("launch failed");
     expect(
       findElements(output, (element) => element.props.title === "Start an OMP session")[0]?.props.open,

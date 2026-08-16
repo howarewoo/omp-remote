@@ -1,6 +1,7 @@
 import type * as ReactModule from "react";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Toaster } from "@omp-remote/sessions/components";
 import App from "./App.js";
 
 const appMocks = vi.hoisted(() => {
@@ -59,6 +60,7 @@ vi.mock("@omp-remote/session-client", () => ({
 vi.mock("@omp-remote/sessions/components", () => ({
   Dashboard: vi.fn(),
   ThemeProvider: ({ children }: { children: unknown }) => children,
+  Toaster: vi.fn(),
 }));
 vi.mock("./session-notifications.js", () => ({
   useSessionNotifications: appMocks.useSessionNotifications.mockReturnValue({
@@ -79,7 +81,7 @@ interface ControlledDashboardProps {
 }
 
 interface AppContentProps {
-  children: [ReactElement<ControlledDashboardProps>, ReactElement<{ ready: boolean }>];
+  children: [ReactElement, ReactElement<ControlledDashboardProps>, ReactElement<{ ready: boolean }>];
 }
 
 describe("App session URL state", () => {
@@ -93,7 +95,7 @@ describe("App session URL state", () => {
       history: { replaceState: vi.fn() },
     });
 
-    const [dashboard] = (App() as ReactElement<AppContentProps>).props.children;
+    const [, dashboard] = (App() as ReactElement<AppContentProps>).props.children;
     expect(dashboard.props.selectedSessionId).toBe("team/a?b=c & café%done");
   });
 
@@ -104,7 +106,7 @@ describe("App session URL state", () => {
       location.href = replacement.href;
     });
     vi.stubGlobal("window", { location, history: { replaceState } });
-    const [dashboard] = (App() as ReactElement<AppContentProps>).props.children;
+    const [, dashboard] = (App() as ReactElement<AppContentProps>).props.children;
     const props = dashboard.props;
 
     expect(props.onSelectedSessionChange).toBeTypeOf("function");
@@ -123,7 +125,7 @@ describe("App session URL state", () => {
       history: { replaceState: vi.fn() },
     });
 
-    const [, splash] = (App() as ReactElement<AppContentProps>).props.children;
+    const [, , splash] = (App() as ReactElement<AppContentProps>).props.children;
 
     expect(splash.props.ready).toBe(true);
   });
@@ -134,7 +136,7 @@ describe("App session URL state", () => {
       history: { replaceState: vi.fn() },
     });
 
-    const [dashboard] = (App() as ReactElement<AppContentProps>).props.children;
+    const [, dashboard] = (App() as ReactElement<AppContentProps>).props.children;
     expect(dashboard.props.onLoadSession).toBe(appMocks.sessionClient.loadSession);
   });
 
@@ -144,7 +146,7 @@ describe("App session URL state", () => {
       history: { replaceState: vi.fn() },
     });
 
-    const [dashboard] = (App() as ReactElement<AppContentProps>).props.children;
+    const [, dashboard] = (App() as ReactElement<AppContentProps>).props.children;
     expect(dashboard.props.onLoadSessionFileChanges).toBeTypeOf("function");
   });
 
@@ -154,7 +156,7 @@ describe("App session URL state", () => {
       history: { replaceState: vi.fn() },
     });
 
-    const [dashboard] = (App() as ReactElement<AppContentProps>).props.children;
+    const [, dashboard] = (App() as ReactElement<AppContentProps>).props.children;
     expect(dashboard.props.onLoadSessionBranchTopology).toBeTypeOf("function");
     expect(dashboard.props.onSwitchBranch).toBeTypeOf("function");
   });
@@ -168,5 +170,15 @@ describe("App session URL state", () => {
     App();
 
     expect(appMocks.useSessionNotifications).toHaveBeenLastCalledWith(appMocks.sessionClient);
+  });
+
+  it("mounts exactly one root toaster inside the theme provider", () => {
+    vi.stubGlobal("window", {
+      location: new URL("https://app.test/"),
+      history: { replaceState: vi.fn() },
+    });
+
+    const [toaster] = (App() as ReactElement<AppContentProps>).props.children;
+    expect(toaster.type).toBe(Toaster);
   });
 });
