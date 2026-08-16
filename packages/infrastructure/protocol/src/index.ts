@@ -288,7 +288,7 @@ export const AskDialogOptionSchema = z
 export const AskDialogQuestionSchema = z
   .object({
     id: z.string().min(1),
-    question: z.string().min(1),
+    question: z.string(),
     header: z.string().optional(),
     options: z.array(AskDialogOptionSchema),
     multi: z.boolean().optional(),
@@ -303,7 +303,7 @@ export const AskDialogQuestionSchema = z
 export const AskDialogResultItemSchema = z
   .object({
     id: z.string().min(1),
-    question: z.string().min(1),
+    question: z.string(),
     options: z.array(z.string()),
     multi: z.boolean(),
     selectedOptions: z.array(z.string()),

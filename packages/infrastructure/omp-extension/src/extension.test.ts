@@ -637,7 +637,7 @@ describe("ompRemoteExtension", () => {
     await handlers.get("session_start")?.({}, context);
     const socket = FakeWebSocket.instances[0];
     if (!socket) throw new Error("The extension did not open its host connection");
-    const questions = [{ id: "database", question: "Which database?", options: [{ label: "SQLite" }] }];
+    const questions = [{ id: "database", question: "", options: [{ label: "SQLite" }] }];
     const parentAbort = new AbortController();
     const resultPromise = ui.askDialog(questions, { timeout: 500, signal: parentAbort.signal });
     const request = JSON.parse(socket.sent.at(-1) ?? "");
@@ -684,10 +684,32 @@ describe("ompRemoteExtension", () => {
       data: JSON.stringify({
         command: "ask_response",
         requestId: remoteRequest.request.requestId,
-        response: { kind: "chat" },
+        response: {
+          kind: "submit",
+          results: [
+            {
+              id: "database",
+              question: "",
+              options: ["SQLite"],
+              multi: false,
+              selectedOptions: ["SQLite"],
+            },
+          ],
+        },
       }),
     });
-    await expect(remoteResultPromise).resolves.toEqual({ kind: "chat" });
+    await expect(remoteResultPromise).resolves.toEqual({
+      kind: "submit",
+      results: [
+        {
+          id: "database",
+          question: "",
+          options: ["SQLite"],
+          multi: false,
+          selectedOptions: ["SQLite"],
+        },
+      ],
+    });
     expect(terminalHandlers.size).toBe(0);
   });
 
@@ -739,7 +761,7 @@ describe("ompRemoteExtension", () => {
     const questions = [
       {
         id: "database",
-        question: "Which database?",
+        question: "",
         options: [{ label: "SQLite" }, { label: "PostgreSQL" }],
         recommended: 1,
       },
@@ -762,7 +784,7 @@ describe("ompRemoteExtension", () => {
       results: [
         {
           id: "database",
-          question: "Which database?",
+          question: "",
           options: ["SQLite", "PostgreSQL"],
           multi: false,
           selectedOptions: ["PostgreSQL"],

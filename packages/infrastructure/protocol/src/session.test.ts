@@ -613,7 +613,7 @@ describe("ServerFrameSchema", () => {
       questions: [
         {
           id: "database",
-          question: "Which database?",
+          question: "",
           header: "Storage",
           options: [
             { label: "SQLite", description: "Embedded", preview: "file:local.db" },
@@ -642,7 +642,7 @@ describe("ServerFrameSchema", () => {
           results: [
             {
               id: "database",
-              question: "Which database?",
+              question: "",
               options: ["SQLite", "PostgreSQL"],
               multi: true,
               selectedOptions: ["PostgreSQL"],
