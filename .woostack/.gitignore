@@ -6,6 +6,7 @@ qa/evidence/
 respond/evidence/
 overnight/
 worktrees/
+tmp/
 memory/.telemetry.tsv
 memory/.dream-watermark
 
