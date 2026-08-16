@@ -124,7 +124,7 @@ describe("BrowserCommandSchema", () => {
         results: [
           {
             id: "database",
-            question: "Which database?",
+            question: "",
             options: ["SQLite", "PostgreSQL"],
             multi: true,
             selectedOptions: ["PostgreSQL"],

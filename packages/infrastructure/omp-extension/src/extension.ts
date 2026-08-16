@@ -123,7 +123,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
   const AskDialogResultItemSchema = z
     .object({
       id: z.string().min(1),
-      question: z.string().min(1),
+      question: z.string(),
       options: z.array(z.string()),
       multi: z.boolean(),
       selectedOptions: z.array(z.string()),
