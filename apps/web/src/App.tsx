@@ -1,5 +1,5 @@
 import { useSessionClient } from "@omp-remote/session-client";
-import { Dashboard, ThemeProvider } from "@omp-remote/sessions/components";
+import { Dashboard, ThemeProvider, Toaster } from "@omp-remote/sessions/components";
 import { useCallback, useState } from "react";
 import { useSessionNotifications } from "./session-notifications.js";
 import { StartupSplash } from "./startup-splash.js";
@@ -29,6 +29,7 @@ export default function App() {
 
   return (
     <ThemeProvider>
+      <Toaster />
       <Dashboard
         sessions={client.sessions}
         queuedMessages={client.queuedMessages}

@@ -1,10 +1,12 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { once } from "node:events";
+import { setTimeout as wait } from "node:timers/promises";
 import { TextDecoder } from "node:util";
 import { z } from "zod";
 
 const MAX_FRAME_BYTES = 1024 * 1024;
 const MAX_REASSEMBLED_BYTES = 64 * 1024 * 1024;
+const TERMINATION_GRACE_MS = 1_000;
 const RpcObjectSchema = z.record(z.string(), z.unknown());
 
 export type RpcFrame = Record<string, unknown>;
@@ -119,12 +121,30 @@ export class RpcSession {
     });
 
     const ready = await new Promise<RpcFrame>((resolve, reject) => {
-      const unsubscribe = this.subscribe((frame) => {
-        if (frame.type !== "ready") return;
+      let settled = false;
+      const cleanup = () => {
         unsubscribe();
-        resolve(frame);
+        child.off("error", onError);
+      };
+      const onError = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+      const unsubscribe = this.subscribe((frame) => {
+        if (settled) return;
+        if (frame.type === "ready") {
+          settled = true;
+          cleanup();
+          resolve(frame);
+        } else if (frame.type === "process_exit") {
+          settled = true;
+          cleanup();
+          reject(new Error(`OMP RPC process exited (${frame.signal ?? frame.code ?? "unknown"})`));
+        }
       });
-      child.once("error", reject);
+      child.once("error", onError);
     });
     const supported = ready.supportedProtocolVersions;
     if (Array.isArray(supported) && supported.includes(2)) {
@@ -195,8 +215,15 @@ export class RpcSession {
   async terminate(): Promise<void> {
     const child = this.#child;
     if (!child) throw new Error("OMP RPC session is not connected");
+
+    const exitPromise = once(child, "exit").then(() => undefined);
     if (!child.kill("SIGTERM")) throw new Error("OMP RPC process could not be terminated");
-    await once(child, "exit");
+
+    await Promise.race([exitPromise, wait(TERMINATION_GRACE_MS, undefined, { ref: false })]);
+    if (child.exitCode === null && child.signalCode === null) {
+      if (!child.kill("SIGKILL")) throw new Error("OMP RPC process could not be force-terminated");
+      await exitPromise;
+    }
   }
 
   #consume(chunk: string): void {

@@ -26,6 +26,7 @@ import {
 } from "./session-catalog.js";
 
 const MAX_MESSAGES = 200;
+const RPC_LAUNCH_DEADLINE_MS = 15_000;
 
 type RpcSessionRuntimeDependencies = {
   environment: { OMP_REMOTE_OMP_PATH: string };
@@ -118,86 +119,127 @@ export function createRpcSessionRuntime({
       }
       frameReplay.accept(frame);
     });
+    let isRegistered = false;
+    let disposed = false;
     const disposeUnregisteredRpc = async (): Promise<void> => {
+      if (disposed || isRegistered) return;
+      disposed = true;
       unsubscribe();
       frameReplay.dispose();
       if (!processHasExited) await rpc.terminate().catch(() => {});
     };
 
-    const stateResponse = await (async () => {
-      try {
-        return RpcStateResponseSchema.parse(await rpc.start());
-      } catch (error) {
+    let deadlineTimeout: NodeJS.Timeout | undefined;
+    const { promise: deadlinePromise, reject: rejectDeadline } = Promise.withResolvers<never>();
+    deadlineTimeout = setTimeout(() => {
+      if (isRegistered) return;
+      void disposeUnregisteredRpc();
+      rejectDeadline(new Error("OMP RPC session launch timed out"));
+    }, RPC_LAUNCH_DEADLINE_MS);
+    deadlineTimeout.unref();
+
+    const executePreRegistration = async (): Promise<{
+      session: Session;
+      sessionBlobDirectory: string | undefined;
+    }> => {
+      const stateResponse = await (async () => {
+        try {
+          return RpcStateResponseSchema.parse(await rpc.start());
+        } catch (error) {
+          await disposeUnregisteredRpc();
+          throw error;
+        }
+      })();
+      const startedSessionId = stateResponse.data.sessionId;
+      if (!startedSessionId) {
         await disposeUnregisteredRpc();
-        throw error;
+        throw new Error("OMP RPC did not return a session ID");
       }
-    })();
-    sessionId = stateResponse.data.sessionId;
-    if (!sessionId) {
-      await disposeUnregisteredRpc();
-      throw new Error("OMP RPC did not return a session ID");
-    }
-    sessionBlobDirectory = stateResponse.data.sessionFile
-      ? resolveAgentBlobDirectory(stateResponse.data.sessionFile)
-      : undefined;
-    const contextPercent = normalizePercent(stateResponse.data.contextUsage?.percent);
-    let catalogSession: Session | undefined;
+      sessionId = startedSessionId;
+      sessionBlobDirectory = stateResponse.data.sessionFile
+        ? resolveAgentBlobDirectory(stateResponse.data.sessionFile)
+        : undefined;
+      const contextPercent = normalizePercent(stateResponse.data.contextUsage?.percent);
+      let catalogSession: Session | undefined;
+      if (resume === null) {
+        // A fresh OMP session may not have a catalog entry until its first prompt is persisted.
+        // Its topology is known: it cannot already have a parent.
+        catalogSession = sessionCatalog.get(startedSessionId);
+      } else {
+        try {
+          catalogSession = await waitForCatalogTopology(
+            requestCatalogReconciliation,
+            () => sessionCatalog.get(startedSessionId),
+            processExited.promise,
+            waitForCatalogRetry,
+            () => processHasExited,
+          );
+        } catch (error) {
+          await disposeUnregisteredRpc();
+          throw error;
+        }
+        if (!catalogSession) {
+          await disposeUnregisteredRpc();
+          throw new Error("OMP RPC exited before session topology was resolved");
+        }
+      }
+      const [skillCommands, availableModels] = await Promise.all([
+        loadRpcSkillCommands(sessionId, rpc),
+        loadRpcModelOptions(sessionId, rpc),
+      ]);
+      const now = new Date().toISOString();
+      const session: Session = {
+        id: sessionId,
+        source: "rpc",
+        name: stateResponse.data.sessionName ?? null,
+        cwd,
+        branch: await resolveGitBranch(cwd),
+        status: stateResponse.data.isStreaming
+          ? "running"
+          : stateResponse.data.queuedMessageCount
+            ? "waiting"
+            : "idle",
+        connected: true,
+        model: stateResponse.data.model
+          ? `${stateResponse.data.model.provider}/${stateResponse.data.model.id}`
+          : null,
+        effort: stateResponse.data.thinkingLevel ?? null,
+        availableModels,
+        contextPercent,
+        createdAt: catalogSession?.createdAt ?? now,
+        lastActivity: now,
+        capabilities: ["prompt", "steer", "follow_up", "abort", "kill", "resume", "model", "effort"],
+        messages: [],
+        sessionPath: stateResponse.data.sessionFile ?? null,
+        parentSessionId: catalogSession?.parentSessionId ?? null,
+        activeSubagents: catalogSession?.activeSubagents ?? [],
+        skillCommands,
+      };
+      if (processHasExited) {
+        await disposeUnregisteredRpc();
+        throw new Error("OMP RPC exited before session registration completed");
+      }
+      return { session, sessionBlobDirectory };
+    };
+
+    let session: Session;
     try {
-      catalogSession = await waitForCatalogTopology(
-        requestCatalogReconciliation,
-        () => sessionCatalog.get(sessionId!),
-        processExited.promise,
-        waitForCatalogRetry,
-        () => processHasExited,
-      );
+      const preRegistration = await Promise.race([executePreRegistration(), deadlinePromise]);
+      if (disposed) {
+        throw new Error("OMP RPC session launch timed out");
+      }
+      clearTimeout(deadlineTimeout);
+      isRegistered = true;
+      session = preRegistration.session;
+      sessionBlobDirectory = preRegistration.sessionBlobDirectory;
+      registry.upsert(session);
+      rpcSessions.set(session.id, rpc);
     } catch (error) {
+      clearTimeout(deadlineTimeout);
       await disposeUnregisteredRpc();
       throw error;
     }
-    if (!catalogSession) {
-      await disposeUnregisteredRpc();
-      throw new Error("OMP RPC exited before session topology was resolved");
-    }
-    const [skillCommands, availableModels] = await Promise.all([
-      loadRpcSkillCommands(sessionId, rpc),
-      loadRpcModelOptions(sessionId, rpc),
-    ]);
-    const now = new Date().toISOString();
-    const session: Session = {
-      id: sessionId,
-      source: "rpc",
-      name: stateResponse.data.sessionName ?? null,
-      cwd,
-      branch: await resolveGitBranch(cwd),
-      status: stateResponse.data.isStreaming
-        ? "running"
-        : stateResponse.data.queuedMessageCount
-          ? "waiting"
-          : "idle",
-      connected: true,
-      model: stateResponse.data.model
-        ? `${stateResponse.data.model.provider}/${stateResponse.data.model.id}`
-        : null,
-      effort: stateResponse.data.thinkingLevel ?? null,
-      availableModels,
-      contextPercent,
-      createdAt: catalogSession?.createdAt ?? now,
-      lastActivity: now,
-      capabilities: ["prompt", "steer", "follow_up", "abort", "kill", "resume", "model", "effort"],
-      messages: [],
-      sessionPath: stateResponse.data.sessionFile ?? null,
-      ...(catalogSession?.parentSessionId !== undefined
-        ? { parentSessionId: catalogSession.parentSessionId }
-        : {}),
-      activeSubagents: catalogSession?.activeSubagents ?? [],
-      skillCommands,
-    };
-    if (processHasExited) {
-      await disposeUnregisteredRpc();
-      throw new Error("OMP RPC exited before session registration completed");
-    }
-    registry.upsert(session);
-    rpcSessions.set(sessionId, rpc);
+    const registeredSessionId = session.id;
     const hydratedRawMessages: unknown[] = [];
     try {
       const messagesResponse = RpcMessagesResponseSchema.parse(await rpc.request({ type: "get_messages" }));
@@ -210,7 +252,7 @@ export function createRpcSessionRuntime({
         const message = normalizeRawMessage(
           rawMessage,
           false,
-          `rpc-history-${sessionId}-${Math.max(0, index - visibleMessageStart)}`,
+          `rpc-history-${registeredSessionId}-${Math.max(0, index - visibleMessageStart)}`,
           { toolCallTracker },
         );
         if (index >= visibleMessageStart && message) retained.push({ raw: rawMessage, message });
@@ -218,15 +260,15 @@ export function createRpcSessionRuntime({
       const resolveImage = sessionBlobDirectory ? createReadImageResolver(sessionBlobDirectory) : undefined;
       for (const { raw, message } of retained) {
         const materialized = resolveImage ? materializeReadImages(message, raw, resolveImage) : message;
-        registry.appendMessage(sessionId, materialized);
+        registry.appendMessage(registeredSessionId, materialized);
         hydratedRawMessages.push(raw);
       }
     } catch (error) {
-      logger.error("Could not load initial OMP transcript", error, { sessionId });
+      logger.error("Could not load initial OMP transcript", error, { sessionId: registeredSessionId });
     } finally {
       frameReplay.register(hydratedRawMessages);
     }
-    return registry.get(sessionId) ?? session;
+    return registry.get(registeredSessionId) ?? session;
   }
 
   async function loadRpcSkillCommands(sessionId: string, rpc: RpcSession): Promise<Session["skillCommands"]> {
@@ -320,9 +362,9 @@ export function createDeferredRpcFrameReplay(applyFrame: (frame: RpcFrame) => vo
         hydrationBoundary,
         hydratedRawMessages,
       );
-      for (let index = 0; index < deferredFrames.length; index += 1) {
+      for (const [index, frame] of deferredFrames.entries()) {
         if (index >= hydrationBoundary || !skippedFrameIndexes.has(index)) {
-          applyFrame(deferredFrames[index]!);
+          applyFrame(frame);
         }
       }
       deferredFrames.length = 0;

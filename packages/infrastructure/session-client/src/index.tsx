@@ -29,6 +29,7 @@ const RECONNECT_DELAY_MS = 1_500;
 const INITIAL_SNAPSHOT_DEADLINE_MS = 10_000;
 const CATALOG_PAGE_SIZE = 100;
 const SWITCH_BRANCH_TIMEOUT_MS = 30_000;
+const LAUNCH_COMMAND_TIMEOUT_MS = 20_000;
 const PUSH_COMMAND_TIMEOUT_MS = 10_000;
 const MAX_SERVER_ERROR_LENGTH = 500;
 
@@ -519,10 +520,12 @@ export function useSessionClient(): SessionClient {
   );
   const launch = useCallback(
     (cwd: string, resume: string | null) =>
-      send({ type: "launch", requestId: crypto.randomUUID(), cwd, resume }).then((value) => {
-        if (value.type !== "launch") throw new Error("The host did not identify the launched session");
-        return value.sessionId;
-      }),
+      send({ type: "launch", requestId: crypto.randomUUID(), cwd, resume }, LAUNCH_COMMAND_TIMEOUT_MS).then(
+        (value) => {
+          if (value.type !== "launch") throw new Error("The host did not identify the launched session");
+          return value.sessionId;
+        },
+      ),
     [send],
   );
   const saveWorkingDirectory = useCallback(

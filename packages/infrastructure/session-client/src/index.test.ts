@@ -303,6 +303,76 @@ describe("sendBrowserCommand", () => {
       vi.useRealTimers();
     }
   });
+  it("sends the exact launch frame with 20-second timeout and clears pending request on timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = {
+        readyState: WebSocket.OPEN,
+        send: vi.fn(),
+      } as unknown as WebSocket;
+      const pendingCommands = new Map();
+      const frame = {
+        type: "launch" as const,
+        requestId: "launch-req-1",
+        cwd: "/work/project",
+        resume: null,
+      };
+
+      const result = sendBrowserCommand(socket, pendingCommands, frame, 20_000);
+      const rejection = expect(result).rejects.toThrow(
+        "The host did not respond before the command timed out",
+      );
+
+      expect(socket.send).toHaveBeenCalledWith(JSON.stringify(frame));
+      expect(pendingCommands.size).toBe(1);
+      await vi.advanceTimersByTimeAsync(20_000);
+      await rejection;
+      expect(pendingCommands.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cleans up pending launch command and timeout on correlated success", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = {
+        readyState: WebSocket.OPEN,
+        send: vi.fn(),
+      } as unknown as WebSocket;
+      const pendingCommands = new Map();
+      const frame = {
+        type: "launch" as const,
+        requestId: "launch-req-2",
+        cwd: "/work/project",
+        resume: "prior-session-id",
+      };
+
+      const result = sendBrowserCommand(socket, pendingCommands, frame, 20_000);
+      expect(pendingCommands.size).toBe(1);
+
+      const resolved = resolvePendingCommand(pendingCommands, {
+        type: "command_result",
+        requestId: "launch-req-2",
+        outcome: {
+          status: "ok",
+          value: { type: "launch", sessionId: "resumed-session-id" },
+        },
+      });
+
+      expect(resolved).toBe(true);
+      await expect(result).resolves.toEqual({
+        type: "launch",
+        sessionId: "resumed-session-id",
+      });
+      expect(pendingCommands.size).toBe(0);
+
+      // Advance timers past 20s to ensure timeout callback does not fire
+      await vi.advanceTimersByTimeAsync(30_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("push browser commands", () => {
