@@ -1015,7 +1015,7 @@ export const BrowserCommandSchema = z.union([
     requestId: z.string().min(1),
     sessionId: z.string().min(1),
     command: z.literal("set_model"),
-    model: z.string().regex(/^[^/]+\/.+$/),
+    model: z.string().regex(/^(?:@[a-zA-Z0-9_-]+|[^@/][^/]*\/.+)$/),
   }),
   z.object({
     type: z.literal("session_command"),
@@ -1133,6 +1133,13 @@ export const ExtensionRegisterSchema = z.object({
   type: z.literal("register"),
   session: ExtensionRegistrationSessionSchema,
 });
+export const ExtensionMetadataSchema = z
+  .object({
+    type: z.literal("metadata"),
+    sessionId: z.string().min(1),
+    availableModels: z.array(SessionModelOptionSchema),
+  })
+  .strict();
 
 export const ExtensionEventSchema = z.object({
   type: z.literal("event"),
@@ -1165,6 +1172,7 @@ export const ExtensionResultSchema = z.object({
 
 export const ExtensionFrameSchema = z.discriminatedUnion("type", [
   ExtensionRegisterSchema,
+  ExtensionMetadataSchema,
   ExtensionEventSchema,
   ExtensionHeartbeatSchema,
   ExtensionResultSchema,
@@ -1216,6 +1224,7 @@ export type Effort = z.infer<typeof EffortSchema>;
 export type RoleEffort = z.infer<typeof RoleEffortSchema>;
 export type ActiveSubagent = z.infer<typeof ActiveSubagentSchema>;
 export type ExtensionCommand = z.infer<typeof ExtensionCommandSchema>;
+export type ExtensionMetadata = z.infer<typeof ExtensionMetadataSchema>;
 export type ExtensionFrame = z.infer<typeof ExtensionFrameSchema>;
 export type ServerFrame = z.infer<typeof ServerFrameSchema>;
 export type SessionCatalogPage = z.infer<typeof SessionCatalogPageSchema>;

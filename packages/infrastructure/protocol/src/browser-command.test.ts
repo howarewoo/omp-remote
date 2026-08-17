@@ -97,24 +97,37 @@ describe("BrowserCommandSchema", () => {
   });
 
   it("accepts model and effort session controls", () => {
+    for (const model of ["openai/gpt-5.6", "@slow"]) {
+      expect(
+        BrowserCommandSchema.parse({
+          type: "session_command",
+          requestId: "m-1",
+          sessionId: "s-1",
+          command: "set_model",
+          model,
+        }),
+      ).toMatchObject({ command: "set_model", model });
+    }
     expect(
       BrowserCommandSchema.parse({
         type: "session_command",
-        requestId: "model-1",
-        sessionId: "session-1",
-        command: "set_model",
-        model: "openai/gpt-5.6",
-      }),
-    ).toMatchObject({ command: "set_model", model: "openai/gpt-5.6" });
-    expect(
-      BrowserCommandSchema.parse({
-        type: "session_command",
-        requestId: "effort-1",
-        sessionId: "session-1",
+        requestId: "e-1",
+        sessionId: "s-1",
         command: "set_effort",
         effort: "high",
       }),
     ).toMatchObject({ command: "set_effort", effort: "high" });
+    for (const model of ["@", "@invalid/slash", "invalid-model"]) {
+      expect(() =>
+        BrowserCommandSchema.parse({
+          type: "session_command",
+          requestId: "m-inv",
+          sessionId: "s-1",
+          command: "set_model",
+          model,
+        }),
+      ).toThrow();
+    }
   });
 
   it.each([

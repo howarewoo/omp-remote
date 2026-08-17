@@ -85,6 +85,7 @@ export interface RpcSessionOptions {
   cwd: string;
   ompPath: string;
   resume: string | null;
+  extensionPath?: string | null | undefined;
   onStderr: (text: string) => void;
 }
 
@@ -107,6 +108,7 @@ export class RpcSession {
     if (this.#child) throw new Error("OMP RPC session is already running");
     const args = ["--mode", "rpc-ui", "--cwd", this.#options.cwd];
     if (this.#options.resume) args.push("--resume", this.#options.resume);
+    if (this.#options.extensionPath) args.push("--extension", this.#options.extensionPath);
     const child = spawn(this.#options.ompPath, args, { stdio: ["pipe", "pipe", "pipe"] });
     this.#child = child;
     child.stdout.setEncoding("utf8");

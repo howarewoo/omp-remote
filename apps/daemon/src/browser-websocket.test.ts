@@ -1,16 +1,19 @@
 import { EventEmitter } from "node:events";
+import type { RpcSession } from "@omp-remote/omp-rpc";
 import {
   type ApplicationErrorRecord,
   type AskRequest,
   ServerFrameSchema,
   type Session,
 } from "@omp-remote/protocol";
+import { SessionRegistry } from "@omp-remote/sessions/services";
 import { describe, expect, it, vi } from "vitest";
 import type { WebSocket } from "ws";
 import type { ApplicationErrorStore } from "./application-error-store.js";
 import { MAX_BROWSER_BUFFERED_BYTES } from "./browser-broadcast.js";
 import {
   browserSnapshotSessions,
+  executeRpcSessionCommand,
   pendingAskRequestsForBrowserSnapshot,
   registerBrowserWebSocketRoute,
   removeBrowserSocket,
@@ -117,7 +120,7 @@ describe("browser WebSocket snapshot", () => {
 
 describe("browser WebSocket Ask lifecycle", () => {
   it("retains an admitted extension Ask when the last browser disconnects for reconnect", () => {
-    const socket = {};
+    const socket = {} as WebSocket;
     const browserSockets = new Set([socket]);
     const pendingAskBySession = new Map([
       [pendingAsk.sessionId, { request: pendingAsk, source: "extension" as const, timeout: undefined }],
@@ -498,5 +501,86 @@ describe("browser WebSocket report_application_error", () => {
         outcome: { status: "error", error: "No model specified" },
       }),
     );
+  });
+});
+
+describe("executeRpcSessionCommand", () => {
+  const rpcSession = {
+    id: "session-rpc-1",
+    availableModels: [
+      {
+        provider: "anthropic",
+        id: "claude-sonnet-4",
+        name: "Claude 4",
+        efforts: ["high"] as const,
+        roles: ["slow"],
+        roleEfforts: { slow: "high" as const },
+      },
+    ],
+  };
+
+  it("resolves configured @role with concrete model and thinking level", async () => {
+    const registry = { get: () => rpcSession } as unknown as SessionRegistry;
+    const requests: unknown[] = [];
+    const rpc = { request: vi.fn(async (req) => requests.push(req)) } as unknown as RpcSession;
+    const refresh = vi.fn(async () => undefined);
+    await executeRpcSessionCommand(
+      {
+        type: "session_command",
+        requestId: "r-1",
+        sessionId: "session-rpc-1",
+        command: "set_model",
+        model: "@slow",
+      },
+      rpc,
+      registry,
+      refresh,
+    );
+    expect(requests).toEqual([
+      { type: "set_model", provider: "anthropic", modelId: "claude-sonnet-4" },
+      { type: "set_thinking_level", level: "high" },
+    ]);
+    expect(refresh).toHaveBeenCalledWith("session-rpc-1", rpc);
+  });
+
+  it("handles missing role and thinking level failure without partial mutation", async () => {
+    const registry = { get: () => rpcSession } as unknown as SessionRegistry;
+    const rpc = {
+      request: vi.fn(async (req) => {
+        if (req.type === "set_thinking_level") throw new Error("level failed");
+      }),
+    } as unknown as RpcSession;
+    const refresh = vi.fn(async () => undefined);
+    await expect(
+      executeRpcSessionCommand(
+        {
+          type: "session_command",
+          requestId: "r-2",
+          sessionId: "session-rpc-1",
+          command: "set_model",
+          model: "@missing",
+        },
+        rpc,
+        registry,
+        refresh,
+      ),
+    ).rejects.toThrow("Role @missing is not configured on this session.");
+    expect(rpc.request).not.toHaveBeenCalled();
+
+    await expect(
+      executeRpcSessionCommand(
+        {
+          type: "session_command",
+          requestId: "r-3",
+          sessionId: "session-rpc-1",
+          command: "set_model",
+          model: "@slow",
+        },
+        rpc,
+        registry,
+        refresh,
+      ),
+    ).rejects.toThrow("level failed");
+    expect(refresh).toHaveBeenCalledWith("session-rpc-1", rpc);
   });
 });

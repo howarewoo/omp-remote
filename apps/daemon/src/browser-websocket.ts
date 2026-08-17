@@ -105,6 +105,54 @@ export async function respondToPendingAsk(
     return { ok: false, error: error instanceof Error ? error.message : "OMP rejected the answer" };
   }
 }
+export async function executeRpcSessionCommand(
+  command: Extract<BrowserCommand, { type: "session_command" }>,
+  rpcSession: RpcSession,
+  registry: SessionRegistry,
+  refreshRpcState: (sessionId: string, session: RpcSession) => Promise<void>,
+): Promise<void> {
+  if (command.command === "kill") {
+    await rpcSession.terminate();
+    return;
+  }
+  if (command.command === "abort") {
+    await rpcSession.request({ type: "abort" });
+    return;
+  }
+  if (command.command === "set_model") {
+    if (command.model.startsWith("@")) {
+      const role = command.model.slice(1);
+      const session = registry.get(command.sessionId);
+      const option = session?.availableModels?.find((model) => model.roles?.includes(role));
+      if (!option) throw new Error(`Role ${command.model} is not configured on this session.`);
+      await rpcSession.request({ type: "set_model", provider: option.provider, modelId: option.id });
+      const effort = option.roleEfforts?.[role];
+      if (effort && effort !== "inherit" && effort !== "auto") {
+        try {
+          await rpcSession.request({ type: "set_thinking_level", level: effort });
+        } finally {
+          await refreshRpcState(command.sessionId, rpcSession);
+        }
+        return;
+      }
+    } else {
+      const [provider, ...modelId] = command.model.split("/");
+      await rpcSession.request({ type: "set_model", provider, modelId: modelId.join("/") });
+    }
+    await refreshRpcState(command.sessionId, rpcSession);
+    return;
+  }
+  if (command.command === "set_effort") {
+    await rpcSession.request({ type: "set_thinking_level", level: command.effort });
+    await refreshRpcState(command.sessionId, rpcSession);
+    return;
+  }
+  const rpcCommand: RpcFrame =
+    command.command === "follow_up"
+      ? { type: "follow_up", message: command.text }
+      : { type: command.command, message: command.text };
+  await rpcSession.request(rpcCommand);
+}
 
 export function registerBrowserWebSocketRoute(
   app: FastifyInstance,
@@ -379,24 +427,7 @@ export function registerBrowserWebSocketRoute(
       const rpcSession = rpcSessions.get(command.sessionId);
       if (rpcSession) {
         try {
-          if (command.command === "kill") {
-            await rpcSession.terminate();
-          } else if (command.command === "abort") {
-            await rpcSession.request({ type: "abort" });
-          } else if (command.command === "set_model") {
-            const [provider, ...modelId] = command.model.split("/");
-            await rpcSession.request({ type: "set_model", provider, modelId: modelId.join("/") });
-            await refreshRpcState(command.sessionId, rpcSession);
-          } else if (command.command === "set_effort") {
-            await rpcSession.request({ type: "set_thinking_level", level: command.effort });
-            await refreshRpcState(command.sessionId, rpcSession);
-          } else {
-            const rpcCommand: RpcFrame =
-              command.command === "follow_up"
-                ? { type: "follow_up", message: command.text }
-                : { type: command.command, message: command.text };
-            await rpcSession.request(rpcCommand);
-          }
+          await executeRpcSessionCommand(command, rpcSession, registry, refreshRpcState);
           sendToBrowser(socket, {
             type: "command_result",
             requestId: command.requestId,
@@ -424,6 +455,17 @@ export function registerBrowserWebSocketRoute(
         return;
       }
 
+      if (command.command === "set_model" && command.model.startsWith("@")) {
+        sendToBrowser(socket, {
+          type: "command_result",
+          requestId: command.requestId,
+          outcome: {
+            status: "error",
+            error: "Role aliases are only supported on dashboard-launched RPC sessions.",
+          },
+        });
+        return;
+      }
       const extensionSocket = extensionSockets.get(command.sessionId);
       if (extensionSocket?.readyState === WebSocket.OPEN) {
         extensionSocket.send(JSON.stringify(command));

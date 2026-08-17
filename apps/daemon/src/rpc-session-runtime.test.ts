@@ -1,9 +1,12 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Logger } from "@omp-remote/observability";
 import type { RpcFrame, RpcSession } from "@omp-remote/omp-rpc";
 import type { Session } from "@omp-remote/protocol";
 import { SessionRegistry } from "@omp-remote/sessions/services";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
-import { createRpcSessionRuntime } from "./rpc-session-runtime.js";
+import { createRpcSessionRuntime, resolveInstalledExtensionPath } from "./rpc-session-runtime.js";
 import type { SessionCatalog } from "./session-catalog.js";
 
 const { mockRpcInstances, rpcControl } = vi.hoisted(() => {
@@ -243,5 +246,17 @@ describe("RpcSessionRuntime launch deadline and disposal", () => {
 
     // Ensure the registered session is NEVER terminated by the deadline
     expect(rpcInstance.terminate).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveInstalledExtensionPath", () => {
+  it("resolves the extension path when it exists and returns undefined when missing", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omp-remote-ext-"));
+    expect(resolveInstalledExtensionPath(dir)).toBeUndefined();
+    const targetDir = join(dir, "extensions");
+    await mkdir(targetDir, { recursive: true });
+    await writeFile(join(targetDir, "omp-remote.js"), "module.exports = {};");
+    expect(resolveInstalledExtensionPath(dir)).toBe(join(targetDir, "omp-remote.js"));
+    await rm(dir, { recursive: true, force: true });
   });
 });
