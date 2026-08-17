@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { chmodSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -18,8 +19,8 @@ import {
   type PersistedApplicationErrorsState,
   PersistedApplicationErrorsStateSchema,
   sanitizeApplicationErrorContext,
+  type ServerFrame,
 } from "@omp-remote/protocol";
-
 export const DEFAULT_APPLICATION_ERRORS_PATH = resolve(homedir(), ".omp/remote/errors.json");
 const CURRENT_VERSION = 1;
 
@@ -150,9 +151,23 @@ export class ApplicationErrorStore {
     });
     return record;
   }
-
   async recordFromLogEntry(entry: ErrorLogEntry): Promise<ApplicationErrorRecord | null> {
     try {
+      if (
+        entry.fields.sessionId !== undefined &&
+        entry.fields.sessionId !== null &&
+        entry.fields.sessionId !== ""
+      ) {
+        return null;
+      }
+      if (
+        entry.fields.scope === "command" ||
+        entry.fields.scope === "command_failure" ||
+        entry.fields.expected === true
+      ) {
+        return null;
+      }
+
       const sanitizedContext = sanitizeApplicationErrorContext(entry.fields);
       const rawMessage = entry.message || "Unknown error";
       const message = rawMessage.slice(0, APPLICATION_ERROR_MESSAGE_MAX_CHARS);
@@ -187,6 +202,26 @@ export class ApplicationErrorStore {
       return [];
     });
     return { clearedCount };
+  }
+
+  recordFatalSynchronously(input: ApplicationErrorInput): ApplicationErrorRecord {
+    const record = normalizeAndValidateRecord(input);
+    const nextRecords = boundApplicationErrorRecords([...this.#records, record]);
+    const nextState: PersistedApplicationErrorsState = {
+      version: CURRENT_VERSION,
+      errors: nextRecords,
+    };
+    try {
+      persistFatalSynchronously(this.#filePath, nextState);
+      this.#records = nextRecords;
+      this.#status = "healthy";
+      this.#degradedReason = null;
+      return record;
+    } catch (error) {
+      this.#status = "degraded";
+      this.#degradedReason = `Persistence failed: ${error instanceof Error ? error.message : String(error)}`;
+      throw error;
+    }
   }
 
   #mutate(
@@ -273,4 +308,80 @@ async function persistAtomically(filePath: string, state: PersistedApplicationEr
 
 function isMissingPathError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function ensurePrivateDirectorySync(directory: string): void {
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  try {
+    chmodSync(directory, 0o700);
+  } catch {
+    // Non-fatal if filesystem ignores chmod
+  }
+}
+
+function persistFatalSynchronously(filePath: string, state: PersistedApplicationErrorsState): void {
+  const parent = dirname(filePath);
+  ensurePrivateDirectorySync(parent);
+  const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    const serialized = serializeState(state);
+    writeFileSync(temporaryPath, serialized, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
+    try {
+      chmodSync(temporaryPath, 0o600);
+    } catch {
+      // Non-fatal if filesystem ignores chmod
+    }
+    renameSync(temporaryPath, filePath);
+    try {
+      chmodSync(filePath, 0o600);
+    } catch {
+      // Non-fatal if filesystem ignores chmod
+    }
+  } catch (error) {
+    try {
+      unlinkSync(temporaryPath);
+    } catch {
+      // Ignore cleanup error on crash path
+    }
+    throw error;
+  }
+}
+
+export function installUncaughtExceptionMonitor(
+  store: ApplicationErrorStore,
+  broadcast?: (frame: ServerFrame) => void,
+): () => void {
+  const listener = (error: unknown, origin: string): void => {
+    try {
+      const rawError = error instanceof Error ? error : new Error(String(error));
+      const message =
+        rawError.message || (origin === "unhandledRejection" ? "Unhandled rejection" : "Uncaught exception");
+      const errorName = rawError.name || "Error";
+      const stack = rawError.stack;
+      const record = store.recordFatalSynchronously({
+        source: "daemon",
+        severity: "fatal",
+        message: message.slice(0, APPLICATION_ERROR_MESSAGE_MAX_CHARS),
+        errorName: errorName.slice(0, APPLICATION_ERROR_NAME_MAX_CHARS),
+        stack: stack ? stack.slice(0, APPLICATION_ERROR_STACK_MAX_CHARS) : undefined,
+        context: {
+          event: typeof origin === "string" ? origin.slice(0, 100) : "uncaughtException",
+        },
+      });
+      if (broadcast) {
+        broadcast({ type: "application_error_added", error: record });
+      }
+    } catch {
+      // Monitor must never throw or prevent process crash
+    }
+  };
+
+  process.on("uncaughtExceptionMonitor", listener);
+  return () => {
+    process.removeListener("uncaughtExceptionMonitor", listener);
+  };
 }
