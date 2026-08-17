@@ -79,21 +79,7 @@ export function registerExtensionWebSocketRoute(
       Exclude<ExtensionFrame, { type: "register" } | { type: "metadata" }>
     >(
       async (frame, isCurrent) => {
-        const catalogSession = sessionCatalog.get(frame.session.id);
-        const registered = await registerDeferredSession(
-          {
-            ...sanitizeExtensionSession(frame.session),
-            ...(catalogSession?.parentSessionId !== undefined
-              ? { parentSessionId: catalogSession.parentSessionId }
-              : {}),
-            createdAt: catalogSession?.createdAt ?? frame.session.createdAt ?? frame.session.lastActivity,
-            activeSubagents: catalogSession?.activeSubagents ?? [],
-          },
-          registerExtensionSession,
-          isCurrent,
-          () => waitForRegistrationRetry(socketClosed.promise),
-        );
-        if (!registered || !isCurrent()) return false;
+        if (!isCurrent()) return false;
         const previousSessionId = extensionSessionBySocket.get(socket);
         if (previousSessionId && previousSessionId !== frame.session.id) {
           const releasedSessionId = releaseCurrentExtensionSocket(
@@ -117,6 +103,40 @@ export function registerExtensionWebSocketRoute(
         extensionSessionBySocket.set(socket, frame.session.id);
         extensionSockets.set(frame.session.id, socket);
         refreshSessionBranch(frame.session.id, frame.session.cwd);
+
+        const sanitized = sanitizeExtensionSession(frame.session);
+        const catalogSession = sessionCatalog.get(frame.session.id);
+        const existingSession = registry.get(frame.session.id);
+        const provisionalSession: Session = {
+          ...sanitized,
+          ...(catalogSession?.parentSessionId !== undefined
+            ? { parentSessionId: catalogSession.parentSessionId }
+            : existingSession?.parentSessionId !== undefined
+              ? { parentSessionId: existingSession.parentSessionId }
+              : {}),
+          createdAt:
+            catalogSession?.createdAt ??
+            existingSession?.createdAt ??
+            frame.session.createdAt ??
+            frame.session.lastActivity,
+          activeSubagents: catalogSession?.activeSubagents ?? existingSession?.activeSubagents ?? [],
+        };
+        registry.upsert(provisionalSession);
+
+        const registered = await registerDeferredSession(
+          {
+            ...sanitized,
+            ...(catalogSession?.parentSessionId !== undefined
+              ? { parentSessionId: catalogSession.parentSessionId }
+              : {}),
+            createdAt: catalogSession?.createdAt ?? frame.session.createdAt ?? frame.session.lastActivity,
+            activeSubagents: catalogSession?.activeSubagents ?? [],
+          },
+          registerExtensionSession,
+          isCurrent,
+          () => waitForRegistrationRetry(socketClosed.promise),
+        );
+        if (!registered || !isCurrent()) return false;
         return true;
       },
       (frame) => {
@@ -158,6 +178,11 @@ export function registerExtensionWebSocketRoute(
             clearPendingAsk(frame.sessionId, frame.requestId);
           }
         } else if (frame.type === "heartbeat") {
+          if (
+            !ownsCurrentExtensionSocket(socket, frame.sessionId, extensionSessionBySocket, extensionSockets)
+          ) {
+            return;
+          }
           const currentSession = registry.get(frame.sessionId);
           registry.update(frame.sessionId, {
             connected: true,
@@ -172,6 +197,11 @@ export function registerExtensionWebSocketRoute(
           });
           if (currentSession) refreshSessionBranch(frame.sessionId, currentSession.cwd);
         } else if (frame.type === "event") {
+          if (
+            !ownsCurrentExtensionSocket(socket, frame.sessionId, extensionSessionBySocket, extensionSockets)
+          ) {
+            return;
+          }
           registry.update(frame.sessionId, {
             connected: true,
             ...(frame.event === "agent_start" ? { status: "running" as const } : {}),
@@ -185,6 +215,13 @@ export function registerExtensionWebSocketRoute(
             registry.appendMessage(frame.sessionId, sanitizeTranscriptMessageImages(frame.message));
           }
         } else {
+          const sessionId = extensionSessionBySocket.get(socket);
+          if (
+            !sessionId ||
+            !ownsCurrentExtensionSocket(socket, sessionId, extensionSessionBySocket, extensionSockets)
+          ) {
+            return;
+          }
           broadcast({
             type: "command_result",
             requestId: frame.requestId,
