@@ -1,6 +1,7 @@
 import type { Logger } from "@omp-remote/observability";
 import type { RpcFrame, RpcSession } from "@omp-remote/omp-rpc";
 import {
+  type ApplicationErrorInput,
   type AskRequest,
   type BrowserCommand,
   BrowserCommandSchema,
@@ -13,6 +14,7 @@ import { WebSocket } from "ws";
 import { type AskInactivityTimeout, isAskResponseValid, resetAskInactivityTimeout } from "./rpc-ask.js";
 import type { PushSubscriptionStore } from "./push-subscriptions.js";
 import type { SavedWorkingDirectoryStore } from "./saved-working-directories.js";
+import type { ApplicationErrorStore } from "./application-error-store.js";
 
 type PendingAsk = {
   request: AskRequest;
@@ -53,6 +55,7 @@ type BrowserWebSocketDependencies = {
   expirePendingAsk: (sessionId: string, requestId: string, source: "rpc" | "extension") => void;
   originAllowed: (origin: string | undefined, host: string | undefined) => boolean;
   logger: Logger;
+  errorStore?: ApplicationErrorStore;
 };
 
 type AskResponseCommand = Extract<BrowserCommand, { type: "ask_response" }>;
@@ -123,6 +126,7 @@ export function registerBrowserWebSocketRoute(
     expirePendingAsk,
     originAllowed,
     logger,
+    errorStore,
   }: BrowserWebSocketDependencies,
 ): void {
   app.get("/ws", { websocket: true }, (socket, request) => {
@@ -142,7 +146,9 @@ export function registerBrowserWebSocketRoute(
         try {
           return BrowserCommandSchema.parse(JSON.parse(raw.toString()));
         } catch (error) {
-          logger.error("Rejected dashboard command", error);
+          logger.warn("Rejected dashboard command", {
+            error: error instanceof Error ? error.message : String(error),
+          });
           sendToBrowser(socket, { type: "error", message: "The dashboard command was not valid." });
           return null;
         }
@@ -197,6 +203,57 @@ export function registerBrowserWebSocketRoute(
         return;
       }
 
+      if (command.type === "report_application_error") {
+        if (!errorStore) {
+          sendToBrowser(socket, {
+            type: "command_result",
+            requestId: command.requestId,
+            outcome: {
+              status: "error",
+              error: "Application error reporting is unavailable",
+            },
+          });
+          return;
+        }
+        try {
+          const errorPayload = "error" in command ? command.error : command;
+          const input: ApplicationErrorInput = {
+            source: "browser",
+            severity: errorPayload.severity ?? "error",
+            message: errorPayload.message,
+            ...(errorPayload.errorName ? { errorName: errorPayload.errorName } : {}),
+            ...(errorPayload.stack ? { stack: errorPayload.stack } : {}),
+            ...(errorPayload.context ? { context: errorPayload.context } : {}),
+            ...(errorPayload.id ? { id: errorPayload.id } : {}),
+            ...(errorPayload.timestamp ? { timestamp: errorPayload.timestamp } : {}),
+          };
+          const record = await errorStore.record(input);
+          broadcast({
+            type: "application_error_added",
+            error: record,
+          });
+          sendToBrowser(socket, {
+            type: "command_result",
+            requestId: command.requestId,
+            outcome: { status: "ok", value: { type: "void" } },
+          });
+        } catch (error) {
+          logger.warn("Failed to record browser application error", {
+            requestId: command.requestId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          sendToBrowser(socket, {
+            type: "command_result",
+            requestId: command.requestId,
+            outcome: {
+              status: "error",
+              error: error instanceof Error ? error.message : "Application error could not be recorded",
+            },
+          });
+        }
+        return;
+      }
+
       if (command.type === "save_working_directory" || command.type === "remove_working_directory") {
         try {
           const directories =
@@ -214,6 +271,7 @@ export function registerBrowserWebSocketRoute(
           });
         } catch (error) {
           logger.error("Could not update saved working directories", error, {
+            scope: "command",
             cwd: command.cwd,
             operation: command.type,
           });
@@ -239,7 +297,7 @@ export function registerBrowserWebSocketRoute(
             outcome: { status: "ok", value: { type: "launch", sessionId: session.id } },
           });
         } catch (error) {
-          logger.error("Failed to launch OMP RPC session", error, { cwd: command.cwd });
+          logger.error("Failed to launch OMP RPC session", error, { scope: "command", cwd: command.cwd });
           sendToBrowser(socket, {
             type: "command_result",
             requestId: command.requestId,
@@ -289,6 +347,7 @@ export function registerBrowserWebSocketRoute(
           });
         } catch (error) {
           logger.error("Could not switch Git branch", error, {
+            scope: "command",
             sessionId: command.sessionId,
             branch: command.branch,
             stage: "switch_branch",

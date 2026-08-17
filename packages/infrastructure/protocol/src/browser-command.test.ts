@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  ApplicationErrorAddedFrameSchema,
+  ApplicationErrorsClearedFrameSchema,
   BrowserCommandSchema,
   NotificationEventSchema,
   PushEventPreferencesSchema,
   PushSubscriptionSchema,
+  ReportApplicationErrorCommandSchema,
+  ServerFrameSchema,
   SessionBranchTopologySchema,
 } from "./index.js";
 
@@ -402,5 +406,143 @@ describe("branch topology protocol", () => {
         extra: true,
       }),
     ).toThrow();
+  });
+});
+
+describe("report_application_error browser command and server frames", () => {
+  it("accepts report_application_error with nested error object", () => {
+    const command = {
+      type: "report_application_error" as const,
+      requestId: "report-1",
+      error: {
+        message: "UI component crashed",
+        errorName: "TypeError",
+        stack: "TypeError: Cannot read properties of undefined",
+        context: { route: "/dashboard", componentName: "SessionViewer" },
+      },
+    };
+    const parsed = BrowserCommandSchema.parse(command);
+    expect(parsed).toEqual({
+      type: "report_application_error",
+      requestId: "report-1",
+      error: {
+        source: "browser",
+        severity: "error",
+        message: "UI component crashed",
+        errorName: "TypeError",
+        stack: "TypeError: Cannot read properties of undefined",
+        context: { route: "/dashboard", componentName: "SessionViewer" },
+      },
+    });
+  });
+
+  it("accepts report_application_error with flat fields", () => {
+    const command = {
+      type: "report_application_error" as const,
+      requestId: "report-2",
+      message: "Direct flat error message",
+      severity: "fatal" as const,
+      errorName: "UnhandledException",
+      context: { route: "/sessions", status: "failed" },
+    };
+    const parsed = BrowserCommandSchema.parse(command);
+    expect(parsed).toEqual({
+      type: "report_application_error",
+      requestId: "report-2",
+      source: "browser",
+      severity: "fatal",
+      message: "Direct flat error message",
+      errorName: "UnhandledException",
+      context: { route: "/sessions", status: "failed" },
+    });
+  });
+
+  it("rejects browser reports attempting to spoof source as daemon", () => {
+    expect(() =>
+      BrowserCommandSchema.parse({
+        type: "report_application_error",
+        requestId: "report-spoof",
+        error: {
+          source: "daemon",
+          message: "Spoofed error",
+        },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      BrowserCommandSchema.parse({
+        type: "report_application_error",
+        requestId: "report-spoof-flat",
+        source: "daemon",
+        message: "Spoofed error",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects browser reports with unlisted/adversarial context keys", () => {
+    expect(() =>
+      BrowserCommandSchema.parse({
+        type: "report_application_error",
+        requestId: "report-bad-context",
+        error: {
+          message: "Error with bad context",
+          context: { jwt: "secret-token" },
+        },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects empty message or extra fields on report_application_error", () => {
+    expect(() =>
+      BrowserCommandSchema.parse({
+        type: "report_application_error",
+        requestId: "report-empty",
+        error: {
+          message: "   ",
+        },
+      }),
+    ).toThrow();
+
+    expect(() =>
+      BrowserCommandSchema.parse({
+        type: "report_application_error",
+        requestId: "report-extra",
+        error: {
+          message: "Valid message",
+        },
+        unexpected: 123,
+      }),
+    ).toThrow();
+  });
+
+  it("validates application_error_added frame through ServerFrameSchema", () => {
+    const frame = {
+      type: "application_error_added" as const,
+      error: {
+        id: "err-1",
+        timestamp: "2026-08-16T12:00:00.000Z",
+        source: "browser" as const,
+        severity: "error" as const,
+        message: "Render failure",
+        context: { route: "/terminal" },
+      },
+    };
+    expect(ServerFrameSchema.parse(frame)).toEqual(frame);
+    expect(ApplicationErrorAddedFrameSchema.parse(frame)).toEqual(frame);
+  });
+
+  it("validates application_errors_cleared frame through ServerFrameSchema", () => {
+    const frame = {
+      type: "application_errors_cleared" as const,
+      clearedAt: "2026-08-16T12:00:00.000Z",
+      clearedCount: 5,
+    };
+    expect(ServerFrameSchema.parse(frame)).toEqual(frame);
+    expect(ApplicationErrorsClearedFrameSchema.parse(frame)).toEqual(frame);
+
+    const minimalFrame = {
+      type: "application_errors_cleared" as const,
+    };
+    expect(ServerFrameSchema.parse(minimalFrame)).toEqual(minimalFrame);
   });
 });

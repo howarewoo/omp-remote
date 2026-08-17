@@ -1,10 +1,18 @@
-import { type AskRequest, ServerFrameSchema, type Session } from "@omp-remote/protocol";
+import { EventEmitter } from "node:events";
+import {
+  type ApplicationErrorRecord,
+  type AskRequest,
+  ServerFrameSchema,
+  type Session,
+} from "@omp-remote/protocol";
 import { describe, expect, it, vi } from "vitest";
 import type { WebSocket } from "ws";
+import type { ApplicationErrorStore } from "./application-error-store.js";
 import { MAX_BROWSER_BUFFERED_BYTES } from "./browser-broadcast.js";
 import {
   browserSnapshotSessions,
   pendingAskRequestsForBrowserSnapshot,
+  registerBrowserWebSocketRoute,
   removeBrowserSocket,
   respondToPendingAsk,
 } from "./browser-websocket.js";
@@ -156,5 +164,339 @@ describe("browser WebSocket Ask lifecycle", () => {
     });
     expect(clearPendingAsk).toHaveBeenCalledOnce();
     expect(pendingAskBySession).toEqual(new Map());
+  });
+});
+
+describe("browser WebSocket report_application_error", () => {
+  it("records validated browser error, broadcasts committed frame, and responds with ok command result", async () => {
+    const socketEmitter = new EventEmitter();
+    const socket = Object.assign(socketEmitter, {
+      close: vi.fn(),
+    }) as unknown as WebSocket;
+
+    const recorded: ApplicationErrorRecord = {
+      id: "err-browser-1",
+      timestamp: "2026-08-16T12:00:00.000Z",
+      source: "browser",
+      severity: "error",
+      message: "Dashboard React tree unhandled exception",
+      errorName: "Error",
+      stack: "Error: Crash\n    at Dashboard (app.js:1:1)",
+      context: { route: "/sessions" },
+    };
+
+    const errorStore = {
+      record: vi.fn().mockResolvedValue(recorded),
+    } as unknown as ApplicationErrorStore;
+
+    const sentFrames: unknown[] = [];
+    const broadcastFrames: unknown[] = [];
+    const sendToBrowser = vi.fn((_ws, frame) => sentFrames.push(frame));
+    const broadcast = vi.fn((frame) => broadcastFrames.push(frame));
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+
+    let wsHandler: ((socket: WebSocket, req: unknown) => void) | undefined;
+    const app = {
+      get: vi.fn((_path, _opts, handler) => {
+        wsHandler = handler;
+      }),
+    } as unknown as Parameters<typeof registerBrowserWebSocketRoute>[0];
+
+    registerBrowserWebSocketRoute(app, {
+      browserSockets: new Set(),
+      pendingAskBySession: new Map(),
+      pushSubscriptions: { publicKey: "key" } as unknown as Parameters<
+        typeof registerBrowserWebSocketRoute
+      >[1]["pushSubscriptions"],
+      savedWorkingDirectories: { list: () => [] } as unknown as Parameters<
+        typeof registerBrowserWebSocketRoute
+      >[1]["savedWorkingDirectories"],
+      rpcSessions: new Map(),
+      extensionSockets: new Map(),
+      registry: { list: () => [] } as unknown as Parameters<
+        typeof registerBrowserWebSocketRoute
+      >[1]["registry"],
+      sendToBrowser,
+      broadcast,
+      launchRpcSession: vi.fn(),
+      branchSwitchBlocksSessionCommand: vi.fn().mockResolvedValue(false),
+      switchSessionBranch: vi.fn(),
+      refreshRpcState: vi.fn(),
+      clearPendingAsk: vi.fn(),
+      expirePendingAsk: vi.fn(),
+      originAllowed: () => true,
+      logger,
+      errorStore,
+    });
+
+    expect(wsHandler).toBeDefined();
+    wsHandler!(socket, { headers: { origin: "http://127.0.0.1:5173", host: "127.0.0.1:3000" } });
+
+    const command = {
+      type: "report_application_error",
+      requestId: "req-err-1",
+      error: {
+        message: "Dashboard React tree unhandled exception",
+        errorName: "Error",
+        stack: "Error: Crash\n    at Dashboard (app.js:1:1)",
+        context: { route: "/sessions" },
+      },
+    };
+
+    socketEmitter.emit("message", Buffer.from(JSON.stringify(command)));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(errorStore.record).toHaveBeenCalledWith({
+      source: "browser",
+      severity: "error",
+      message: "Dashboard React tree unhandled exception",
+      errorName: "Error",
+      stack: "Error: Crash\n    at Dashboard (app.js:1:1)",
+      context: { route: "/sessions" },
+    });
+    expect(broadcast).toHaveBeenCalledWith({
+      type: "application_error_added",
+      error: recorded,
+    });
+    expect(sendToBrowser).toHaveBeenCalledWith(
+      socket,
+      expect.objectContaining({
+        type: "command_result",
+        requestId: "req-err-1",
+        outcome: { status: "ok", value: { type: "void" } },
+      }),
+    );
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("handles storage persistence failure by sending error result without broadcasting and without recursive error logging", async () => {
+    const socketEmitter = new EventEmitter();
+    const socket = Object.assign(socketEmitter, {
+      close: vi.fn(),
+    }) as unknown as WebSocket;
+
+    const errorStore = {
+      record: vi.fn().mockRejectedValue(new Error("Disk I/O error")),
+    } as unknown as ApplicationErrorStore;
+
+    const sendToBrowser = vi.fn();
+    const broadcast = vi.fn();
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+
+    let wsHandler: ((socket: WebSocket, req: unknown) => void) | undefined;
+    const app = {
+      get: vi.fn((_path, _opts, handler) => {
+        wsHandler = handler;
+      }),
+    } as unknown as Parameters<typeof registerBrowserWebSocketRoute>[0];
+
+    registerBrowserWebSocketRoute(app, {
+      browserSockets: new Set(),
+      pendingAskBySession: new Map(),
+      pushSubscriptions: { publicKey: "key" } as unknown as Parameters<
+        typeof registerBrowserWebSocketRoute
+      >[1]["pushSubscriptions"],
+      savedWorkingDirectories: { list: () => [] } as unknown as Parameters<
+        typeof registerBrowserWebSocketRoute
+      >[1]["savedWorkingDirectories"],
+      rpcSessions: new Map(),
+      extensionSockets: new Map(),
+      registry: { list: () => [] } as unknown as Parameters<
+        typeof registerBrowserWebSocketRoute
+      >[1]["registry"],
+      sendToBrowser,
+      broadcast,
+      launchRpcSession: vi.fn(),
+      branchSwitchBlocksSessionCommand: vi.fn().mockResolvedValue(false),
+      switchSessionBranch: vi.fn(),
+      refreshRpcState: vi.fn(),
+      clearPendingAsk: vi.fn(),
+      expirePendingAsk: vi.fn(),
+      originAllowed: () => true,
+      logger,
+      errorStore,
+    });
+
+    wsHandler!(socket, { headers: { origin: "http://127.0.0.1:5173", host: "127.0.0.1:3000" } });
+
+    const command = {
+      type: "report_application_error",
+      requestId: "req-err-2",
+      error: {
+        message: "Network request timeout",
+      },
+    };
+
+    socketEmitter.emit("message", Buffer.from(JSON.stringify(command)));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(broadcast).not.toHaveBeenCalled();
+    expect(sendToBrowser).toHaveBeenCalledWith(
+      socket,
+      expect.objectContaining({
+        type: "command_result",
+        requestId: "req-err-2",
+        outcome: { status: "error", error: "Disk I/O error" },
+      }),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Failed to record browser application error",
+      expect.objectContaining({ requestId: "req-err-2" }),
+    );
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid browser commands with warn logging and without recursive error logging", async () => {
+    const socketEmitter = new EventEmitter();
+    const socket = Object.assign(socketEmitter, {
+      close: vi.fn(),
+    }) as unknown as WebSocket;
+
+    const sendToBrowser = vi.fn();
+    const broadcast = vi.fn();
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+
+    let wsHandler: ((socket: WebSocket, req: unknown) => void) | undefined;
+    const app = {
+      get: vi.fn((_path, _opts, handler) => {
+        wsHandler = handler;
+      }),
+    } as unknown as Parameters<typeof registerBrowserWebSocketRoute>[0];
+
+    registerBrowserWebSocketRoute(app, {
+      browserSockets: new Set(),
+      pendingAskBySession: new Map(),
+      pushSubscriptions: { publicKey: "key" } as unknown as Parameters<
+        typeof registerBrowserWebSocketRoute
+      >[1]["pushSubscriptions"],
+      savedWorkingDirectories: { list: () => [] } as unknown as Parameters<
+        typeof registerBrowserWebSocketRoute
+      >[1]["savedWorkingDirectories"],
+      rpcSessions: new Map(),
+      extensionSockets: new Map(),
+      registry: { list: () => [] } as unknown as Parameters<
+        typeof registerBrowserWebSocketRoute
+      >[1]["registry"],
+      sendToBrowser,
+      broadcast,
+      launchRpcSession: vi.fn(),
+      branchSwitchBlocksSessionCommand: vi.fn().mockResolvedValue(false),
+      switchSessionBranch: vi.fn(),
+      refreshRpcState: vi.fn(),
+      clearPendingAsk: vi.fn(),
+      expirePendingAsk: vi.fn(),
+      originAllowed: () => true,
+      logger,
+    });
+
+    wsHandler!(socket, { headers: { origin: "http://127.0.0.1:5173", host: "127.0.0.1:3000" } });
+
+    socketEmitter.emit("message", Buffer.from("invalid-json{"));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      "Rejected dashboard command",
+      expect.objectContaining({ error: expect.any(String) }),
+    );
+    expect(logger.error).not.toHaveBeenCalled();
+    expect(sendToBrowser).toHaveBeenCalledWith(
+      socket,
+      expect.objectContaining({
+        type: "error",
+        message: "The dashboard command was not valid.",
+      }),
+    );
+  });
+
+  it("marks launch command failures with scope: command so they are not captured as application errors", async () => {
+    const socketEmitter = new EventEmitter();
+    const socket = Object.assign(socketEmitter, {
+      close: vi.fn(),
+    }) as unknown as WebSocket;
+
+    const sendToBrowser = vi.fn();
+    const broadcast = vi.fn();
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+
+    let wsHandler: ((socket: WebSocket, req: unknown) => void) | undefined;
+    const app = {
+      get: vi.fn((_path, _opts, handler) => {
+        wsHandler = handler;
+      }),
+    } as unknown as Parameters<typeof registerBrowserWebSocketRoute>[0];
+
+    registerBrowserWebSocketRoute(app, {
+      browserSockets: new Set(),
+      pendingAskBySession: new Map(),
+      pushSubscriptions: { publicKey: "key" } as unknown as Parameters<
+        typeof registerBrowserWebSocketRoute
+      >[1]["pushSubscriptions"],
+      savedWorkingDirectories: { list: () => [] } as unknown as Parameters<
+        typeof registerBrowserWebSocketRoute
+      >[1]["savedWorkingDirectories"],
+      rpcSessions: new Map(),
+      extensionSockets: new Map(),
+      registry: { list: () => [] } as unknown as Parameters<
+        typeof registerBrowserWebSocketRoute
+      >[1]["registry"],
+      sendToBrowser,
+      broadcast,
+      launchRpcSession: vi.fn().mockRejectedValue(new Error("No model specified")),
+      branchSwitchBlocksSessionCommand: vi.fn().mockResolvedValue(false),
+      switchSessionBranch: vi.fn(),
+      refreshRpcState: vi.fn(),
+      clearPendingAsk: vi.fn(),
+      expirePendingAsk: vi.fn(),
+      originAllowed: () => true,
+      logger,
+    });
+
+    wsHandler!(socket, { headers: { origin: "http://127.0.0.1:5173", host: "127.0.0.1:3000" } });
+
+    socketEmitter.emit(
+      "message",
+      Buffer.from(
+        JSON.stringify({
+          type: "launch",
+          requestId: "launch-req-1",
+          cwd: "/workspace/my-project",
+          resume: null,
+        }),
+      ),
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(logger.error).toHaveBeenCalledWith(
+      "Failed to launch OMP RPC session",
+      expect.any(Error),
+      expect.objectContaining({
+        scope: "command",
+        cwd: "/workspace/my-project",
+      }),
+    );
+    expect(sendToBrowser).toHaveBeenCalledWith(
+      socket,
+      expect.objectContaining({
+        type: "command_result",
+        requestId: "launch-req-1",
+        outcome: { status: "error", error: "No model specified" },
+      }),
+    );
   });
 });

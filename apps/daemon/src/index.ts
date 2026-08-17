@@ -7,6 +7,10 @@ import fastifyWebsocket from "@fastify/websocket";
 import { createLogger } from "@omp-remote/observability";
 import type { RpcSession } from "@omp-remote/omp-rpc";
 import {
+  APPLICATION_ERROR_MESSAGE_MAX_CHARS,
+  APPLICATION_ERROR_NAME_MAX_CHARS,
+  APPLICATION_ERROR_STACK_MAX_CHARS,
+  ApplicationErrorLedgerResponseSchema,
   type AskRequest,
   type AskResponse,
   boundTranscriptImageBudget,
@@ -58,6 +62,7 @@ import { createRpcSessionRuntime } from "./rpc-session-runtime.js";
 import { SavedWorkingDirectoryStore } from "./saved-working-directories.js";
 import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
 import { collectSessionFileChanges } from "./session-file-changes.js";
+import { ApplicationErrorStore, installUncaughtExceptionMonitor } from "./application-error-store.js";
 
 function sanitizeTranscriptMessageImages(message: TranscriptMessage): TranscriptMessage {
   if (!message.images?.length) return message;
@@ -92,7 +97,21 @@ function sanitizeSessionDetails<T extends { messages: TranscriptMessage[] }>(
   return { ...session, messages: boundTranscriptImageBudget(messages) };
 }
 
-const logger = createLogger("omp-remote-daemon");
+const browserSockets = new Set<WebSocket>();
+const errorStore = await ApplicationErrorStore.load();
+const logger = createLogger("omp-remote-daemon", {
+  onError: async (entry) => {
+    try {
+      const record = await errorStore.recordFromLogEntry(entry);
+      if (record) {
+        broadcast({ type: "application_error_added", error: record });
+      }
+    } catch {
+      // Observer errors must never throw or recurse
+    }
+  },
+});
+installUncaughtExceptionMonitor(errorStore, broadcast);
 const CatalogQuerySchema = z.object({
   offset: z.coerce.number().int().nonnegative().default(0),
   limit: z.coerce.number().int().min(1).max(200).default(100),
@@ -113,7 +132,6 @@ const registry = new SessionRegistry();
 sessionCatalog.setDiffListener(({ upserted }) => {
   for (const session of upserted) syncCatalogSession(session);
 });
-const browserSockets = new Set<WebSocket>();
 const rpcSessions = new Map<string, RpcSession>();
 const extensionSockets = new Map<string, WebSocket>();
 const extensionSessionBySocket = new Map<WebSocket, string>();
@@ -289,6 +307,33 @@ app.get("/api/sessions/:sessionId/branches", async (request, reply) => {
     return reply.code(500).send({ error: "Session branch topology could not be read" });
   }
 });
+
+app.get("/api/application-errors", async (request, reply) => {
+  if (request.headers.origin && !originAllowed(request.headers.origin, request.headers.host)) {
+    return reply.code(403).send({ error: "Origin is not allowed" });
+  }
+  return ApplicationErrorLedgerResponseSchema.parse(errorStore.getLedger());
+});
+
+app.delete("/api/application-errors", async (request, reply) => {
+  if (request.headers.origin && !originAllowed(request.headers.origin, request.headers.host)) {
+    return reply.code(403).send({ error: "Origin is not allowed" });
+  }
+  try {
+    const result = await errorStore.clear();
+    broadcast({
+      type: "application_errors_cleared",
+      clearedAt: new Date().toISOString(),
+      clearedCount: result.clearedCount,
+    });
+    return reply.code(200).send({ ok: true, clearedCount: result.clearedCount });
+  } catch (error) {
+    logger.warn("Could not clear application errors", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return reply.code(500).send({ error: "Application errors could not be cleared" });
+  }
+});
 registerBrowserWebSocketRoute(app, {
   browserSockets,
   pendingAskBySession,
@@ -307,6 +352,7 @@ registerBrowserWebSocketRoute(app, {
   expirePendingAsk,
   originAllowed,
   logger,
+  errorStore,
 });
 registerExtensionWebSocketRoute(app, {
   extensionSockets,

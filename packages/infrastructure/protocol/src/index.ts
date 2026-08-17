@@ -748,313 +748,6 @@ export type PushSubscriptionRegistration = z.infer<typeof PushSubscriptionRegist
 export type PushSubscriptionUpdate = z.infer<typeof PushSubscriptionUpdateSchema>;
 export type PushSubscriptionRemoval = z.infer<typeof PushSubscriptionRemovalSchema>;
 
-const CommandTextSchema = z.string().trim().min(1).max(100_000);
-
-export const BrowserCommandSchema = z.union([
-  z.object({
-    type: z.literal("launch"),
-    requestId: z.string().min(1),
-    cwd: z.string().trim().min(1),
-    resume: z.string().trim().min(1).nullable(),
-  }),
-  z.object({
-    type: z.literal("save_working_directory"),
-    requestId: z.string().min(1),
-    cwd: z.string().trim().min(1),
-  }),
-  z.object({
-    type: z.literal("remove_working_directory"),
-    requestId: z.string().min(1),
-    cwd: z.string().trim().min(1),
-  }),
-  SwitchBranchCommandSchema,
-  z.object({
-    type: z.literal("session_command"),
-    requestId: z.string().min(1),
-    sessionId: z.string().min(1),
-    command: z.enum(["prompt", "steer", "follow_up"]),
-    text: CommandTextSchema,
-  }),
-  z.object({
-    type: z.literal("session_command"),
-    requestId: z.string().min(1),
-    sessionId: z.string().min(1),
-    command: z.literal("abort"),
-  }),
-  z.object({
-    type: z.literal("session_command"),
-    requestId: z.string().min(1),
-    sessionId: z.string().min(1),
-    command: z.literal("kill"),
-  }),
-  z.object({
-    type: z.literal("session_command"),
-    requestId: z.string().min(1),
-    sessionId: z.string().min(1),
-    command: z.literal("set_model"),
-    model: z.string().regex(/^[^/]+\/.+$/),
-  }),
-  z.object({
-    type: z.literal("session_command"),
-    requestId: z.string().min(1),
-    sessionId: z.string().min(1),
-    command: z.literal("set_effort"),
-    effort: EffortSchema,
-  }),
-  z
-    .object({
-      type: z.literal("ask_response"),
-      requestId: z.string().min(1),
-      sessionId: z.string().min(1),
-      askRequestId: z.string().min(1),
-      response: AskResponseSchema,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("ask_activity"),
-      sessionId: z.string().min(1),
-      askRequestId: z.string().min(1),
-    })
-    .strict(),
-  z.object({ type: z.literal("push_vapid_public_key"), requestId: z.string().min(1) }).strict(),
-  z
-    .object({
-      type: z.literal("push_subscription_register"),
-      requestId: z.string().min(1),
-      deviceId: PushDeviceIdSchema,
-      subscription: PushSubscriptionSchema,
-      events: PushEventPreferencesSchema,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("push_subscription_update"),
-      requestId: z.string().min(1),
-      deviceId: PushDeviceIdSchema,
-      subscription: PushSubscriptionSchema,
-      events: PushEventPreferencesSchema,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("push_subscription_remove"),
-      requestId: z.string().min(1),
-      deviceId: PushDeviceIdSchema,
-    })
-    .strict(),
-]);
-
-export const CommandResultSchema = z.object({
-  type: z.literal("command_result"),
-  requestId: z.string(),
-  outcome: z.discriminatedUnion("status", [
-    z.object({
-      status: z.literal("ok"),
-      value: z.discriminatedUnion("type", [
-        z.object({ type: z.literal("launch"), sessionId: z.string().min(1) }),
-        z.object({ type: z.literal("push_vapid_public_key"), publicKey: PushVapidPublicKeySchema }),
-        z.object({ type: z.literal("void") }),
-      ]),
-    }),
-    z.object({
-      status: z.literal("error"),
-      error: z.string().nullable(),
-    }),
-  ]),
-});
-
-export const ServerFrameSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("snapshot"),
-    sessions: z.array(SessionSchema),
-    askRequests: z.array(AskRequestSchema).default([]),
-    savedWorkingDirectories: z.array(z.string().trim().min(1)).default([]),
-  }),
-  z.object({ type: z.literal("session_upsert"), session: SessionSchema }),
-  z.object({
-    type: z.literal("session_update"),
-    sessionId: z.string().min(1),
-    patch: SessionPatchSchema,
-  }),
-  z.object({
-    type: z.literal("transcript_upsert"),
-    sessionId: z.string().min(1),
-    message: TranscriptMessageSchema,
-  }),
-  z.object({ type: z.literal("ask_request"), request: AskRequestSchema }),
-  z.object({
-    type: z.literal("ask_cancelled"),
-    sessionId: z.string().min(1),
-    requestId: z.string().min(1),
-  }),
-  z.object({ type: z.literal("session_removed"), sessionId: z.string() }),
-  z.object({
-    type: z.literal("saved_working_directories"),
-    savedWorkingDirectories: z.array(z.string().trim().min(1)),
-  }),
-  NotificationEventSchema,
-  CommandResultSchema,
-  z.object({ type: z.literal("error"), message: z.string() }),
-]);
-
-const ExtensionRegistrationSessionSchema = SessionSchema.extend({
-  createdAt: SessionSchema.shape.createdAt.optional(),
-  sessionPath: SessionSchema.shape.sessionPath.default(null),
-});
-
-export const ExtensionRegisterSchema = z.object({
-  type: z.literal("register"),
-  session: ExtensionRegistrationSessionSchema,
-});
-
-export const ExtensionEventSchema = z.object({
-  type: z.literal("event"),
-  sessionId: z.string().min(1),
-  event: z.enum(["agent_start", "agent_end", "message_start", "message_update", "message_end"]),
-  message: TranscriptMessageSchema.nullable(),
-  name: z.string().nullable(),
-  model: z.string().nullable(),
-  contextPercent: z.number().min(0).max(100).nullable(),
-  effort: EffortSchema.nullable().optional(),
-});
-
-export const ExtensionHeartbeatSchema = z.object({
-  type: z.literal("heartbeat"),
-  sessionId: z.string().min(1),
-  name: z.string().nullable(),
-  model: z.string().nullable(),
-  contextPercent: z.number().min(0).max(100).nullable(),
-  effort: EffortSchema.nullable().optional(),
-  availableModels: z.array(SessionModelOptionSchema).optional(),
-  idle: z.boolean(),
-  skillCommands: z.array(SkillCommandSchema).optional(),
-});
-export const ExtensionResultSchema = z.object({
-  type: z.literal("command_result"),
-  requestId: z.string(),
-  ok: z.boolean(),
-  error: z.string().nullable(),
-});
-
-export const ExtensionFrameSchema = z.discriminatedUnion("type", [
-  ExtensionRegisterSchema,
-  ExtensionEventSchema,
-  ExtensionHeartbeatSchema,
-  ExtensionResultSchema,
-  z.object({ type: z.literal("ask_request"), request: AskRequestSchema }),
-  z
-    .object({
-      type: z.literal("ask_activity"),
-      sessionId: z.string().min(1),
-      requestId: z.string().min(1),
-    })
-    .strict(),
-  z.object({
-    type: z.literal("ask_cancelled"),
-    sessionId: z.string().min(1),
-    requestId: z.string().min(1),
-  }),
-]);
-
-export const ExtensionCommandSchema = z.discriminatedUnion("command", [
-  z.object({
-    requestId: z.string(),
-    command: z.enum(["prompt", "steer", "follow_up"]),
-    text: CommandTextSchema,
-  }),
-  z.object({ requestId: z.string(), command: z.literal("abort") }),
-  z.object({
-    requestId: z.string(),
-    command: z.literal("set_model"),
-    model: z.string().regex(/^[^/]+\/.+$/),
-  }),
-  z.object({ requestId: z.string(), command: z.literal("set_effort"), effort: EffortSchema }),
-  z.object({ requestId: z.string().min(1), command: z.literal("ask_admitted") }),
-  z.object({
-    requestId: z.string().min(1),
-    command: z.literal("ask_response"),
-    response: AskResponseSchema,
-  }),
-  z.object({ requestId: z.string().min(1), command: z.literal("ask_unavailable") }),
-]);
-
-export type AskRequest = z.infer<typeof AskRequestSchema>;
-export type AskResponse = z.infer<typeof AskResponseSchema>;
-export type AskDialogOption = z.infer<typeof AskDialogOptionSchema>;
-export type AskDialogQuestion = z.infer<typeof AskDialogQuestionSchema>;
-export type AskDialogResultItem = z.infer<typeof AskDialogResultItemSchema>;
-export type BrowserCommand = z.infer<typeof BrowserCommandSchema>;
-export type CommandResult = z.infer<typeof CommandResultSchema>;
-export type Effort = z.infer<typeof EffortSchema>;
-export type RoleEffort = z.infer<typeof RoleEffortSchema>;
-export type ActiveSubagent = z.infer<typeof ActiveSubagentSchema>;
-export type ExtensionCommand = z.infer<typeof ExtensionCommandSchema>;
-export type ExtensionFrame = z.infer<typeof ExtensionFrameSchema>;
-export type ServerFrame = z.infer<typeof ServerFrameSchema>;
-export type SessionCatalogPage = z.infer<typeof SessionCatalogPageSchema>;
-export type SessionCostResponse = z.infer<typeof SessionCostResponseSchema>;
-export type SessionTranscriptResponse = z.infer<typeof SessionTranscriptResponseSchema>;
-export type SessionChangedFile = z.infer<typeof SessionChangedFileSchema>;
-export type SessionFileChangeSource = z.infer<typeof SessionFileChangeSourceSchema>;
-export type SessionFileChangesResponse = z.infer<typeof SessionFileChangesResponseSchema>;
-export type SessionFileOperation = z.infer<typeof SessionFileOperationSchema>;
-export type Session = z.infer<typeof SessionSchema>;
-export type SessionModelOption = z.infer<typeof SessionModelOptionSchema>;
-export type SessionPatch = z.infer<typeof SessionPatchSchema>;
-export type SessionCapability = z.infer<typeof SessionCapabilitySchema>;
-export type SessionStatus = z.infer<typeof SessionStatusSchema>;
-export type SkillCommand = z.infer<typeof SkillCommandSchema>;
-export type SessionCostAgent = z.infer<typeof SessionCostAgentSchema>;
-export type SessionCostSummary = z.infer<typeof SessionCostSummarySchema>;
-export type TranscriptMessage = z.infer<typeof TranscriptMessageSchema>;
-
-export function compareSessionsByCreation(left: Session, right: Session): number {
-  return right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id);
-}
-
-export function getMainSessionIds(sessions: readonly Session[]): Set<string> {
-  const mainSessionIds = new Set<string>();
-  const subagentIds = new Set<string>();
-  const sessionPaths = new Set<string>();
-  const explicitTopologyById = new Map<string, string | null>();
-
-  for (const session of sessions) {
-    if (session.parentSessionId !== undefined) explicitTopologyById.set(session.id, session.parentSessionId);
-    if (session.sessionPath?.endsWith(".jsonl")) sessionPaths.add(session.sessionPath);
-    for (const subagent of session.activeSubagents) subagentIds.add(subagent.id);
-  }
-  for (const session of sessions) {
-    const explicitParentSessionId = explicitTopologyById.get(session.id);
-    if (explicitTopologyById.has(session.id)) {
-      if (explicitParentSessionId === null) mainSessionIds.add(session.id);
-      continue;
-    }
-    mainSessionIds.add(session.id);
-    if (subagentIds.has(session.id) || hasSessionPathAncestor(session.sessionPath, sessionPaths)) {
-      mainSessionIds.delete(session.id);
-    }
-  }
-
-  return mainSessionIds;
-}
-
-export function filterMainSessions(sessions: readonly Session[]): Session[] {
-  const mainSessionIds = getMainSessionIds(sessions);
-  return sessions.filter((session) => mainSessionIds.has(session.id));
-}
-
-function hasSessionPathAncestor(sessionPath: string | null, sessionPaths: ReadonlySet<string>): boolean {
-  if (!sessionPath?.endsWith(".jsonl")) return false;
-
-  let separatorIndex = sessionPath.lastIndexOf("/");
-  while (separatorIndex > 0) {
-    if (sessionPaths.has(`${sessionPath.slice(0, separatorIndex)}.jsonl`)) return true;
-    separatorIndex = sessionPath.lastIndexOf("/", separatorIndex - 1);
-  }
-  return false;
-}
-
 export const APPLICATION_ERROR_MAX_RECORDS = 1_000;
 export const APPLICATION_ERROR_MAX_BYTES = 5 * 1024 * 1024;
 export const APPLICATION_ERROR_MESSAGE_MAX_CHARS = 4_096;
@@ -1234,4 +927,356 @@ export function boundApplicationErrorRecords(
     bounded.shift();
   }
   return bounded;
+}
+export const ReportApplicationErrorCommandSchema = z.union([
+  z
+    .object({
+      type: z.literal("report_application_error"),
+      requestId: z.string().min(1),
+      error: ApplicationErrorInputSchema.extend({
+        source: z.literal("browser").default("browser"),
+      }),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("report_application_error"),
+      requestId: z.string().min(1),
+      source: z.literal("browser").default("browser"),
+      severity: ApplicationErrorSeveritySchema.default("error"),
+      message: z.string().trim().min(1).max(APPLICATION_ERROR_MESSAGE_MAX_CHARS),
+      errorName: z.string().trim().min(1).max(APPLICATION_ERROR_NAME_MAX_CHARS).optional(),
+      stack: z.string().max(APPLICATION_ERROR_STACK_MAX_CHARS).optional(),
+      context: ApplicationErrorContextSchema.optional(),
+      id: z.string().trim().min(1).max(128).optional(),
+      timestamp: z.string().datetime().optional(),
+    })
+    .strict(),
+]);
+export type ReportApplicationErrorCommand = z.infer<typeof ReportApplicationErrorCommandSchema>;
+
+export const ApplicationErrorAddedFrameSchema = z
+  .object({
+    type: z.literal("application_error_added"),
+    error: ApplicationErrorRecordSchema,
+  })
+  .strict();
+export type ApplicationErrorAddedFrame = z.infer<typeof ApplicationErrorAddedFrameSchema>;
+
+export const ApplicationErrorsClearedFrameSchema = z
+  .object({
+    type: z.literal("application_errors_cleared"),
+    clearedAt: z.string().datetime().optional(),
+    clearedCount: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+export type ApplicationErrorsClearedFrame = z.infer<typeof ApplicationErrorsClearedFrameSchema>;
+const CommandTextSchema = z.string().trim().min(1).max(100_000);
+
+export const BrowserCommandSchema = z.union([
+  z.object({
+    type: z.literal("launch"),
+    requestId: z.string().min(1),
+    cwd: z.string().trim().min(1),
+    resume: z.string().trim().min(1).nullable(),
+  }),
+  z.object({
+    type: z.literal("save_working_directory"),
+    requestId: z.string().min(1),
+    cwd: z.string().trim().min(1),
+  }),
+  z.object({
+    type: z.literal("remove_working_directory"),
+    requestId: z.string().min(1),
+    cwd: z.string().trim().min(1),
+  }),
+  SwitchBranchCommandSchema,
+  z.object({
+    type: z.literal("session_command"),
+    requestId: z.string().min(1),
+    sessionId: z.string().min(1),
+    command: z.enum(["prompt", "steer", "follow_up"]),
+    text: CommandTextSchema,
+  }),
+  z.object({
+    type: z.literal("session_command"),
+    requestId: z.string().min(1),
+    sessionId: z.string().min(1),
+    command: z.literal("abort"),
+  }),
+  z.object({
+    type: z.literal("session_command"),
+    requestId: z.string().min(1),
+    sessionId: z.string().min(1),
+    command: z.literal("kill"),
+  }),
+  z.object({
+    type: z.literal("session_command"),
+    requestId: z.string().min(1),
+    sessionId: z.string().min(1),
+    command: z.literal("set_model"),
+    model: z.string().regex(/^[^/]+\/.+$/),
+  }),
+  z.object({
+    type: z.literal("session_command"),
+    requestId: z.string().min(1),
+    sessionId: z.string().min(1),
+    command: z.literal("set_effort"),
+    effort: EffortSchema,
+  }),
+  z
+    .object({
+      type: z.literal("ask_response"),
+      requestId: z.string().min(1),
+      sessionId: z.string().min(1),
+      askRequestId: z.string().min(1),
+      response: AskResponseSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("ask_activity"),
+      sessionId: z.string().min(1),
+      askRequestId: z.string().min(1),
+    })
+    .strict(),
+  z.object({ type: z.literal("push_vapid_public_key"), requestId: z.string().min(1) }).strict(),
+  z
+    .object({
+      type: z.literal("push_subscription_register"),
+      requestId: z.string().min(1),
+      deviceId: PushDeviceIdSchema,
+      subscription: PushSubscriptionSchema,
+      events: PushEventPreferencesSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("push_subscription_update"),
+      requestId: z.string().min(1),
+      deviceId: PushDeviceIdSchema,
+      subscription: PushSubscriptionSchema,
+      events: PushEventPreferencesSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("push_subscription_remove"),
+      requestId: z.string().min(1),
+      deviceId: PushDeviceIdSchema,
+    })
+    .strict(),
+  ReportApplicationErrorCommandSchema,
+]);
+
+export const CommandResultSchema = z.object({
+  type: z.literal("command_result"),
+  requestId: z.string(),
+  outcome: z.discriminatedUnion("status", [
+    z.object({
+      status: z.literal("ok"),
+      value: z.discriminatedUnion("type", [
+        z.object({ type: z.literal("launch"), sessionId: z.string().min(1) }),
+        z.object({ type: z.literal("push_vapid_public_key"), publicKey: PushVapidPublicKeySchema }),
+        z.object({ type: z.literal("void") }),
+      ]),
+    }),
+    z.object({
+      status: z.literal("error"),
+      error: z.string().nullable(),
+    }),
+  ]),
+});
+
+export const ServerFrameSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("snapshot"),
+    sessions: z.array(SessionSchema),
+    askRequests: z.array(AskRequestSchema).default([]),
+    savedWorkingDirectories: z.array(z.string().trim().min(1)).default([]),
+  }),
+  z.object({ type: z.literal("session_upsert"), session: SessionSchema }),
+  z.object({
+    type: z.literal("session_update"),
+    sessionId: z.string().min(1),
+    patch: SessionPatchSchema,
+  }),
+  z.object({
+    type: z.literal("transcript_upsert"),
+    sessionId: z.string().min(1),
+    message: TranscriptMessageSchema,
+  }),
+  z.object({ type: z.literal("ask_request"), request: AskRequestSchema }),
+  z.object({
+    type: z.literal("ask_cancelled"),
+    sessionId: z.string().min(1),
+    requestId: z.string().min(1),
+  }),
+  z.object({ type: z.literal("session_removed"), sessionId: z.string() }),
+  z.object({
+    type: z.literal("saved_working_directories"),
+    savedWorkingDirectories: z.array(z.string().trim().min(1)),
+  }),
+  NotificationEventSchema,
+  ApplicationErrorAddedFrameSchema,
+  ApplicationErrorsClearedFrameSchema,
+  CommandResultSchema,
+  z.object({ type: z.literal("error"), message: z.string() }),
+]);
+
+const ExtensionRegistrationSessionSchema = SessionSchema.extend({
+  createdAt: SessionSchema.shape.createdAt.optional(),
+  sessionPath: SessionSchema.shape.sessionPath.default(null),
+});
+
+export const ExtensionRegisterSchema = z.object({
+  type: z.literal("register"),
+  session: ExtensionRegistrationSessionSchema,
+});
+
+export const ExtensionEventSchema = z.object({
+  type: z.literal("event"),
+  sessionId: z.string().min(1),
+  event: z.enum(["agent_start", "agent_end", "message_start", "message_update", "message_end"]),
+  message: TranscriptMessageSchema.nullable(),
+  name: z.string().nullable(),
+  model: z.string().nullable(),
+  contextPercent: z.number().min(0).max(100).nullable(),
+  effort: EffortSchema.nullable().optional(),
+});
+
+export const ExtensionHeartbeatSchema = z.object({
+  type: z.literal("heartbeat"),
+  sessionId: z.string().min(1),
+  name: z.string().nullable(),
+  model: z.string().nullable(),
+  contextPercent: z.number().min(0).max(100).nullable(),
+  effort: EffortSchema.nullable().optional(),
+  availableModels: z.array(SessionModelOptionSchema).optional(),
+  idle: z.boolean(),
+  skillCommands: z.array(SkillCommandSchema).optional(),
+});
+export const ExtensionResultSchema = z.object({
+  type: z.literal("command_result"),
+  requestId: z.string(),
+  ok: z.boolean(),
+  error: z.string().nullable(),
+});
+
+export const ExtensionFrameSchema = z.discriminatedUnion("type", [
+  ExtensionRegisterSchema,
+  ExtensionEventSchema,
+  ExtensionHeartbeatSchema,
+  ExtensionResultSchema,
+  z.object({ type: z.literal("ask_request"), request: AskRequestSchema }),
+  z
+    .object({
+      type: z.literal("ask_activity"),
+      sessionId: z.string().min(1),
+      requestId: z.string().min(1),
+    })
+    .strict(),
+  z.object({
+    type: z.literal("ask_cancelled"),
+    sessionId: z.string().min(1),
+    requestId: z.string().min(1),
+  }),
+]);
+
+export const ExtensionCommandSchema = z.discriminatedUnion("command", [
+  z.object({
+    requestId: z.string(),
+    command: z.enum(["prompt", "steer", "follow_up"]),
+    text: CommandTextSchema,
+  }),
+  z.object({ requestId: z.string(), command: z.literal("abort") }),
+  z.object({
+    requestId: z.string(),
+    command: z.literal("set_model"),
+    model: z.string().regex(/^[^/]+\/.+$/),
+  }),
+  z.object({ requestId: z.string(), command: z.literal("set_effort"), effort: EffortSchema }),
+  z.object({ requestId: z.string().min(1), command: z.literal("ask_admitted") }),
+  z.object({
+    requestId: z.string().min(1),
+    command: z.literal("ask_response"),
+    response: AskResponseSchema,
+  }),
+  z.object({ requestId: z.string().min(1), command: z.literal("ask_unavailable") }),
+]);
+
+export type AskRequest = z.infer<typeof AskRequestSchema>;
+export type AskResponse = z.infer<typeof AskResponseSchema>;
+export type AskDialogOption = z.infer<typeof AskDialogOptionSchema>;
+export type AskDialogQuestion = z.infer<typeof AskDialogQuestionSchema>;
+export type AskDialogResultItem = z.infer<typeof AskDialogResultItemSchema>;
+export type BrowserCommand = z.infer<typeof BrowserCommandSchema>;
+export type CommandResult = z.infer<typeof CommandResultSchema>;
+export type Effort = z.infer<typeof EffortSchema>;
+export type RoleEffort = z.infer<typeof RoleEffortSchema>;
+export type ActiveSubagent = z.infer<typeof ActiveSubagentSchema>;
+export type ExtensionCommand = z.infer<typeof ExtensionCommandSchema>;
+export type ExtensionFrame = z.infer<typeof ExtensionFrameSchema>;
+export type ServerFrame = z.infer<typeof ServerFrameSchema>;
+export type SessionCatalogPage = z.infer<typeof SessionCatalogPageSchema>;
+export type SessionCostResponse = z.infer<typeof SessionCostResponseSchema>;
+export type SessionTranscriptResponse = z.infer<typeof SessionTranscriptResponseSchema>;
+export type SessionChangedFile = z.infer<typeof SessionChangedFileSchema>;
+export type SessionFileChangeSource = z.infer<typeof SessionFileChangeSourceSchema>;
+export type SessionFileChangesResponse = z.infer<typeof SessionFileChangesResponseSchema>;
+export type SessionFileOperation = z.infer<typeof SessionFileOperationSchema>;
+export type Session = z.infer<typeof SessionSchema>;
+export type SessionModelOption = z.infer<typeof SessionModelOptionSchema>;
+export type SessionPatch = z.infer<typeof SessionPatchSchema>;
+export type SessionCapability = z.infer<typeof SessionCapabilitySchema>;
+export type SessionStatus = z.infer<typeof SessionStatusSchema>;
+export type SkillCommand = z.infer<typeof SkillCommandSchema>;
+export type SessionCostAgent = z.infer<typeof SessionCostAgentSchema>;
+export type SessionCostSummary = z.infer<typeof SessionCostSummarySchema>;
+export type TranscriptMessage = z.infer<typeof TranscriptMessageSchema>;
+
+export function compareSessionsByCreation(left: Session, right: Session): number {
+  return right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id);
+}
+
+export function getMainSessionIds(sessions: readonly Session[]): Set<string> {
+  const mainSessionIds = new Set<string>();
+  const subagentIds = new Set<string>();
+  const sessionPaths = new Set<string>();
+  const explicitTopologyById = new Map<string, string | null>();
+
+  for (const session of sessions) {
+    if (session.parentSessionId !== undefined) explicitTopologyById.set(session.id, session.parentSessionId);
+    if (session.sessionPath?.endsWith(".jsonl")) sessionPaths.add(session.sessionPath);
+    for (const subagent of session.activeSubagents) subagentIds.add(subagent.id);
+  }
+  for (const session of sessions) {
+    const explicitParentSessionId = explicitTopologyById.get(session.id);
+    if (explicitTopologyById.has(session.id)) {
+      if (explicitParentSessionId === null) mainSessionIds.add(session.id);
+      continue;
+    }
+    mainSessionIds.add(session.id);
+    if (subagentIds.has(session.id) || hasSessionPathAncestor(session.sessionPath, sessionPaths)) {
+      mainSessionIds.delete(session.id);
+    }
+  }
+
+  return mainSessionIds;
+}
+
+export function filterMainSessions(sessions: readonly Session[]): Session[] {
+  const mainSessionIds = getMainSessionIds(sessions);
+  return sessions.filter((session) => mainSessionIds.has(session.id));
+}
+
+function hasSessionPathAncestor(sessionPath: string | null, sessionPaths: ReadonlySet<string>): boolean {
+  if (!sessionPath?.endsWith(".jsonl")) return false;
+
+  let separatorIndex = sessionPath.lastIndexOf("/");
+  while (separatorIndex > 0) {
+    if (sessionPaths.has(`${sessionPath.slice(0, separatorIndex)}.jsonl`)) return true;
+    separatorIndex = sessionPath.lastIndexOf("/", separatorIndex - 1);
+  }
+  return false;
 }
