@@ -72,9 +72,11 @@ export function registerExtensionWebSocketRoute(
       return;
     }
     const socketClosed = Promise.withResolvers<void>();
+    let isSocketClosed = false;
+    let metadataGeneration = 0;
     const frameQueue = createRegistrationGenerationQueue<
       Extract<ExtensionFrame, { type: "register" }>,
-      Exclude<ExtensionFrame, { type: "register" }>
+      Exclude<ExtensionFrame, { type: "register" } | { type: "metadata" }>
     >(
       async (frame, isCurrent) => {
         const catalogSession = sessionCatalog.get(frame.session.id);
@@ -204,12 +206,26 @@ export function registerExtensionWebSocketRoute(
       })();
       if (!frame) return;
 
+      if (frame.type === "metadata") {
+        const generation = ++metadataGeneration;
+        void applyRpcSessionMetadata({
+          frame,
+          registry,
+          socketClosed: socketClosed.promise,
+          isCancelled: () => isSocketClosed || generation !== metadataGeneration,
+        }).catch(() => {
+          socket.close(1011, "Extension frame handling failed");
+        });
+        return;
+      }
+
       const handling = frame.type === "register" ? frameQueue.register(frame) : frameQueue.accept(frame);
       void handling.catch(() => {
         socket.close(1011, "Extension frame handling failed");
       });
     });
     socket.on("close", () => {
+      isSocketClosed = true;
       frameQueue.close();
       socketClosed.resolve();
       const sessionId = releaseCurrentExtensionSocket(socket, extensionSessionBySocket, extensionSockets);
@@ -224,4 +240,46 @@ function waitForRegistrationRetry(socketClosed: Promise<void>): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
   setTimeout(resolve, 100);
   return Promise.race([promise, socketClosed]);
+}
+
+export async function applyRpcSessionMetadata({
+  frame,
+  registry,
+  socketClosed,
+  isCancelled,
+  waitForRetry = () => waitForRegistrationRetry(socketClosed),
+}: {
+  frame: Extract<ExtensionFrame, { type: "metadata" }>;
+  registry: SessionRegistry;
+  socketClosed: Promise<void>;
+  isCancelled: () => boolean;
+  waitForRetry?: () => Promise<void>;
+}): Promise<boolean> {
+  let isClosed = false;
+  void socketClosed.then(() => {
+    isClosed = true;
+  });
+  if (isCancelled() || isClosed) return false;
+  let session = registry.get(frame.sessionId);
+  if (session) {
+    if (session.source !== "rpc" || !session.connected || isCancelled() || isClosed) {
+      return false;
+    }
+    registry.update(frame.sessionId, { availableModels: frame.availableModels });
+    return true;
+  }
+
+  while (!isCancelled() && !isClosed) {
+    await waitForRetry();
+    if (isCancelled() || isClosed) return false;
+    session = registry.get(frame.sessionId);
+    if (session) {
+      if (session.source === "rpc" && session.connected && !isCancelled() && !isClosed) {
+        registry.update(frame.sessionId, { availableModels: frame.availableModels });
+        return true;
+      }
+      return false;
+    }
+  }
+  return false;
 }

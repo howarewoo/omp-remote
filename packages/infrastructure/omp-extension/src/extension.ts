@@ -186,6 +186,9 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
 
   let context: ExtensionContext | undefined;
   let socket: WebSocket | undefined;
+  let metadataContext: ExtensionContext | undefined;
+  let metadataSocket: WebSocket | undefined;
+  let metadataActive = false;
   let active = false;
   let activeMessageId: string | undefined;
   let messageSequence = 0;
@@ -568,9 +571,53 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
     });
   };
 
-  pi.on("session_start", async (_event, ctx) => {
+  const isTopLevelRpcSession = (ctx: ExtensionContext): boolean => {
+    if (!rpcMode) return false;
     const sessionFile = ctx.sessionManager.getSessionFile();
-    if (rpcMode && (!sessionFile?.endsWith(".jsonl") || !existsSync(`${dirname(sessionFile)}.jsonl`))) return;
+    return !sessionFile?.endsWith(".jsonl") || !existsSync(`${dirname(sessionFile)}.jsonl`);
+  };
+
+  const sendMetadata = (): void => {
+    if (!metadataContext || metadataSocket?.readyState !== WebSocket.OPEN) return;
+    metadataSocket.send(
+      JSON.stringify({
+        type: "metadata",
+        sessionId: metadataContext.sessionManager.getSessionId(),
+        availableModels: getSessionModelOptions(metadataContext.models.list(), (role) =>
+          resolveRoleAssignment(metadataContext!, role),
+        ),
+      }),
+    );
+  };
+
+  const connectMetadata = (): void => {
+    if (
+      !metadataActive ||
+      !metadataContext ||
+      metadataSocket?.readyState === WebSocket.CONNECTING ||
+      metadataSocket?.readyState === WebSocket.OPEN
+    ) {
+      return;
+    }
+    const url = process.env.OMP_REMOTE_EXTENSION_URL ?? DEFAULT_EXTENSION_URL;
+    const nextSocket = new WebSocket(url);
+    metadataSocket = nextSocket;
+    nextSocket.addEventListener("open", sendMetadata);
+    nextSocket.addEventListener("close", () => {
+      if (metadataSocket === nextSocket) metadataSocket = undefined;
+      if (metadataActive && metadataContext) metadataContext.setTimeout(connectMetadata, RECONNECT_DELAY_MS);
+    });
+    nextSocket.addEventListener("error", () => nextSocket.close());
+  };
+
+  pi.on("session_start", async (_event, ctx) => {
+    if (isTopLevelRpcSession(ctx)) {
+      metadataContext = ctx;
+      metadataActive = true;
+      connectMetadata();
+      ctx.setInterval(sendMetadata, HEARTBEAT_INTERVAL_MS);
+      return;
+    }
     context = ctx;
     active = true;
     installAskRelay(ctx);
@@ -596,33 +643,42 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("session_switch", async (_event, ctx) => {
-    loseRemoteAsks();
+    if (isTopLevelRpcSession(ctx)) {
+      metadataContext = ctx;
+      sendMetadata();
+      return;
+    }
     context = ctx;
     installAskRelay(ctx);
     register();
   });
   pi.on("agent_start", async (_event, ctx) => {
+    if (isTopLevelRpcSession(ctx)) return;
     context = ctx;
     installAskRelay(ctx);
     emitLifecycle("agent_start", null, false);
   });
   pi.on("agent_end", async (_event, ctx) => {
+    if (isTopLevelRpcSession(ctx)) return;
     context = ctx;
     installAskRelay(ctx);
     emitLifecycle("agent_end", null, false);
   });
   pi.on("message_start", async (event, ctx) => {
+    if (isTopLevelRpcSession(ctx)) return;
     context = ctx;
     installAskRelay(ctx);
     activeMessageId = `extension-message-${++messageSequence}`;
     emitLifecycle("message_start", event.message, true);
   });
   pi.on("message_update", async (event, ctx) => {
+    if (isTopLevelRpcSession(ctx)) return;
     context = ctx;
     installAskRelay(ctx);
     emitLifecycle("message_update", event.message, true);
   });
   pi.on("message_end", async (event, ctx) => {
+    if (isTopLevelRpcSession(ctx)) return;
     context = ctx;
     installAskRelay(ctx);
     emitLifecycle("message_end", event.message, false);
@@ -630,11 +686,15 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
   });
   pi.on("session_shutdown", async () => {
     active = false;
+    metadataActive = false;
     loseRemoteAsks();
     if (askRelay?.context.ui) askRelay.context.ui.askDialog = askRelay.nativeAskDialog;
     askRelay = undefined;
     socket?.close();
     socket = undefined;
+    metadataSocket?.close();
+    metadataSocket = undefined;
     context = undefined;
+    metadataContext = undefined;
   });
 }

@@ -814,29 +814,100 @@ describe("ompRemoteExtension", () => {
     expect(normalizeRemoteAskResponse(response)).toEqual(expected);
   });
 
-  it("keeps the RPC root session on the daemon RPC transport", async () => {
+  it("sends metadata frames for top-level RPC sessions without full registration or lifecycle ownership", async () => {
     process.argv.splice(0, process.argv.length, "node", "omp", "--mode", "rpc-ui");
     const directory = await mkdtemp(join(tmpdir(), "omp-remote-extension-root-"));
     temporaryDirectories.push(directory);
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
-    const WebSocket = vi.fn();
-    vi.stubGlobal("WebSocket", WebSocket);
-
-    ompRemoteExtension({
+    const model = {
+      provider: "openai",
+      id: "gpt-5.6",
+      name: "GPT-5.6",
+      thinking: { requiresEffort: false, efforts: ["low", "high"] as const },
+    };
+    const pi = {
       zod: { z: compatibilityZ },
-      on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => {
-        handlers.set(event, handler);
-      }),
-    } as unknown as ExtensionAPI);
-    await handlers.get("session_start")?.(
+      pi: {
+        settings: { getModelRole: (c: string) => (c === "default" ? "openai/gpt-5.6:high" : undefined) },
+      },
+      on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => handlers.set(event, handler)),
+      getThinkingLevel: () => "high" as const,
+      getCommands: () => [],
+    };
+    const origAsk = vi.fn();
+    const context = {
+      cwd: directory,
+      isIdle: () => true,
+      hasPendingMessages: () => false,
+      getContextUsage: () => undefined,
+      abort: vi.fn(),
+      ui: { askDialog: origAsk },
+      models: {
+        current: () => model,
+        list: () => [model],
+        resolve: (v: string) => (v === "openai/gpt-5.6" || v === "@default" ? model : undefined),
+      },
+      sessionManager: {
+        getBranch: () => [],
+        getSessionId: () => "session-rpc-root",
+        getSessionName: () => "Root",
+        getSessionFile: () => join(directory, "main.jsonl"),
+      },
+      setInterval: vi.fn(),
+      setTimeout: vi.fn(),
+    };
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    ompRemoteExtension(pi as unknown as ExtensionAPI);
+    await handlers.get("session_start")?.({}, context);
+    const socket = FakeWebSocket.instances[0]!;
+    expect(socket).toBeDefined();
+    expect(context.ui.askDialog).toBe(origAsk);
+    await socket.emit("open");
+    const expected = {
+      provider: "openai",
+      id: "gpt-5.6",
+      name: "GPT-5.6",
+      efforts: ["off", "low", "high"],
+      roles: ["default"],
+      roleEfforts: { default: "high" },
+    };
+    expect(JSON.parse(socket.sent[0] ?? "")).toEqual({
+      type: "metadata",
+      sessionId: "session-rpc-root",
+      availableModels: [expected],
+    });
+    expect(context.setInterval).toHaveBeenCalledWith(expect.any(Function), 10_000);
+    const intervalCallback = vi.mocked(context.setInterval).mock.calls[0]?.[0] as () => void;
+    intervalCallback();
+    expect(socket.sent).toHaveLength(2);
+    expect(JSON.parse(socket.sent[1] ?? "")).toEqual({
+      type: "metadata",
+      sessionId: "session-rpc-root",
+      availableModels: [expected],
+    });
+
+    await handlers.get("agent_start")?.({}, context);
+    await handlers.get("agent_end")?.({}, context);
+    await handlers.get("message_start")?.({ message: { role: "user", content: "hi" } }, context);
+    await handlers.get("message_update")?.({ message: { role: "user", content: "hi update" } }, context);
+    await handlers.get("message_end")?.({ message: { role: "user", content: "hi done" } }, context);
+    expect(socket.sent).toHaveLength(2);
+    expect(context.ui.askDialog).toBe(origAsk);
+
+    await handlers.get("session_switch")?.(
       {},
       {
-        sessionManager: {
-          getSessionFile: () => join(directory, "main.jsonl"),
-        },
+        ...context,
+        sessionManager: { ...context.sessionManager, getSessionId: () => "session-rpc-switched" },
       },
     );
-
-    expect(WebSocket).not.toHaveBeenCalled();
+    expect(JSON.parse(socket.sent[2] ?? "")).toEqual({
+      type: "metadata",
+      sessionId: "session-rpc-switched",
+      availableModels: [expected],
+    });
+    const closeSpy = vi.spyOn(socket, "close");
+    await handlers.get("session_shutdown")?.();
+    expect(closeSpy).toHaveBeenCalled();
   });
 });

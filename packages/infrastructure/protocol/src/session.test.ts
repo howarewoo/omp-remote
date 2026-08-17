@@ -4,6 +4,7 @@ import {
   ExtensionFrameSchema,
   ExtensionHeartbeatSchema,
   ExtensionRegisterSchema,
+  ExtensionMetadataSchema,
   filterMainSessions,
   ServerFrameSchema,
   SessionCatalogPageSchema,
@@ -451,6 +452,39 @@ describe("ExtensionRegisterSchema", () => {
         skillCommands: [{ name: "skill:seo", description: "Audit search visibility" }],
       }).skillCommands,
     ).toEqual([{ name: "skill:seo", description: "Audit search visibility" }]);
+  });
+});
+
+describe("ExtensionMetadataSchema", () => {
+  const valid = {
+    type: "metadata",
+    sessionId: "session-rpc-1",
+    availableModels: [
+      {
+        provider: "openai",
+        id: "gpt-5.6",
+        name: "GPT-5.6",
+        efforts: ["high"] as const,
+        roles: ["default"],
+        roleEfforts: { default: "high" as const },
+      },
+    ],
+  };
+
+  it("validates valid and invalid metadata frames", () => {
+    expect(ExtensionMetadataSchema.parse(valid)).toEqual(valid);
+    expect(ExtensionFrameSchema.parse(valid)).toEqual(valid);
+    for (const frame of [
+      { ...valid, sessionId: "" },
+      { type: "metadata", availableModels: [] },
+      { ...valid, availableModels: "invalid" },
+      { ...valid, availableModels: [{ provider: "", id: "gpt-5.6", name: "GPT-5.6", efforts: [] }] },
+      { ...valid, availableModels: [{ provider: "openai", id: "", name: "GPT-5.6", efforts: [] }] },
+      { ...valid, availableModels: [{ provider: "openai", id: "gpt-5.6", name: "", efforts: [] }] },
+      { ...valid, extra: true },
+    ]) {
+      expect(ExtensionMetadataSchema.safeParse(frame).success).toBe(false);
+    }
   });
 });
 

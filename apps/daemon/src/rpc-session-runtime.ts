@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { Logger } from "@omp-remote/observability";
 import { type RpcFrame, RpcSession } from "@omp-remote/omp-rpc";
 import type { AskRequest, Session, SessionModelOption, TranscriptMessage } from "@omp-remote/protocol";
@@ -28,6 +31,13 @@ import {
 const MAX_MESSAGES = 200;
 const RPC_LAUNCH_DEADLINE_MS = 15_000;
 
+export function resolveInstalledExtensionPath(
+  agentDirectory = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".omp", "agent"),
+): string | undefined {
+  const extensionPath = join(agentDirectory, "extensions", "omp-remote.js");
+  return existsSync(extensionPath) ? extensionPath : undefined;
+}
+
 type RpcSessionRuntimeDependencies = {
   environment: { OMP_REMOTE_OMP_PATH: string };
   registry: SessionRegistry;
@@ -52,10 +62,12 @@ export function createRpcSessionRuntime({
   logger,
 }: RpcSessionRuntimeDependencies) {
   async function launchRpcSession(cwd: string, resume: string | null): Promise<Session> {
+    const extensionPath = resolveInstalledExtensionPath();
     const rpc = new RpcSession({
       cwd,
       resume,
       ompPath: environment.OMP_REMOTE_OMP_PATH,
+      ...(extensionPath ? { extensionPath } : {}),
       onStderr: (text) => logger.info("OMP RPC stderr", { text: text.trim().slice(0, 1_000) }),
     });
     let sessionId: string | undefined;

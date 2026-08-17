@@ -222,6 +222,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         cwd: directory,
         ompPath: executable,
         resume: null,
+        extensionPath: "/path/to/omp-remote.js",
         onStderr: () => undefined,
       });
 
@@ -229,7 +230,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 
       expect(state).toMatchObject({
         type: "response",
-        data: { argv: ["--mode", "rpc-ui", "--cwd", directory] },
+        data: { argv: ["--mode", "rpc-ui", "--cwd", directory, "--extension", "/path/to/omp-remote.js"] },
       });
     } finally {
       await rpc?.terminate().catch(() => undefined);
