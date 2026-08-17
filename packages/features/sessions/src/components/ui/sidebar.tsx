@@ -6,6 +6,8 @@ import {
   type Dispatch,
   type HTMLAttributes,
   type SetStateAction,
+  type Touch as ReactTouch,
+  type TouchEvent as ReactTouchEvent,
   useCallback,
   useContext,
   useEffect,
@@ -14,7 +16,7 @@ import {
   useState,
 } from "react";
 import { Button } from "./button.js";
-import { isSidebarOpenSwipe } from "./sidebar-swipe.js";
+import { isSidebarCloseSwipe, isSidebarOpenSwipe } from "./sidebar-swipe.js";
 import { useIsMobile } from "./use-mobile.js";
 import { cn } from "./utils.js";
 
@@ -45,6 +47,13 @@ type SwipeStart = {
 
 function isIosStandalonePwa(): boolean {
   return (navigator as Navigator & { standalone?: boolean }).standalone === true;
+}
+
+function isStandalonePwa(): boolean {
+  return (
+    isIosStandalonePwa() ||
+    (typeof window.matchMedia === "function" && window.matchMedia("(display-mode: standalone)").matches)
+  );
 }
 
 export function useSidebar(): SidebarContextValue {
@@ -197,10 +206,61 @@ export function Sidebar({
   collapsible = "offcanvas",
   className,
   children,
+  onTouchCancel,
+  onTouchEnd,
+  onTouchStart,
   "aria-label": ariaLabel = "Sessions",
   ...props
 }: SidebarProps) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
+  const closeSwipeStartRef = useRef<SwipeStart | null>(null);
+
+  const handleCloseSwipeStart = (event: ReactTouchEvent<HTMLDivElement>) => {
+    onTouchStart?.(event);
+    if (event.defaultPrevented || !isStandalonePwa()) {
+      closeSwipeStartRef.current = null;
+      return;
+    }
+
+    const touch = event.touches.length === 1 ? event.touches.item(0) : null;
+    closeSwipeStartRef.current = touch
+      ? { identifier: touch.identifier, x: touch.clientX, y: touch.clientY }
+      : null;
+  };
+  const handleCloseSwipeEnd = (event: ReactTouchEvent<HTMLDivElement>) => {
+    onTouchEnd?.(event);
+    const start = closeSwipeStartRef.current;
+    closeSwipeStartRef.current = null;
+    if (event.defaultPrevented || !start) return;
+
+    let end: ReactTouch | null = null;
+    for (let index = 0; index < event.changedTouches.length; index += 1) {
+      const touch = event.changedTouches.item(index);
+      if (touch?.identifier === start.identifier) {
+        end = touch;
+        break;
+      }
+    }
+
+    if (
+      end &&
+      isSidebarCloseSwipe(
+        {
+          startX: start.x,
+          startY: start.y,
+          endX: end.clientX,
+          endY: end.clientY,
+        },
+        side,
+      )
+    ) {
+      setOpenMobile(false);
+    }
+  };
+  const cancelCloseSwipe = (event: ReactTouchEvent<HTMLDivElement>) => {
+    onTouchCancel?.(event);
+    closeSwipeStartRef.current = null;
+  };
 
   if (collapsible === "none") {
     return (
@@ -209,6 +269,9 @@ export function Sidebar({
         data-slot="sidebar"
         className={cn("sidebar sidebar-static", className)}
         aria-label={ariaLabel}
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={onTouchCancel}
         {...props}
       >
         {children}
@@ -227,6 +290,9 @@ export function Sidebar({
             data-mobile="true"
             data-side={side}
             className={cn("sidebar-sheet", className)}
+            onTouchStart={handleCloseSwipeStart}
+            onTouchEnd={handleCloseSwipeEnd}
+            onTouchCancel={cancelCloseSwipe}
             {...props}
           >
             <Dialog.Title className="sr-only">{ariaLabel}</Dialog.Title>
@@ -254,6 +320,9 @@ export function Sidebar({
         data-slot="sidebar-container"
         data-side={side}
         className={cn("sidebar-container", className)}
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+        onTouchCancel={onTouchCancel}
         {...props}
       >
         <aside data-sidebar="sidebar" data-slot="sidebar-inner" className="sidebar" aria-label={ariaLabel}>

@@ -20,3 +20,16 @@ export function isSidebarOpenSwipe({ startX, startY, endX, endY }: SidebarSwipe)
     horizontalDistance > verticalDistance * SIDEBAR_SWIPE_DIRECTION_RATIO
   );
 }
+
+export function isSidebarCloseSwipe(
+  { startX, startY, endX, endY }: SidebarSwipe,
+  side: "left" | "right",
+): boolean {
+  const horizontalDistance = side === "left" ? startX - endX : endX - startX;
+  const verticalDistance = Math.abs(endY - startY);
+
+  return (
+    horizontalDistance >= SIDEBAR_SWIPE_DISTANCE_PX &&
+    horizontalDistance > verticalDistance * SIDEBAR_SWIPE_DIRECTION_RATIO
+  );
+}
