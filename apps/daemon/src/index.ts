@@ -247,7 +247,13 @@ app.get("/api/sessions/:sessionId/cost", async (request, reply) => {
   if (!params.success) return reply.code(404).send({ error: "Session history was not found" });
   if (!sessionCatalog.get(params.data.sessionId)) await requestCatalogReconciliation();
   if (!sessionCatalog.get(params.data.sessionId)) {
-    return reply.code(404).send({ error: "Session history was not found" });
+    if (!registry.get(params.data.sessionId)) {
+      return reply.code(404).send({ error: "Session history was not found" });
+    }
+    return SessionCostResponseSchema.parse({
+      sessionId: params.data.sessionId,
+      costSummary: null,
+    });
   }
   try {
     return SessionCostResponseSchema.parse({

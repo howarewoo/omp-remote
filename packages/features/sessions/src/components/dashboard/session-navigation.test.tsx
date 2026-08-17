@@ -251,8 +251,22 @@ describe("controlled dashboard selection", () => {
   });
 
   it("loads cost for the viewed session as selection changes", () => {
+    reactHarness.lifecycleEffects = true;
     const onLoadCost = vi.fn().mockResolvedValue(undefined);
-    const secondSession = { ...BASE_SESSION, id: "session-2", name: "Second session" };
+    const message: Session["messages"][number] = {
+      id: "message-1",
+      role: "user",
+      text: "Transcript input",
+      presentation: "text",
+      timestamp: "2026-07-31T12:00:00.000Z",
+      streaming: false,
+    };
+    const secondSession: Session = {
+      ...BASE_SESSION,
+      id: "session-2",
+      name: "Second session",
+      messages: [message],
+    };
     const props = {
       ...composerDashboardProps(),
       sessions: [BASE_SESSION, secondSession],
@@ -260,7 +274,25 @@ describe("controlled dashboard selection", () => {
     };
 
     renderControlledDashboard(props);
-    renderControlledDashboard({ ...props, selectedSessionId: secondSession.id }, { preserveState: true });
+    expect(onLoadCost).not.toHaveBeenCalled();
+
+    renderControlledDashboard(
+      {
+        ...props,
+        sessions: [{ ...BASE_SESSION, messages: [message] }, secondSession],
+      },
+      { preserveState: true },
+    );
+    expect(onLoadCost.mock.calls).toEqual([[BASE_SESSION.id]]);
+
+    renderControlledDashboard(
+      {
+        ...props,
+        sessions: [{ ...BASE_SESSION, messages: [message] }, secondSession],
+        selectedSessionId: secondSession.id,
+      },
+      { preserveState: true },
+    );
     expect(onLoadCost.mock.calls).toEqual([[BASE_SESSION.id], [secondSession.id]]);
   });
 
