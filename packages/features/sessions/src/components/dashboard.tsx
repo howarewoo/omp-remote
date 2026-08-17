@@ -551,7 +551,10 @@ function DashboardContent({
     [clearSessionFileChangesRefreshTimer],
   );
 
-  const selectedCostSessionId = selectedSession?.id ?? null;
+  const selectedCostSessionId =
+    selectedSession && (selectedSession.source === "history" || selectedSession.messages.length > 0)
+      ? selectedSession.id
+      : null;
   useEffect(() => {
     if (!selectedCostSessionId) return;
     void onLoadCost(selectedCostSessionId).catch(() => undefined);

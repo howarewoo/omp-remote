@@ -232,6 +232,27 @@ describe("session transcript fallback integration", () => {
   });
 });
 
+describe("session cost fallback integration", () => {
+  it("serves null cost for a live session while catalog history is absent", async () => {
+    const repository = await createRepository();
+    const live = await registerExtension(session("cost-live-fallback", repository));
+    try {
+      const response = await fetch(`http://127.0.0.1:${daemonPort}/api/sessions/cost-live-fallback/cost`);
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        sessionId: "cost-live-fallback",
+        costSummary: null,
+      });
+      const missingResponse = await fetch(
+        `http://127.0.0.1:${daemonPort}/api/sessions/unrelated-missing-session/cost`,
+      );
+      expect(missingResponse.status).toBe(404);
+    } finally {
+      live.close();
+    }
+  });
+});
+
 describe("extension session idle authority integration", () => {
   it("preserves running status through early agent_end and becomes idle only after idle heartbeat", async () => {
     const repository = await createRepository();
