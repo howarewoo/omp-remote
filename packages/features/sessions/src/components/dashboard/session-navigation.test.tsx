@@ -89,7 +89,7 @@ describe("dashboard ask stream", () => {
     expect(content?.props["aria-live"]).toBe("polite");
     expect(messageRow?.props.scrollAnchor).toBe(true);
     expect(askRow).toBeDefined();
-    expect(askRow?.props.scrollAnchor).toBe(true);
+    expect(askRow?.props.scrollAnchor).toBeFalsy();
     await (ask?.props.onRespond as ((response: { value: string }) => Promise<void>) | undefined)?.({
       value: "Preview",
     });

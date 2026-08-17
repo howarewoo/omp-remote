@@ -126,7 +126,6 @@ export function SessionTranscript({
                 <MessageScrollerItem
                   key={`${activeAskRequest.sessionId}:${activeAskRequest.requestId}`}
                   messageId={`ask:${activeAskRequest.sessionId}:${activeAskRequest.requestId}`}
-                  scrollAnchor
                 >
                   <AskToolCall
                     request={activeAskRequest}
