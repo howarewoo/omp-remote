@@ -41,6 +41,35 @@ export function SessionMetadata({
 }: SessionMetadataProps) {
   return (
     <dl className="session-metadata">
+      {todo ? (
+        <div className="todo-tracker-metadata">
+          <dt>Todo</dt>
+          <dd>
+            <Button
+              className="todo-tracker-trigger"
+              type="button"
+              variant="ghost"
+              aria-label={todo.label}
+              onClick={onOpenTodo}
+            >
+              <span className="todo-tracker-copy">
+                <strong>
+                  {todo.overall.done}/{todo.overall.total}
+                </strong>
+                <span className="todo-tracker-active">
+                  <span aria-hidden="true" className="todo-state-marker" data-state={todo.activeState} />
+                  <span>{todo.activeLabel}</span>
+                </span>
+              </span>
+              <progress
+                aria-label={`Current Todo progress: ${todo.overall.done} of ${todo.overall.total} tasks ${todo.progressVerb}`}
+                max={todo.overall.total}
+                value={todo.overall.done}
+              />
+            </Button>
+          </dd>
+        </div>
+      ) : null}
       {session.branch ? (
         <div className="session-branch-metadata">
           <dt>Branch</dt>
@@ -111,35 +140,6 @@ export function SessionMetadata({
           <SessionCostMetadata summary={session.costSummary} onOpen={onOpenCost} />
         </dd>
       </div>
-      {todo ? (
-        <div className="todo-tracker-metadata">
-          <dt>Todo</dt>
-          <dd>
-            <Button
-              className="todo-tracker-trigger"
-              type="button"
-              variant="ghost"
-              aria-label={todo.label}
-              onClick={onOpenTodo}
-            >
-              <span className="todo-tracker-copy">
-                <strong>
-                  {todo.overall.done}/{todo.overall.total}
-                </strong>
-                <span className="todo-tracker-active">
-                  <span aria-hidden="true" className="todo-state-marker" data-state={todo.activeState} />
-                  <span>{todo.activeLabel}</span>
-                </span>
-              </span>
-              <progress
-                aria-label={`Current Todo progress: ${todo.overall.done} of ${todo.overall.total} tasks ${todo.progressVerb}`}
-                max={todo.overall.total}
-                value={todo.overall.done}
-              />
-            </Button>
-          </dd>
-        </div>
-      ) : null}
     </dl>
   );
 }

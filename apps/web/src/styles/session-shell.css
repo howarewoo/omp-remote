@@ -121,14 +121,14 @@
 
 .session-metadata:has(> .todo-tracker-metadata) {
   grid-template-columns:
-    minmax(13rem, 1.5fr) minmax(4.5rem, auto) minmax(11rem, auto) minmax(8rem, auto)
-    minmax(14rem, 1.5fr);
+    minmax(14rem, 1.5fr) minmax(13rem, 1.5fr) minmax(4.5rem, auto) minmax(11rem, auto)
+    minmax(8rem, auto);
 }
 
 .session-metadata:has(> .session-branch-metadata):has(> .todo-tracker-metadata) {
   grid-template-columns:
-    minmax(9rem, 1.25fr) minmax(13rem, 1.5fr) minmax(4.5rem, auto) minmax(11rem, auto)
-    minmax(8rem, auto) minmax(14rem, 1.5fr);
+    minmax(14rem, 1.5fr) minmax(9rem, 1.25fr) minmax(13rem, 1.5fr) minmax(4.5rem, auto)
+    minmax(11rem, auto) minmax(8rem, auto);
 }
 
 .session-metadata > div {
