@@ -172,11 +172,7 @@ export function registerExtensionWebSocketRoute(
         } else if (frame.type === "event") {
           registry.update(frame.sessionId, {
             connected: true,
-            ...(frame.event === "agent_start"
-              ? { status: "running" as const }
-              : frame.event === "agent_end"
-                ? { status: "idle" as const }
-                : {}),
+            ...(frame.event === "agent_start" ? { status: "running" as const } : {}),
             name: frame.name,
             model: frame.model,
             contextPercent: frame.contextPercent,
