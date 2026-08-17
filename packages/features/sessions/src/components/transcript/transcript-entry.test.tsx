@@ -548,6 +548,27 @@ describe("structured transcript presentation", () => {
         .map((node) => node.props?.href),
     ).toEqual(["https://user.example/docs"]);
   });
+
+  it("trims trailing empty lines and collapses excessive empty lines in assistant messages", () => {
+    const nodes = renderTranscriptNodes(
+      TranscriptEntry({
+        entry: {
+          id: "assistant-with-empty-lines",
+          role: "assistant",
+          text: "\n\nFirst paragraph\n\n\n\nSecond paragraph\n\n\n\n\n",
+          timestamp: "2026-07-29T12:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      }),
+    );
+
+    const emptyLines = nodes.filter((node) => node.className?.includes("transcript-line-empty"));
+    expect(emptyLines).toHaveLength(1);
+
+    const proseLines = nodes.filter((node) => node.className === "transcript-line");
+    expect(proseLines).toHaveLength(2);
+  });
 });
 
 describe("dashboard Read transcript", () => {

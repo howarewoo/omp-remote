@@ -89,9 +89,47 @@ const InlineTranscript = memo(function InlineTranscript({ text }: { text: string
 });
 
 export const TranscriptProse = memo(function TranscriptProse({ text }: { text: string }) {
+  const lines = useMemo(() => {
+    if (!text) {
+      return [];
+    }
+    const rawLines = text.replace(/\r\n|\r/g, "\n").split("\n");
+    let startIndex = 0;
+    while (startIndex < rawLines.length && (rawLines[startIndex]?.trim() ?? "") === "") {
+      startIndex++;
+    }
+    let endIndex = rawLines.length - 1;
+    while (endIndex >= startIndex && (rawLines[endIndex]?.trim() ?? "") === "") {
+      endIndex--;
+    }
+
+    if (startIndex > endIndex) {
+      return [];
+    }
+
+    const result: string[] = [];
+    let lastWasEmpty = false;
+
+    for (let i = startIndex; i <= endIndex; i++) {
+      const line = rawLines[i] ?? "";
+      const isEmpty = line.trim() === "";
+      if (isEmpty) {
+        if (!lastWasEmpty) {
+          result.push("");
+          lastWasEmpty = true;
+        }
+      } else {
+        result.push(line);
+        lastWasEmpty = false;
+      }
+    }
+
+    return result;
+  }, [text]);
+
   return (
     <div className="transcript-prose">
-      {text.split("\n").map((line, index) => {
+      {lines.map((line, index) => {
         const heading = line.match(/^(#{1,6})\s+(.+)$/);
         if (heading) {
           const [, marks = "", content = ""] = heading;
@@ -133,7 +171,7 @@ export const TranscriptProse = memo(function TranscriptProse({ text }: { text: s
           return <span aria-hidden="true" className="transcript-rule" key={`${index}:rule`} />;
         }
 
-        if (!line) {
+        if (!line || line.trim() === "") {
           return (
             <span
               aria-hidden="true"
