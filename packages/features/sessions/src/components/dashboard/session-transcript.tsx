@@ -117,7 +117,9 @@ export function SessionTranscript({
               ))}
               {session.status === "running" ? (
                 <MessageScrollerItem messageId={`working:${session.id}`} hidden={Boolean(activeAskRequest)}>
-                  {activeAskRequest ? null : <WorkingIndicator status={session.status} />}
+                  {activeAskRequest ? null : (
+                    <WorkingIndicator status={session.status} message={session.messages.at(-1)} />
+                  )}
                 </MessageScrollerItem>
               ) : null}
               {activeAskRequest ? (
@@ -176,8 +178,31 @@ export function SessionTranscript({
   );
 }
 
-export function WorkingIndicator({ status }: { status: Session["status"] }) {
+export interface WorkingIndicatorProps {
+  status: Session["status"];
+  message?: Session["messages"][number] | null | undefined;
+  label?: string | undefined;
+}
+
+export function formatWorkingLabel(message?: Session["messages"][number] | null | undefined): string {
+  if (!message) return "Working";
+  if (message.role === "tool" && (message.streaming || message.lifecycle?.state === "running")) {
+    if (message.toolTitle) return message.toolTitle;
+    if (message.toolName) {
+      return message.toolName.charAt(0).toUpperCase() + message.toolName.slice(1);
+    }
+    return "Tool";
+  }
+  if (message.role === "assistant" && message.streaming) {
+    return "Thinking...";
+  }
+  return "Working";
+}
+
+export function WorkingIndicator({ status, message, label }: WorkingIndicatorProps) {
   if (status !== "running") return null;
+
+  const displayedLabel = label ?? formatWorkingLabel(message);
 
   return (
     <Badge className="working-indicator" role="status">
@@ -186,7 +211,7 @@ export function WorkingIndicator({ status }: { status: Session["status"] }) {
         <span />
         <span />
       </span>
-      Working
+      {displayedLabel}
     </Badge>
   );
 }
