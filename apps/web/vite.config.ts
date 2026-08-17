@@ -1,6 +1,7 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
+import type { ManifestOptions } from "vite-plugin-pwa";
 
 type DaemonEnvironment = {
   OMP_REMOTE_HOST?: string;
@@ -21,6 +22,21 @@ export function resolveDaemonTargets(environment: DaemonEnvironment) {
   };
 }
 
+export const pwaManifest: Partial<ManifestOptions> = {
+  name: "OMP Remote",
+  short_name: "OMP Remote",
+  description: "Private multi-session control for OMP",
+  theme_color: "#0d0c13",
+  background_color: "#0d0c13",
+  display: "standalone",
+  orientation: "portrait",
+  start_url: "/",
+  icons: [
+    { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
+    { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
+  ],
+};
+
 const daemonTargets = resolveDaemonTargets(process.env);
 
 export default defineConfig({
@@ -29,19 +45,7 @@ export default defineConfig({
     VitePWA({
       registerType: "autoUpdate",
       injectRegister: false,
-      manifest: {
-        name: "OMP Remote",
-        short_name: "OMP Remote",
-        description: "Private multi-session control for OMP",
-        theme_color: "#0d0c13",
-        background_color: "#0d0c13",
-        display: "standalone",
-        start_url: "/",
-        icons: [
-          { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
-          { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
-        ],
-      },
+      manifest: pwaManifest,
       workbox: {
         clientsClaim: true,
         navigateFallback: "/index.html",
