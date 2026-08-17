@@ -232,6 +232,131 @@ describe("session transcript fallback integration", () => {
   });
 });
 
+describe("extension session idle authority integration", () => {
+  it("preserves running status through early agent_end and becomes idle only after idle heartbeat", async () => {
+    const repository = await createRepository();
+    const extension = await registerExtension(session("extension-idle-authority", repository, "running"));
+    try {
+      const initialResponse = await fetch(
+        `http://127.0.0.1:${daemonPort}/api/sessions/extension-idle-authority`,
+      );
+      expect(initialResponse.status).toBe(200);
+      await expect(initialResponse.json()).resolves.toMatchObject({
+        id: "extension-idle-authority",
+        status: "running",
+      });
+
+      extension.send(
+        JSON.stringify({
+          type: "event",
+          sessionId: "extension-idle-authority",
+          event: "agent_end",
+          message: {
+            id: "msg-agent-end",
+            role: "assistant",
+            text: "Agent finished turn",
+            timestamp: "2026-08-01T00:00:00.000Z",
+            streaming: false,
+            presentation: "text",
+          },
+          name: "extension-idle-authority",
+          model: "claude-3-5-sonnet",
+          contextPercent: 42,
+          effort: "high",
+        }),
+      );
+
+      await waitUntil(async () => {
+        const response = await fetch(`http://127.0.0.1:${daemonPort}/api/sessions/extension-idle-authority`);
+        expect(response.status).toBe(200);
+        const data = (await response.json()) as Session;
+        expect(data).toMatchObject({
+          id: "extension-idle-authority",
+          status: "running",
+          model: "claude-3-5-sonnet",
+          contextPercent: 42,
+          effort: "high",
+        });
+        expect(data.messages).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ id: "msg-agent-end", text: "Agent finished turn" }),
+          ]),
+        );
+      });
+
+      extension.send(
+        JSON.stringify({
+          type: "heartbeat",
+          sessionId: "extension-idle-authority",
+          name: "extension-idle-authority",
+          model: "claude-3-5-sonnet",
+          contextPercent: 45,
+          idle: false,
+        }),
+      );
+
+      await waitUntil(async () => {
+        const response = await fetch(`http://127.0.0.1:${daemonPort}/api/sessions/extension-idle-authority`);
+        expect(response.status).toBe(200);
+        const data = (await response.json()) as Session;
+        expect(data).toMatchObject({
+          id: "extension-idle-authority",
+          status: "running",
+          contextPercent: 45,
+        });
+      });
+
+      extension.send(
+        JSON.stringify({
+          type: "heartbeat",
+          sessionId: "extension-idle-authority",
+          name: "extension-idle-authority",
+          model: "claude-3-5-sonnet",
+          contextPercent: 45,
+          idle: true,
+        }),
+      );
+
+      await waitUntil(async () => {
+        const response = await fetch(`http://127.0.0.1:${daemonPort}/api/sessions/extension-idle-authority`);
+        expect(response.status).toBe(200);
+        const data = (await response.json()) as Session;
+        expect(data).toMatchObject({
+          id: "extension-idle-authority",
+          status: "idle",
+          contextPercent: 45,
+        });
+      });
+
+      extension.send(
+        JSON.stringify({
+          type: "event",
+          sessionId: "extension-idle-authority",
+          event: "agent_start",
+          message: null,
+          name: "extension-idle-authority",
+          model: "claude-3-5-sonnet",
+          contextPercent: 48,
+          effort: "high",
+        }),
+      );
+
+      await waitUntil(async () => {
+        const response = await fetch(`http://127.0.0.1:${daemonPort}/api/sessions/extension-idle-authority`);
+        expect(response.status).toBe(200);
+        const data = (await response.json()) as Session;
+        expect(data).toMatchObject({
+          id: "extension-idle-authority",
+          status: "running",
+          contextPercent: 48,
+        });
+      });
+    } finally {
+      extension.close();
+    }
+  });
+});
+
 describe("exact session details integration", () => {
   it("refreshes catalog-only child details, keeps pages root-only, prefers live state, and bounds output", async () => {
     const sessionsDirectory = join(historyDirectory, "sessions", "details-project");
