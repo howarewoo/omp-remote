@@ -1,4 +1,10 @@
 import {
+  type ApplicationErrorContext,
+  type ApplicationErrorInput,
+  type ApplicationErrorLedgerResponse,
+  ApplicationErrorLedgerResponseSchema,
+  type ApplicationErrorRecord,
+  type ApplicationErrorStorageHealth,
   type AskRequest,
   type AskResponse,
   type BrowserCommand,
@@ -31,6 +37,7 @@ const CATALOG_PAGE_SIZE = 100;
 const SWITCH_BRANCH_TIMEOUT_MS = 30_000;
 const LAUNCH_COMMAND_TIMEOUT_MS = 20_000;
 const PUSH_COMMAND_TIMEOUT_MS = 10_000;
+const REPORT_APPLICATION_ERROR_TIMEOUT_MS = 10_000;
 const MAX_SERVER_ERROR_LENGTH = 500;
 
 type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -49,6 +56,17 @@ export interface QueuedUserMessage {
   createdAt: string;
   status: "queued" | "failed";
   error?: string;
+}
+
+export interface ReportApplicationErrorInput {
+  id?: string | undefined;
+  timestamp?: string | undefined;
+  source?: "browser" | undefined;
+  severity?: "error" | "fatal" | undefined;
+  message: string;
+  errorName?: string | undefined;
+  stack?: string | undefined;
+  context?: ApplicationErrorContext | undefined;
 }
 
 export function createConnectionFreshnessTracker() {
@@ -84,6 +102,13 @@ export interface SessionClient {
   hasMoreHistory: boolean;
   connection: ConnectionState;
   error: string | null;
+  applicationErrors: ApplicationErrorRecord[];
+  applicationErrorsHealth: ApplicationErrorStorageHealth | null;
+  applicationErrorsLoading: boolean;
+  applicationErrorsError: string | null;
+  clearApplicationErrors(): Promise<void>;
+  reportApplicationError(error: ReportApplicationErrorInput): Promise<void>;
+  loadApplicationErrors(): Promise<void>;
   subscribeNotificationEvents(listener: NotificationEventListener): () => void;
   launch(cwd: string, resume: string | null): Promise<string>;
   saveWorkingDirectory(cwd: string): Promise<void>;
@@ -199,6 +224,15 @@ export function useSessionClient(): SessionClient {
   const transcriptRequestRef = useRef(0);
   const detailsAbortRef = useRef<AbortController | null>(null);
   const costAbortRef = useRef<AbortController | null>(null);
+  const applicationErrorsAbortRef = useRef<AbortController | null>(null);
+  const applicationErrorsRequestRef = useRef(0);
+  const applicationErrorsMutationTokenRef = useRef(0);
+  const applicationErrorsLastClearedTokenRef = useRef(0);
+
+  const bumpLedgerMutation = useCallback(() => {
+    applicationErrorsMutationTokenRef.current += 1;
+    return applicationErrorsMutationTokenRef.current;
+  }, []);
   const costSummaryBySessionRef = useRef(new Map<string, Session["costSummary"] | null>());
   const [liveSessions, setLiveSessions] = useState<Session[]>([]);
   const [askRequests, setAskRequests] = useState<AskRequest[]>([]);
@@ -214,6 +248,11 @@ export function useSessionClient(): SessionClient {
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [queuedMessages, setQueuedMessages] = useState<QueuedUserMessage[]>([]);
+  const [applicationErrors, setApplicationErrors] = useState<ApplicationErrorRecord[]>([]);
+  const [applicationErrorsHealth, setApplicationErrorsHealth] =
+    useState<ApplicationErrorStorageHealth | null>(null);
+  const [applicationErrorsLoading, setApplicationErrorsLoading] = useState(false);
+  const [applicationErrorsError, setApplicationErrorsError] = useState<string | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -281,6 +320,7 @@ export function useSessionClient(): SessionClient {
           setLiveSessionsReady(true);
           setConnection("connected");
           setConnectionError(null);
+          void loadApplicationErrors().catch(() => undefined);
         } else if (frame.type === "session_upsert") {
           setLiveSessions((current) => upsertSession(current, frame.session));
         } else if (frame.type === "session_update") {
@@ -300,6 +340,37 @@ export function useSessionClient(): SessionClient {
           resolvePendingCommand(pendingRef.current, frame);
         } else if (frame.type === "notification_event") {
           dispatchNotificationEvent(notificationListenersRef.current, frame);
+        } else if (frame.type === "application_error_added") {
+          bumpLedgerMutation();
+          setApplicationErrors((current) => addApplicationErrorRecord(current, frame.error));
+          setApplicationErrorsHealth((current) =>
+            current
+              ? {
+                  ...current,
+                  recordCount: current.recordCount + 1,
+                  newestTimestamp: frame.error.timestamp,
+                  oldestTimestamp: current.oldestTimestamp ?? frame.error.timestamp,
+                }
+              : null,
+          );
+          void loadApplicationErrors().catch(() => undefined);
+        } else if (frame.type === "application_errors_cleared") {
+          applicationErrorsAbortRef.current?.abort();
+          applicationErrorsRequestRef.current += 1;
+          const token = bumpLedgerMutation();
+          applicationErrorsLastClearedTokenRef.current = token;
+          setApplicationErrors([]);
+          setApplicationErrorsHealth((current) =>
+            current
+              ? {
+                  ...current,
+                  recordCount: 0,
+                  totalBytes: 0,
+                  oldestTimestamp: null,
+                  newestTimestamp: null,
+                }
+              : null,
+          );
         } else if (frame.type === "error") {
           setConnectionError(boundedServerError(frame.message, "The host reported an error"));
         }
@@ -360,6 +431,7 @@ export function useSessionClient(): SessionClient {
       detailsRequestRef.current += 1;
       detailsAbortRef.current?.abort();
       costAbortRef.current?.abort();
+      applicationErrorsAbortRef.current?.abort();
     },
     [],
   );
@@ -401,6 +473,74 @@ export function useSessionClient(): SessionClient {
     },
     [],
   );
+  const loadApplicationErrors = useCallback(async () => {
+    const requestNumber = ++applicationErrorsRequestRef.current;
+    const startToken = applicationErrorsMutationTokenRef.current;
+    applicationErrorsAbortRef.current?.abort();
+    const abortController = new AbortController();
+    applicationErrorsAbortRef.current = abortController;
+    setApplicationErrorsLoading(true);
+    setApplicationErrorsError(null);
+    try {
+      const ledger = await loadApplicationErrorsLedger(abortController.signal, fetch);
+      if (requestNumber !== applicationErrorsRequestRef.current || abortController.signal.aborted) {
+        return;
+      }
+      if (applicationErrorsLastClearedTokenRef.current > startToken) {
+        return;
+      }
+      setApplicationErrors((current) => deduplicateAndSortApplicationErrors([...current, ...ledger.errors]));
+      setApplicationErrorsHealth(ledger.health);
+    } catch (error) {
+      if (abortController.signal.aborted || requestNumber !== applicationErrorsRequestRef.current) {
+        return;
+      }
+      const message = error instanceof Error ? error.message : "Application errors could not be loaded";
+      setApplicationErrorsError(message);
+      throw error;
+    } finally {
+      if (requestNumber === applicationErrorsRequestRef.current) {
+        setApplicationErrorsLoading(false);
+        if (applicationErrorsAbortRef.current === abortController) {
+          applicationErrorsAbortRef.current = null;
+        }
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadApplicationErrors().catch(() => undefined);
+    return () => {
+      applicationErrorsAbortRef.current?.abort();
+    };
+  }, [loadApplicationErrors]);
+
+  const clearApplicationErrors = useCallback(async () => {
+    applicationErrorsAbortRef.current?.abort();
+    applicationErrorsRequestRef.current += 1;
+    const token = bumpLedgerMutation();
+    applicationErrorsLastClearedTokenRef.current = token;
+    setApplicationErrorsError(null);
+    try {
+      await clearApplicationErrorsLedger(fetch);
+      setApplicationErrors([]);
+      setApplicationErrorsHealth((current) =>
+        current
+          ? {
+              ...current,
+              recordCount: 0,
+              totalBytes: 0,
+              oldestTimestamp: null,
+              newestTimestamp: null,
+            }
+          : null,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Application errors could not be cleared";
+      setApplicationErrorsError(message);
+      throw error;
+    }
+  }, [bumpLedgerMutation]);
 
   const catalogLoads = useMemo(
     () => createCatalogLoadCoordinator(() => loadCatalogPage("", 0, false, true)),
@@ -695,6 +835,29 @@ export function useSessionClient(): SessionClient {
       ),
     [sendVoid],
   );
+  const reportApplicationError = useCallback(
+    (error: ReportApplicationErrorInput): Promise<void> => {
+      const input = {
+        source: "browser" as const,
+        severity: error.severity ?? ("error" as const),
+        message: error.message,
+        ...(error.errorName ? { errorName: error.errorName } : {}),
+        ...(error.stack ? { stack: error.stack } : {}),
+        ...(error.context ? { context: error.context } : {}),
+        ...(error.id ? { id: error.id } : {}),
+        ...(error.timestamp ? { timestamp: error.timestamp } : {}),
+      };
+      return sendVoid(
+        {
+          type: "report_application_error",
+          requestId: crypto.randomUUID(),
+          error: input,
+        },
+        REPORT_APPLICATION_ERROR_TIMEOUT_MS,
+      );
+    },
+    [sendVoid],
+  );
 
   const sessions = useMemo(() => {
     const merged = mergeSessions(
@@ -740,6 +903,13 @@ export function useSessionClient(): SessionClient {
     registerPushSubscription,
     updatePushSubscription,
     removePushSubscription,
+    applicationErrors,
+    applicationErrorsHealth,
+    applicationErrorsLoading,
+    applicationErrorsError,
+    clearApplicationErrors,
+    reportApplicationError,
+    loadApplicationErrors,
   };
 }
 export async function loadSessionDetails(
@@ -1058,4 +1228,67 @@ export function removeAskRequest(requests: AskRequest[], sessionId: string, requ
   );
   if (index < 0) return requests;
   return requests.toSpliced(index, 1);
+}
+
+export function compareApplicationErrorsNewestFirst(
+  left: ApplicationErrorRecord,
+  right: ApplicationErrorRecord,
+): number {
+  return right.timestamp.localeCompare(left.timestamp) || left.id.localeCompare(right.id);
+}
+
+export function deduplicateAndSortApplicationErrors(
+  records: readonly ApplicationErrorRecord[],
+): ApplicationErrorRecord[] {
+  const byId = new Map<string, ApplicationErrorRecord>();
+  for (const record of records) {
+    byId.set(record.id, record);
+  }
+  return [...byId.values()].sort(compareApplicationErrorsNewestFirst);
+}
+
+export function addApplicationErrorRecord(
+  current: readonly ApplicationErrorRecord[],
+  newRecord: ApplicationErrorRecord,
+): ApplicationErrorRecord[] {
+  const byId = new Map<string, ApplicationErrorRecord>();
+  for (const record of current) {
+    byId.set(record.id, record);
+  }
+  byId.set(newRecord.id, newRecord);
+  return [...byId.values()].sort(compareApplicationErrorsNewestFirst);
+}
+
+export async function loadApplicationErrorsLedger(
+  signal?: AbortSignal,
+  fetcher: typeof fetch = fetch,
+): Promise<ApplicationErrorLedgerResponse> {
+  const response = await fetcher("/api/application-errors", signal ? { signal } : {});
+  if (!response.ok) throw new Error(`Application errors request failed (${response.status})`);
+  return ApplicationErrorLedgerResponseSchema.parse(await response.json());
+}
+
+export async function clearApplicationErrorsLedger(
+  fetcher: typeof fetch = fetch,
+): Promise<{ ok: boolean; clearedCount?: number }> {
+  const response = await fetcher("/api/application-errors", { method: "DELETE" });
+  if (!response.ok) {
+    let hostError: string | null = null;
+    try {
+      const body: unknown = await response.json();
+      hostError =
+        typeof body === "object" && body !== null && "error" in body && typeof body.error === "string"
+          ? body.error
+          : null;
+    } catch {
+      // ignore JSON parse failure
+    }
+    throw new Error(hostError ?? `Application errors could not be cleared (${response.status})`);
+  }
+  const body = (await response.json()) as { ok?: boolean; clearedCount?: number };
+  const result: { ok: boolean; clearedCount?: number } = { ok: body.ok ?? true };
+  if (typeof body.clearedCount === "number") {
+    result.clearedCount = body.clearedCount;
+  }
+  return result;
 }

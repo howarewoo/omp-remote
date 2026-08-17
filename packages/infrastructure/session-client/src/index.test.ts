@@ -1,11 +1,22 @@
-import type { AskRequest, NotificationEvent, Session } from "@omp-remote/protocol";
+import type {
+  ApplicationErrorRecord,
+  ApplicationErrorStorageHealth,
+  AskRequest,
+  NotificationEvent,
+  Session,
+} from "@omp-remote/protocol";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
+  addApplicationErrorRecord,
   applyTranscriptToSessions,
   boundedServerError,
+  clearApplicationErrorsLedger,
   commandResultValue,
+  compareApplicationErrorsNewestFirst,
   createCatalogLoadCoordinator,
+  deduplicateAndSortApplicationErrors,
   dispatchNotificationEvent,
+  loadApplicationErrorsLedger,
   loadSessionBranchTopology,
   loadSessionCost,
   loadSessionDetails,
@@ -128,7 +139,7 @@ describe("queued follow-up commands", () => {
 
   it("stores follow-ups locally and lets the user remove them before dispatch", async () => {
     const client = useSessionClient();
-    const queuedMessagesSetter = hookHarness.stateSetters.at(-1);
+    const queuedMessagesSetter = hookHarness.stateSetters[13];
     if (!queuedMessagesSetter) throw new Error("Expected queued message state");
 
     await client.command("session-1", "follow_up", "Run this next");
@@ -918,5 +929,77 @@ describe("remote ask request state", () => {
 
     expect(removeAskRequest([newerRequest], "session-1", "ask-1")).toEqual([newerRequest]);
     expect(removeAskRequest([newerRequest], "session-1", "ask-2")).toEqual([]);
+  });
+});
+
+describe("application errors client support", () => {
+  const sampleError: ApplicationErrorRecord = {
+    id: "err-test-1",
+    timestamp: "2026-08-16T12:00:00.000Z",
+    source: "browser",
+    severity: "error",
+    message: "Test browser error",
+  };
+
+  const sampleHealth: ApplicationErrorStorageHealth = {
+    status: "healthy",
+    recordCount: 1,
+    totalBytes: 128,
+    oldestTimestamp: "2026-08-16T12:00:00.000Z",
+    newestTimestamp: "2026-08-16T12:00:00.000Z",
+    degradedReason: null,
+  };
+
+  it("sorts application errors newest first and deduplicates", () => {
+    const older: ApplicationErrorRecord = {
+      ...sampleError,
+      id: "err-older",
+      timestamp: "2026-08-16T11:00:00.000Z",
+    };
+    const newer: ApplicationErrorRecord = {
+      ...sampleError,
+      id: "err-newer",
+      timestamp: "2026-08-16T13:00:00.000Z",
+    };
+    const duplicate: ApplicationErrorRecord = { ...newer, message: "Updated newer" };
+
+    const result = deduplicateAndSortApplicationErrors([older, newer, duplicate]);
+    expect(result).toHaveLength(2);
+    expect(result[0]?.id).toBe("err-newer");
+    expect(result[0]?.message).toBe("Updated newer");
+    expect(result[1]?.id).toBe("err-older");
+  });
+
+  it("adds record preserving deduplication and newest-first order", () => {
+    const initial = [sampleError];
+    const newer: ApplicationErrorRecord = {
+      ...sampleError,
+      id: "err-2",
+      timestamp: "2026-08-16T13:00:00.000Z",
+    };
+    const added = addApplicationErrorRecord(initial, newer);
+    expect(added).toEqual([newer, sampleError]);
+  });
+
+  it("loads and parses application errors ledger", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        errors: [sampleError],
+        health: sampleHealth,
+      }),
+    });
+    const ledger = await loadApplicationErrorsLedger(undefined, fetcher as unknown as typeof fetch);
+    expect(ledger.errors).toHaveLength(1);
+    expect(ledger.health.status).toBe("healthy");
+  });
+
+  it("clears application errors ledger via DELETE", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true, clearedCount: 1 }),
+    });
+    const result = await clearApplicationErrorsLedger(fetcher as unknown as typeof fetch);
+    expect(result).toEqual({ ok: true, clearedCount: 1 });
   });
 });
