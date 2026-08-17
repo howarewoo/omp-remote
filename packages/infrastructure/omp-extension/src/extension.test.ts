@@ -910,4 +910,115 @@ describe("ompRemoteExtension", () => {
     await handlers.get("session_shutdown")?.();
     expect(closeSpy).toHaveBeenCalled();
   });
+
+  it("sends an initial snapshot at session_start and a refreshed prompt-bearing snapshot at agent_start before its event frame", async () => {
+    process.argv.splice(0, process.argv.length, "node", "omp", "--mode", "text");
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const pi = {
+      zod: { z: compatibilityZ },
+      pi: {
+        settings: {
+          getModelRole: (role: string) => (role === "default" ? "openai/gpt-5.6:high" : undefined),
+        },
+      },
+      on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => {
+        handlers.set(event, handler);
+      }),
+      getThinkingLevel: vi.fn(() => "high"),
+      getCommands: vi.fn(() => []),
+      sendUserMessage: vi.fn(),
+      setModel: vi.fn(),
+      setThinkingLevel: vi.fn(),
+    };
+
+    const model = { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" };
+    let branch: unknown[] = [];
+    const context = {
+      cwd: "/workspace/project",
+      isIdle: () => true,
+      hasPendingMessages: () => false,
+      getContextUsage: () => undefined,
+      abort: vi.fn(),
+      models: {
+        current: () => model,
+        list: () => [model],
+        resolve: (value: string) => (value === "openai/gpt-5.6" || value === "@default" ? model : undefined),
+      },
+      sessionManager: {
+        getBranch: () => branch,
+        getSessionId: () => "session-live-terminal",
+        getSessionName: () => "Live Terminal Session",
+        getSessionFile: () => null,
+      },
+      setInterval: vi.fn(),
+      setTimeout: vi.fn(),
+    };
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+
+    ompRemoteExtension(pi as unknown as ExtensionAPI);
+
+    // 1. session_start sends initial empty snapshot upon socket connection
+    await handlers.get("session_start")?.({}, context);
+    const socket = FakeWebSocket.instances[0];
+    expect(socket).toBeDefined();
+    if (!socket) throw new Error("Socket not created");
+    await socket.emit("open");
+
+    expect(socket.sent).toHaveLength(1);
+    const initialFrame = JSON.parse(socket.sent[0] ?? "");
+    expect(initialFrame).toEqual({
+      type: "register",
+      session: expect.objectContaining({
+        id: "session-live-terminal",
+        name: "Live Terminal Session",
+        messages: [],
+      }),
+    });
+
+    // 2. User inputs a prompt in the terminal, adding a user message to the session branch
+    const userPromptEntry = {
+      id: "msg-user-1",
+      type: "message",
+      message: {
+        id: "msg-user-1",
+        role: "user",
+        content: [{ type: "text", text: "Fix live terminal registration" }],
+        timestamp: "2026-08-17T00:00:00.000Z",
+      },
+    };
+    branch = [userPromptEntry];
+
+    // 3. agent_start fires: sends refreshed prompt-bearing snapshot followed by agent_start event frame
+    await handlers.get("agent_start")?.({}, context);
+
+    expect(socket.sent).toHaveLength(3);
+    const refreshedRegisterFrame = JSON.parse(socket.sent[1] ?? "");
+    const agentStartEventFrame = JSON.parse(socket.sent[2] ?? "");
+
+    expect(refreshedRegisterFrame).toEqual({
+      type: "register",
+      session: expect.objectContaining({
+        id: "session-live-terminal",
+        name: "Live Terminal Session",
+        messages: [
+          expect.objectContaining({
+            id: "msg-user-1",
+            role: "user",
+            text: "Fix live terminal registration",
+          }),
+        ],
+      }),
+    });
+
+    expect(agentStartEventFrame).toEqual({
+      type: "event",
+      sessionId: "session-live-terminal",
+      event: "agent_start",
+      message: null,
+      name: "Live Terminal Session",
+      model: "openai/gpt-5.6",
+      contextPercent: null,
+      effort: "high",
+    });
+  });
 });

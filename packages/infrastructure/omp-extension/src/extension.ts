@@ -656,6 +656,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
     if (isTopLevelRpcSession(ctx)) return;
     context = ctx;
     installAskRelay(ctx);
+    register();
     emitLifecycle("agent_start", null, false);
   });
   pi.on("agent_end", async (_event, ctx) => {

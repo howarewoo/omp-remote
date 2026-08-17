@@ -263,6 +263,32 @@ describe("controlled dashboard selection", () => {
     renderControlledDashboard({ ...props, selectedSessionId: secondSession.id }, { preserveState: true });
     expect(onLoadCost.mock.calls).toEqual([[BASE_SESSION.id], [secondSession.id]]);
   });
+
+  it("preserves the selected session when a new session is prepended to the list", () => {
+    const onSelectedSessionChange = vi.fn();
+    const props = {
+      ...DASHBOARD_DEFAULTS,
+      sessions: [BASE_SESSION],
+      sessionsReady: true,
+      historyLoading: false,
+      hasMoreHistory: false,
+      connection: "connected" as const,
+      error: null,
+      notificationState: "enabled" as const,
+      selectedSessionId: BASE_SESSION.id,
+      onSelectedSessionChange,
+    };
+
+    renderControlledDashboard(props);
+    const newSession = { ...BASE_SESSION, id: "session-2", name: "New live session" };
+    const output = renderControlledDashboard(
+      { ...props, sessions: [newSession, BASE_SESSION] },
+      { preserveState: true },
+    );
+
+    expect(findHostText(output, "h1")).toBe("Bootstrap");
+    expect(onSelectedSessionChange).not.toHaveBeenCalled();
+  });
 });
 
 describe("dashboard launch selection", () => {
@@ -1096,9 +1122,7 @@ describe("dashboard application errors view navigation", () => {
     // Find the sidebar Errors button in footer
     const errorsTrigger = findElements(
       output,
-      (el) =>
-        typeof el.props.className === "string" &&
-        el.props.className.includes("sidebar-errors-trigger"),
+      (el) => typeof el.props.className === "string" && el.props.className.includes("sidebar-errors-trigger"),
     )[0];
     expect(errorsTrigger).toBeDefined();
     expect(errorsTrigger?.props["aria-label"]).toBe("Application errors, 2 recorded");
@@ -1116,17 +1140,14 @@ describe("dashboard application errors view navigation", () => {
     // Active view attribute on trigger is set
     const activeErrorsTrigger = findElements(
       output,
-      (el) =>
-        typeof el.props.className === "string" &&
-        el.props.className.includes("sidebar-errors-trigger"),
+      (el) => typeof el.props.className === "string" && el.props.className.includes("sidebar-errors-trigger"),
     )[0];
     expect(activeErrorsTrigger?.props["aria-current"]).toBe("page");
 
     // Click a session from the list to return to sessions view
     const sessionItem = findElements(
       output,
-      (el) =>
-        typeof el.props.className === "string" && el.props.className.includes("session-item"),
+      (el) => typeof el.props.className === "string" && el.props.className.includes("session-item"),
     )[0];
     (sessionItem?.props.onClick as (() => void) | undefined)?.();
     output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
@@ -1149,9 +1170,7 @@ describe("dashboard application errors view navigation", () => {
     let output = renderControlledDashboard(props);
     const errorsTrigger = findElements(
       output,
-      (el) =>
-        typeof el.props.className === "string" &&
-        el.props.className.includes("sidebar-errors-trigger"),
+      (el) => typeof el.props.className === "string" && el.props.className.includes("sidebar-errors-trigger"),
     )[0];
     (errorsTrigger?.props.onClick as (() => void) | undefined)?.();
     output = renderControlledDashboard(props, { preserveState: true, effectsEnabled: false });
