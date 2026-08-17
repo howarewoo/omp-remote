@@ -443,6 +443,17 @@ describe("dashboard current Todo tracker", () => {
       "todo-streaming-tail",
     ]);
   });
+  it("renders the Todo tracker as the first element in the metadata line", () => {
+    const output = renderControlledDashboard(composerDashboardProps({ ...BASE_SESSION, messages }));
+    const metadataElement = findElements(output, (element) => element.props.className === "session-metadata")[0];
+    expect(metadataElement).toBeDefined();
+
+    const labels = findElements(metadataElement, (element) => element.type === "dt").map((element) =>
+      textContent(element),
+    );
+    expect(labels).toEqual(["Todo", "Branch", "Model · Effort", "Context", "Changes", "Cost"]);
+  });
+
 
   it("opens the full latest Todo in a responsive drawer", () => {
     const props = composerDashboardProps({ ...BASE_SESSION, messages });
