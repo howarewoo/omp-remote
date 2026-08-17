@@ -7,6 +7,7 @@ import App from "./App.js";
 const appMocks = vi.hoisted(() => {
   const sessionClient = {
     sessions: [],
+    queuedMessages: [],
     askRequests: [],
     savedWorkingDirectories: [],
     sessionsReady: true,
@@ -14,11 +15,16 @@ const appMocks = vi.hoisted(() => {
     hasMoreHistory: false,
     connection: "connected",
     error: null,
+    applicationErrors: [],
+    applicationErrorsHealth: null,
+    applicationErrorsLoading: false,
+    applicationErrorsError: null,
     launch: vi.fn(),
     saveWorkingDirectory: vi.fn(),
     removeWorkingDirectory: vi.fn(),
     command: vi.fn(),
     abort: vi.fn(),
+    cancelQueuedMessage: vi.fn(),
     kill: vi.fn(),
     setModel: vi.fn(),
     setEffort: vi.fn(),
@@ -37,10 +43,16 @@ const appMocks = vi.hoisted(() => {
     registerPushSubscription: vi.fn(),
     updatePushSubscription: vi.fn(),
     removePushSubscription: vi.fn(),
+    clearApplicationErrors: vi.fn(),
+    reportApplicationError: vi.fn(),
+    loadApplicationErrors: vi.fn(),
   };
-  return { sessionClient, useSessionNotifications: vi.fn() };
+  return {
+    sessionClient,
+    useSessionNotifications: vi.fn(),
+    useBrowserErrorCapture: vi.fn(),
+  };
 });
-
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof ReactModule>();
   return {
@@ -70,9 +82,18 @@ vi.mock("./session-notifications.js", () => ({
     toggleEvent: vi.fn(),
   }),
 }));
+vi.mock("./application-errors.js", () => ({
+  useBrowserErrorCapture: appMocks.useBrowserErrorCapture,
+}));
 
 interface ControlledDashboardProps {
   selectedSessionId?: string | null;
+  applicationErrors?: unknown[];
+  applicationErrorsHealth?: unknown;
+  applicationErrorsLoading?: boolean;
+  applicationErrorsError?: string | null;
+  onClearApplicationErrors?: () => Promise<void>;
+  onReloadApplicationErrors?: () => Promise<void>;
   onLoadSession?: (sessionId: string) => Promise<void>;
   onLoadSessionFileChanges?: (sessionId: string, signal?: AbortSignal) => Promise<unknown>;
   onLoadSessionBranchTopology?: (sessionId: string, signal?: AbortSignal) => Promise<unknown>;
@@ -170,6 +191,33 @@ describe("App session URL state", () => {
     App();
 
     expect(appMocks.useSessionNotifications).toHaveBeenLastCalledWith(appMocks.sessionClient);
+  });
+  it("passes the session client transport to the browser error capture hook", () => {
+    vi.stubGlobal("window", {
+      location: new URL("https://app.test/"),
+      history: { replaceState: vi.fn() },
+    });
+
+    App();
+
+    expect(appMocks.useBrowserErrorCapture).toHaveBeenLastCalledWith(appMocks.sessionClient);
+  });
+
+  it("passes global application error records, health, loading, error, and actions to the dashboard independent of selected session", () => {
+    vi.stubGlobal("window", {
+      location: new URL("https://app.test/?session=active-session-123&query=filter"),
+      history: { replaceState: vi.fn() },
+    });
+
+    const [, dashboard] = (App() as ReactElement<AppContentProps>).props.children;
+
+    expect(dashboard.props.applicationErrors).toBe(appMocks.sessionClient.applicationErrors);
+    expect(dashboard.props.applicationErrorsHealth).toBe(appMocks.sessionClient.applicationErrorsHealth);
+    expect(dashboard.props.applicationErrorsLoading).toBe(appMocks.sessionClient.applicationErrorsLoading);
+    expect(dashboard.props.applicationErrorsError).toBe(appMocks.sessionClient.applicationErrorsError);
+    expect(dashboard.props.onClearApplicationErrors).toBe(appMocks.sessionClient.clearApplicationErrors);
+    expect(dashboard.props.onReloadApplicationErrors).toBe(appMocks.sessionClient.loadApplicationErrors);
+    expect(dashboard.props.selectedSessionId).toBe("active-session-123");
   });
 
   it("mounts exactly one root toaster inside the theme provider", () => {

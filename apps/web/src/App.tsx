@@ -2,6 +2,7 @@ import { useSessionClient } from "@omp-remote/session-client";
 import { Dashboard, ThemeProvider, Toaster } from "@omp-remote/sessions/components";
 import { useCallback, useState } from "react";
 import { useSessionNotifications } from "./session-notifications.js";
+import { useBrowserErrorCapture } from "./application-errors.js";
 import { StartupSplash } from "./startup-splash.js";
 
 function requestedSessionId(url: string | URL): string | null {
@@ -16,6 +17,7 @@ function withRequestedSession(url: string | URL, sessionId: string): URL {
 
 export default function App() {
   const client = useSessionClient();
+  useBrowserErrorCapture(client);
   const notifications = useSessionNotifications(client);
   const [selectedSessionId, setSelectedSessionId] = useState(() => requestedSessionId(window.location.href));
   const onSelectedSessionChange = useCallback((sessionId: string) => {
@@ -34,6 +36,10 @@ export default function App() {
         sessions={client.sessions}
         queuedMessages={client.queuedMessages}
         askRequests={client.askRequests}
+        applicationErrors={client.applicationErrors}
+        applicationErrorsHealth={client.applicationErrorsHealth}
+        applicationErrorsLoading={client.applicationErrorsLoading}
+        applicationErrorsError={client.applicationErrorsError}
         savedWorkingDirectories={client.savedWorkingDirectories}
         sessionsReady={client.sessionsReady}
         historyLoading={client.historyLoading}
@@ -45,6 +51,8 @@ export default function App() {
         notificationError={notifications.error}
         selectedSessionId={selectedSessionId}
         onSelectedSessionChange={onSelectedSessionChange}
+        onClearApplicationErrors={client.clearApplicationErrors}
+        onReloadApplicationErrors={client.loadApplicationErrors}
         onToggleNotification={notifications.toggleEvent}
         onLaunch={client.launch}
         onSaveWorkingDirectory={client.saveWorkingDirectory}

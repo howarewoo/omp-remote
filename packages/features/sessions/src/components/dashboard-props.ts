@@ -1,4 +1,6 @@
 import type {
+  ApplicationErrorRecord,
+  ApplicationErrorStorageHealth,
   AskRequest,
   AskResponse,
   Effort,
@@ -24,6 +26,10 @@ export interface DashboardProps {
   sessions: Session[];
   queuedMessages: readonly QueuedMessage[];
   askRequests: AskRequest[];
+  applicationErrors?: readonly ApplicationErrorRecord[];
+  applicationErrorsHealth?: ApplicationErrorStorageHealth | null;
+  applicationErrorsLoading?: boolean;
+  applicationErrorsError?: string | null;
   savedWorkingDirectories: string[];
   sessionsReady: boolean;
   historyLoading: boolean;
@@ -35,6 +41,8 @@ export interface DashboardProps {
   notificationError?: string | null;
   selectedSessionId: string | null;
   onSelectedSessionChange(sessionId: string): void;
+  onClearApplicationErrors?(): Promise<void>;
+  onReloadApplicationErrors?(): Promise<void>;
   onToggleNotification?(event: NotificationEventKey, enabled: boolean): Promise<void>;
   onLaunch(cwd: string, resume: string | null): Promise<string>;
   onSaveWorkingDirectory(cwd: string): Promise<void>;
