@@ -1,8 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveDaemonTargets } from "../vite.config.js";
+import { pwaManifest, resolveDaemonTargets } from "../vite.config.js";
 
 afterEach(() => {
   vi.unstubAllEnvs();
+});
+
+describe("PWA manifest configuration", () => {
+  it("locks installed apps to portrait orientation", () => {
+    expect(pwaManifest.orientation).toBe("portrait");
+  });
 });
 
 describe("Vite daemon proxy configuration", () => {
