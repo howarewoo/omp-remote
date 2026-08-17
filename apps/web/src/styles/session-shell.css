@@ -435,3 +435,319 @@
   font-family: var(--font-mono);
   font-weight: 500;
 }
+
+/* Application Error Workspace & Header */
+.app-errors-workspace {
+  display: flex;
+  width: 100%;
+  max-width: min(100%, 78rem);
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  margin: 0 auto;
+  padding: 0 clamp(1rem, 4vw, 3rem) max(1rem, var(--safe-area-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.app-errors-header {
+  border-bottom: 1px solid var(--border);
+}
+
+.app-errors-subtitle {
+  max-width: 48vw;
+  margin-top: 0.2rem;
+  overflow: hidden;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-errors-alert {
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  border-radius: var(--radius);
+}
+
+.app-errors-degraded-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  background: color-mix(in oklch, var(--warning) 12%, transparent);
+  color: var(--foreground);
+  font-size: 0.8125rem;
+}
+
+.app-errors-degraded-banner .icon {
+  flex: 0 0 auto;
+  color: var(--warning);
+}
+
+.app-errors-degraded-banner strong {
+  display: block;
+  font-weight: 600;
+}
+
+.app-errors-degraded-banner p {
+  margin: 0.15rem 0 0;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+
+/* Filters */
+.app-error-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 0 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-error-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.app-error-filter-label {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.app-error-filter-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.app-error-filter-reset {
+  margin-left: auto;
+  font-size: 0.75rem;
+}
+
+/* Summary text */
+.app-errors-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0.75rem 0 0.5rem;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+}
+
+/* List & Cards */
+.app-errors-list {
+  display: grid;
+  gap: 0.75rem;
+  padding-bottom: 2rem;
+}
+
+.app-error-card {
+  display: grid;
+  gap: 0.6rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--sidebar-background);
+  transition: border-color 150ms ease;
+}
+
+.app-error-card:hover {
+  border-color: var(--border-strong);
+}
+
+.app-error-card-fatal {
+  border-left: 3px solid var(--destructive);
+}
+
+.app-error-card-error {
+  border-left: 3px solid var(--warning);
+}
+
+.app-error-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.app-error-card-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.app-error-severity-badge {
+  font-size: 0.625rem;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+.app-error-severity-badge.severity-fatal {
+  background: var(--destructive);
+  color: var(--destructive-foreground);
+}
+
+.app-error-severity-badge.severity-error {
+  background: color-mix(in oklch, var(--warning) 20%, transparent);
+  color: var(--warning);
+  border: 1px solid color-mix(in oklch, var(--warning) 40%, transparent);
+}
+
+.app-error-source-badge {
+  font-size: 0.625rem;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.app-error-card-header time {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  margin-left: auto;
+}
+
+.app-error-name {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 0.875rem;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.app-error-message {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.app-error-details-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0;
+  height: auto;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+
+.app-error-details-toggle:hover {
+  color: var(--foreground);
+}
+
+.app-error-details-panel {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) * 0.75);
+  background: var(--background);
+}
+
+.app-error-details-section {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.app-error-details-heading {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.app-error-context-list {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.25rem 0.75rem;
+  margin: 0;
+  padding: 0.5rem;
+  background: var(--hover-background);
+  border-radius: calc(var(--radius) * 0.5);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+}
+
+.app-error-context-list dt {
+  color: var(--muted-foreground);
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.app-error-context-list dd {
+  margin: 0;
+  color: var(--foreground);
+  word-break: break-all;
+}
+
+.app-error-stack {
+  margin: 0;
+  padding: 0.625rem 0.75rem;
+  max-height: 18rem;
+  overflow-x: auto;
+  overflow-y: auto;
+  border-radius: calc(var(--radius) * 0.5);
+  background: var(--hover-background);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.app-errors-empty {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: 0.65rem;
+  padding: 4rem 1.5rem;
+  margin: auto;
+  max-width: 24rem;
+}
+
+.app-errors-empty .icon {
+  width: 2.5rem;
+  height: 2.5rem;
+  color: var(--muted-foreground);
+}
+
+.app-errors-empty strong {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--foreground);
+}
+
+.app-errors-empty p {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}

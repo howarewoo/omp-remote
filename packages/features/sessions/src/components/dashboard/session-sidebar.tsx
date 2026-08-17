@@ -2,6 +2,8 @@ import type { Session } from "@omp-remote/protocol";
 import { SESSION_STATUS_LABEL, SESSION_STATUS_TONE } from "@omp-remote/ui";
 import type { FormEventHandler } from "react";
 import { type DirectoryRailEntry, getDirectoryBasename } from "../dashboard-actions.js";
+import type { DashboardViewMode } from "../dashboard-props.js";
+import { Badge } from "../ui/badge.js";
 import { Button } from "../ui/button.js";
 import { Input } from "../ui/input.js";
 import {
@@ -13,9 +15,10 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "../ui/sidebar.js";
+import { Tooltip } from "../ui/tooltip.js";
 import { cn } from "../ui/utils.js";
 import { DirectoryRail } from "./directory-rail.js";
-import { DashboardIcon } from "./session-header.js";
+import { DashboardIcon } from "./icon.js";
 import { compactPath } from "./session-path.js";
 
 interface SessionSidebarSection {
@@ -37,6 +40,9 @@ export interface SessionSidebarProps {
   historyQuery: string;
   activeHistoryQuery: string;
   connection: "connecting" | "connected" | "disconnected";
+  activeView?: DashboardViewMode;
+  applicationErrorsCount?: number;
+  onSelectView?(view: DashboardViewMode): void;
   onSelectDirectory(cwd: string | null): void;
   onHistoryQueryChange(value: string): void;
   onSubmitHistorySearch: FormEventHandler<HTMLFormElement>;
@@ -59,6 +65,9 @@ export function SessionSidebar({
   historyQuery,
   activeHistoryQuery,
   connection,
+  activeView = "sessions",
+  applicationErrorsCount = 0,
+  onSelectView,
   onSelectDirectory,
   onHistoryQueryChange,
   onSubmitHistorySearch,
@@ -220,14 +229,55 @@ export function SessionSidebar({
         </SidebarContent>
 
         <SidebarFooter>
-          <span className={cn("connection-dot", `connection-${connection}`)} aria-hidden="true" />
-          <span>
-            {connection === "connected"
-              ? "Host connected"
-              : connection === "connecting"
-                ? "Connecting"
-                : "Host offline"}
-          </span>
+          <div className="sidebar-footer-row">
+            <div className="sidebar-connection-status">
+              <span className={cn("connection-dot", `connection-${connection}`)} aria-hidden="true" />
+              <span>
+                {connection === "connected"
+                  ? "Host connected"
+                  : connection === "connecting"
+                    ? "Connecting"
+                    : "Host offline"}
+              </span>
+            </div>
+            <Tooltip
+              content={
+                applicationErrorsCount > 0
+                  ? `Application errors (${applicationErrorsCount})`
+                  : "Application errors"
+              }
+              side="top"
+              sideOffset={6}
+            >
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={cn(
+                  "sidebar-errors-trigger",
+                  activeView === "application-errors" && "sidebar-errors-trigger-active",
+                )}
+                aria-current={activeView === "application-errors" ? "page" : undefined}
+                aria-label={
+                  applicationErrorsCount > 0
+                    ? `Application errors, ${applicationErrorsCount} recorded`
+                    : "Application errors"
+                }
+                title="Application errors"
+                onClick={() =>
+                  onSelectView?.(activeView === "application-errors" ? "sessions" : "application-errors")
+                }
+              >
+                <DashboardIcon name="alert" />
+                <span className="sidebar-errors-label">Errors</span>
+                {applicationErrorsCount > 0 ? (
+                  <Badge className="sidebar-errors-badge">
+                    {applicationErrorsCount > 99 ? "99+" : applicationErrorsCount}
+                  </Badge>
+                ) : null}
+              </Button>
+            </Tooltip>
+          </div>
         </SidebarFooter>
       </div>
       <SidebarRail />

@@ -381,11 +381,85 @@
   display: flex;
   min-height: 3rem;
   align-items: center;
-  gap: 0.6rem;
-  padding: 0 1rem;
+  padding: 0 0.75rem 0 1rem;
   border-top: 1px solid var(--border);
   color: var(--muted-foreground);
   font-size: 0.75rem;
+}
+
+.sidebar-footer-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.sidebar-connection-status {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.6rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-connection-status span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-errors-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.5rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: var(--radius);
+  flex: 0 0 auto;
+  transition:
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+.sidebar-errors-trigger:hover {
+  color: var(--foreground);
+  background: var(--hover-background);
+}
+
+.sidebar-errors-trigger-active,
+.sidebar-errors-trigger[aria-current="page"] {
+  color: var(--primary);
+  background: var(--selected-background);
+  font-weight: 600;
+}
+
+.sidebar-errors-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.3rem;
+  font-size: 0.625rem;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  line-height: 1;
+  border-radius: 9999px;
+  background: var(--secondary);
+  border: 1px solid var(--border-strong);
+  color: var(--foreground);
+}
+
+.sidebar-errors-trigger-active .sidebar-errors-badge,
+.sidebar-errors-trigger[aria-current="page"] .sidebar-errors-badge {
+  border-color: var(--primary);
+  background: color-mix(in oklch, var(--primary) 16%, transparent);
+  color: var(--primary);
 }
 
 .sidebar-root[data-state="collapsed"] .sidebar-session-pane {
