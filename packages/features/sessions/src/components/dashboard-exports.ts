@@ -1,6 +1,10 @@
 export { AskToolCall, type AskToolCallProps } from "./ask/ask-tool-call.js";
 export { DirectoryRail, type DirectoryRailProps } from "./dashboard/directory-rail.js";
-export { WorkingIndicator } from "./dashboard/session-transcript.js";
+export {
+  formatWorkingLabel,
+  WorkingIndicator,
+  type WorkingIndicatorProps,
+} from "./dashboard/session-transcript.js";
 export {
   canKillSession,
   type DirectoryRailEntry,

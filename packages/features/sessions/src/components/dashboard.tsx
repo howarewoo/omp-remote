@@ -982,7 +982,10 @@ function DashboardContent({
         )}
         {viewedSubagentSession?.status === "running" ? (
           <MessageScrollerItem messageId={`working:${viewedSubagentSession.id}`}>
-            <WorkingIndicator status={viewedSubagentSession.status} />
+            <WorkingIndicator
+              status={viewedSubagentSession.status}
+              message={viewedSubagentSession.messages.at(-1)}
+            />
           </MessageScrollerItem>
         ) : null}
       </SubagentSessionViewer>
