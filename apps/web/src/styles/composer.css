@@ -120,8 +120,10 @@
 
 .composer-field .ui-textarea {
   display: block;
+  field-sizing: content;
   min-height: 3rem;
   max-height: 12rem;
+  overflow-y: auto;
   padding-block: 0.65rem;
 }
 
