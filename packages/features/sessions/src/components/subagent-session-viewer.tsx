@@ -1,6 +1,8 @@
 import type { ActiveSubagent, Session } from "@omp-remote/protocol";
 import { SESSION_STATUS_LABEL, SESSION_STATUS_TONE } from "@omp-remote/ui";
 import { type ReactNode, useEffect, useRef } from "react";
+import { formatEffortLabel } from "./dashboard/session-metadata.js";
+import { formatUsd } from "./session-cost.js";
 import { Badge } from "./ui/badge.js";
 import { Button } from "./ui/button.js";
 import {
@@ -31,6 +33,14 @@ interface SubagentSessionViewerProps {
   onOpenChange(open: boolean): void;
   children: ReactNode;
 }
+export function formatSubagentModelLabel(session: Session | null | undefined): string {
+  if (!session?.model) return "Default";
+  const match = session.availableModels?.find(
+    (model) => `${model.provider}/${model.id}` === session.model || model.id === session.model,
+  );
+  return match?.name ?? session.model.split("/").at(-1) ?? "Default";
+}
+
 
 /** Presents a subagent transcript as a mobile bottom sheet or desktop side panel. */
 export function SubagentSessionViewer({
@@ -107,6 +117,42 @@ export function SubagentSessionViewer({
             </DrawerClose>
           </div>
         </DrawerHeader>
+        {session ? (
+          <dl className="subagent-session-metadata">
+            {session.branch ? (
+              <div className="subagent-metadata-branch">
+                <dt>Branch</dt>
+                <dd>
+                  <span className="subagent-metadata-value" title={session.branch}>
+                    {session.branch}
+                  </span>
+                </dd>
+              </div>
+            ) : null}
+            <div className="subagent-metadata-model">
+              <dt>Model · Effort</dt>
+              <dd>
+                <span className="subagent-metadata-value">{formatSubagentModelLabel(session)}</span>
+                <span className="subagent-metadata-separator" aria-hidden="true">
+                  ·
+                </span>
+                <span className="subagent-metadata-effort">{formatEffortLabel(session.effort)}</span>
+              </dd>
+            </div>
+            <div className="subagent-metadata-context">
+              <dt>Context</dt>
+              <dd>{session.contextPercent === null ? "—" : `${Math.round(session.contextPercent)}%`}</dd>
+            </div>
+            <div className="subagent-metadata-cost">
+              <dt>Cost</dt>
+              <dd>
+                {session.costSummary
+                  ? `${formatUsd(session.costSummary.totalUsd)}${session.costSummary.partial ? " · Partial" : ""}`
+                  : "—"}
+              </dd>
+            </div>
+          </dl>
+        ) : null}
         <MessageScrollerProvider
           key={`${session?.id ?? displayedSubagent.id}:${open ? "open" : "closed"}`}
           autoScroll

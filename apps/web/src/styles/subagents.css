@@ -1,3 +1,12 @@
+.subagent-session-panel {
+  min-width: 0;
+  max-width: 100vw;
+}
+
+.subagent-session-panel[data-swipe-axis="x"] {
+  width: min(56vw, 48rem);
+}
+
 .subagent-session-header {
   display: flex;
   min-height: calc(4.5rem + var(--safe-area-top));
@@ -8,10 +17,12 @@
   padding: calc(1rem + var(--safe-area-top)) 1.25rem 1rem;
   border-bottom: 1px solid var(--border);
   background: var(--subagent-header-background);
+  min-width: 0;
 }
 
 .subagent-session-header > div:first-child {
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .subagent-session-header h2,
@@ -53,4 +64,64 @@
   fill: none;
   stroke: currentColor;
   stroke-width: 1.5;
+}
+
+/* Subagent session metadata */
+.subagent-session-metadata {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 1.25rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0.65rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--subagent-header-background);
+}
+
+.subagent-session-metadata > div {
+  display: grid;
+  min-width: 0;
+  gap: 0.15rem;
+}
+
+.subagent-session-metadata dt {
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.5625rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.subagent-session-metadata dd {
+  display: flex;
+  min-width: 0;
+  max-width: 18rem;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-metadata-value {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-metadata-separator {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+}
+
+.subagent-metadata-effort {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
 }

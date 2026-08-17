@@ -1,6 +1,10 @@
 .subagent-session-transcript-region {
-  width: auto;
-  margin-inline: 1.25rem;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin-inline: 0;
+  padding-inline: 1.25rem;
+  box-sizing: border-box;
 }
 
 .transcript-region {

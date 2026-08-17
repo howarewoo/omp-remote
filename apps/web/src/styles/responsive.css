@@ -83,8 +83,14 @@
   }
 
   .subagent-session-transcript-region {
-    margin-inline: 1rem;
+    padding-inline: 1rem;
+    margin-inline: 0;
     margin-bottom: env(safe-area-inset-bottom);
+  }
+
+  .subagent-session-metadata {
+    padding: 0.55rem 1rem;
+    gap: 0.5rem 1rem;
   }
 
   .session-changes-body {
