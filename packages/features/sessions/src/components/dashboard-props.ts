@@ -8,6 +8,7 @@ import type {
   SessionBranchTopology,
   SessionFileChangesResponse,
 } from "@omp-remote/protocol";
+export type { ApplicationErrorRecord, ApplicationErrorStorageHealth } from "@omp-remote/protocol";
 import type { NotificationState } from "./dashboard/session-header.js";
 
 type ComposerMode = "prompt" | "steer" | "follow_up";
@@ -22,14 +23,16 @@ export interface QueuedMessage {
   error?: string;
 }
 
+export type ApplicationErrorSource = "daemon" | "browser";
+export type ApplicationErrorSeverity = "error" | "fatal";
+
+
+export type DashboardViewMode = "sessions" | "application-errors";
+
 export interface DashboardProps {
   sessions: Session[];
   queuedMessages: readonly QueuedMessage[];
   askRequests: AskRequest[];
-  applicationErrors?: readonly ApplicationErrorRecord[];
-  applicationErrorsHealth?: ApplicationErrorStorageHealth | null;
-  applicationErrorsLoading?: boolean;
-  applicationErrorsError?: string | null;
   savedWorkingDirectories: string[];
   sessionsReady: boolean;
   historyLoading: boolean;
@@ -40,9 +43,15 @@ export interface DashboardProps {
   notificationPreferences?: NotificationEventPreferences;
   notificationError?: string | null;
   selectedSessionId: string | null;
-  onSelectedSessionChange(sessionId: string): void;
+  activeView?: DashboardViewMode;
+  onActiveViewChange?(view: DashboardViewMode): void;
+  applicationErrors?: readonly ApplicationErrorRecord[];
+  applicationErrorsHealth?: ApplicationErrorStorageHealth | null;
+  applicationErrorsLoading?: boolean;
+  applicationErrorsError?: string | null;
   onClearApplicationErrors?(): Promise<void>;
   onReloadApplicationErrors?(): Promise<void>;
+  onSelectedSessionChange(sessionId: string): void;
   onToggleNotification?(event: NotificationEventKey, enabled: boolean): Promise<void>;
   onLaunch(cwd: string, resume: string | null): Promise<string>;
   onSaveWorkingDirectory(cwd: string): Promise<void>;

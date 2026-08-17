@@ -5,6 +5,7 @@ import {
   type SessionFileChangesResponse,
 } from "@omp-remote/protocol";
 import { type FormEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ApplicationErrorViewer } from "./application-error-viewer.js";
 import { ModelConfigurationDrawer, useConfigurationController } from "./dashboard/configuration-drawers.js";
 import { EmptyDashboard } from "./dashboard/empty-dashboard.js";
 import { LaunchSessionDialog } from "./dashboard/launch-session-dialog.js";
@@ -23,7 +24,7 @@ import {
   getSkillSuggestions,
   groupSessionsForSidebar,
 } from "./dashboard-actions.js";
-import type { DashboardProps } from "./dashboard-props.js";
+import type { DashboardProps, DashboardViewMode } from "./dashboard-props.js";
 import { NotificationSettingsDrawer } from "./notification-settings-drawer.js";
 import { SessionBranchSelector } from "./session-branch-selector.js";
 import { SessionCostViewer } from "./session-cost-viewer.js";
@@ -65,6 +66,14 @@ function DashboardContent({
   notificationPreferences = { inputRequired: false, sessionIdle: false },
   notificationError = null,
   selectedSessionId,
+  activeView: activeViewProp,
+  onActiveViewChange,
+  applicationErrors = [],
+  applicationErrorsHealth = null,
+  applicationErrorsLoading = false,
+  applicationErrorsError = null,
+  onClearApplicationErrors,
+  onReloadApplicationErrors,
   onSelectedSessionChange,
   onToggleNotification = async () => undefined,
   onLaunch,
@@ -87,6 +96,15 @@ function DashboardContent({
   onLoadSessionBranchTopology,
   onSwitchBranch,
 }: DashboardProps) {
+  const [internalActiveView, setInternalActiveView] = useState<DashboardViewMode>("sessions");
+  const activeView = activeViewProp ?? internalActiveView;
+  const setActiveView = useCallback(
+    (view: DashboardViewMode) => {
+      if (onActiveViewChange) onActiveViewChange(view);
+      else setInternalActiveView(view);
+    },
+    [onActiveViewChange],
+  );
   const [viewedSubagent, setViewedSubagent] = useState<ActiveSubagent | null>(null);
   const [subagentDetails, setSubagentDetails] = useState<{
     id: string;
@@ -767,7 +785,16 @@ function DashboardContent({
         historyQuery,
         activeHistoryQuery,
         connection,
-        onSelectDirectory: handleSelectDirectory,
+        activeView,
+        applicationErrorsCount: applicationErrors.length,
+        onSelectView: (view) => {
+          setActiveView(view);
+          if (isMobile) setOpenMobile(false);
+        },
+        onSelectDirectory: (cwd) => {
+          handleSelectDirectory(cwd);
+          setActiveView("sessions");
+        },
         onHistoryQueryChange: setHistoryQuery,
         onSubmitHistorySearch: submitHistorySearch,
         onClearHistorySearch: () => {
@@ -780,114 +807,134 @@ function DashboardContent({
           onSelectedSessionChange(sessionId);
           setViewedSubagent(null);
           setOpenMobile(false);
+          setActiveView("sessions");
         },
         onLoadMoreHistory: () => void onLoadMoreHistory().catch(() => undefined),
       })}
 
-      <SidebarInset>
-        {SessionHeader({
-          selectedSession,
-          selectedSessionStatus,
-          notificationState,
-          onOpenNotificationSettings: () => setNotificationSettingsOpen(true),
-          onKillSession: () => {
-            setCommandError(null);
-            setKillOpen(true);
-          },
-          onLaunchSession: () => setLaunchOpen(true),
-        })}
+      {activeView === "application-errors" ? (
+        <SidebarInset>
+          <ApplicationErrorViewer
+            errors={applicationErrors}
+            loading={applicationErrorsLoading}
+            {...(applicationErrorsHealth !== null && applicationErrorsHealth !== undefined
+              ? { health: applicationErrorsHealth }
+              : {})}
+            {...(applicationErrorsError !== null && applicationErrorsError !== undefined
+              ? { error: applicationErrorsError }
+              : {})}
+            {...(onClearApplicationErrors ? { onClearErrors: onClearApplicationErrors } : {})}
+            {...(onReloadApplicationErrors ? { onReloadErrors: onReloadApplicationErrors } : {})}
+            onBackToSessions={() => setActiveView("sessions")}
+          />
+        </SidebarInset>
+      ) : (
+        <SidebarInset>
+          {SessionHeader({
+            selectedSession,
+            selectedSessionStatus,
+            notificationState,
+            onOpenNotificationSettings: () => setNotificationSettingsOpen(true),
+            onKillSession: () => {
+              setCommandError(null);
+              setKillOpen(true);
+            },
+            onLaunchSession: () => setLaunchOpen(true),
+          })}
 
-        {error ? (
-          <div className="system-alert" role="alert">
-            <strong>Live connection needs attention.</strong>
-            <span>{error}</span>
-          </div>
-        ) : null}
+          {error ? (
+            <div className="system-alert" role="alert">
+              <strong>Live connection needs attention.</strong>
+              <span>{error}</span>
+            </div>
+          ) : null}
 
-        {selectedSession ? (
-          <section
-            className="session-workspace"
-            aria-label={`Controls for ${selectedSession.name ?? selectedSession.cwd}`}
-          >
-            {SessionTranscript({
-              session: selectedSession,
-              queuedMessages: queuedMessages.filter((message) => message.sessionId === selectedSession.id),
-              transcriptLoading: transcriptLoadingId === selectedSession.id,
-              activeAskRequest,
-              connection,
-              onRespondToAsk: (request, response) =>
-                onRespondToAsk(request.sessionId, request.requestId, response),
-              onAskActivity: (request) => onAskActivity(request.sessionId, request.requestId),
-              onCancelQueuedMessage,
-              onViewSubagent: setViewedSubagent,
-              onRegisterScrollToEnd: registerTranscriptScrollToEnd,
-            })}
-            {SessionMetadata({
-              session: selectedSession,
-              canViewBranches: canViewSelectedSessionBranches,
-              modelLabel: currentModelOption?.name ?? selectedSession.model?.split("/").at(-1) ?? "Default",
-              configurationPending,
-              fileChangesMetadata: sessionFileChangesMetadata,
-              todo:
-                currentTodo && currentTodoPresentation
-                  ? {
-                      overall: currentTodo.overall,
-                      activeLabel: currentTodoPresentation.activeLabel,
-                      activeState: currentTodoPresentation.activeState,
-                      progressVerb: currentTodoPresentation.progressVerb,
-                      label: getTodoTrackerLabel(currentTodo),
-                    }
-                  : null,
-              onOpenBranchSelector: () => handleBranchSelectorOpenChange(true),
-              onOpenConfiguration: openConfiguration,
-              onOpenFileChanges: () => handleFileChangesOpenChange(true),
-              onOpenCost: () => setCostDrawerOpen(true),
-              onOpenTodo: () => setTodoOpenSessionId(selectedSession.id),
-            })}
+          {selectedSession ? (
+            <section
+              className="session-workspace"
+              aria-label={`Controls for ${selectedSession.name ?? selectedSession.cwd}`}
+            >
+              {SessionTranscript({
+                session: selectedSession,
+                queuedMessages: queuedMessages.filter((message) => message.sessionId === selectedSession.id),
+                transcriptLoading: transcriptLoadingId === selectedSession.id,
+                activeAskRequest,
+                connection,
+                onRespondToAsk: (request, response) =>
+                  onRespondToAsk(request.sessionId, request.requestId, response),
+                onAskActivity: (request) => onAskActivity(request.sessionId, request.requestId),
+                onCancelQueuedMessage,
+                onViewSubagent: setViewedSubagent,
+                onRegisterScrollToEnd: registerTranscriptScrollToEnd,
+              })}
+              {SessionMetadata({
+                session: selectedSession,
+                canViewBranches: canViewSelectedSessionBranches,
+                modelLabel: currentModelOption?.name ?? selectedSession.model?.split("/").at(-1) ?? "Default",
+                configurationPending,
+                fileChangesMetadata: sessionFileChangesMetadata,
+                todo:
+                  currentTodo && currentTodoPresentation
+                    ? {
+                        overall: currentTodo.overall,
+                        activeLabel: currentTodoPresentation.activeLabel,
+                        activeState: currentTodoPresentation.activeState,
+                        progressVerb: currentTodoPresentation.progressVerb,
+                        label: getTodoTrackerLabel(currentTodo),
+                      }
+                    : null,
+                onOpenBranchSelector: () => handleBranchSelectorOpenChange(true),
+                onOpenConfiguration: openConfiguration,
+                onOpenFileChanges: () => handleFileChangesOpenChange(true),
+                onOpenCost: () => setCostDrawerOpen(true),
+                onOpenTodo: () => setTodoOpenSessionId(selectedSession.id),
+              })}
 
-            {selectedSession.source === "history" ? (
-              <div className="history-controls">
-                <div>
-                  <strong>Saved session</strong>
-                  <span>Resume this transcript to send new instructions.</span>
+              {selectedSession.source === "history" ? (
+                <div className="history-controls">
+                  <div>
+                    <strong>Saved session</strong>
+                    <span>Resume this transcript to send new instructions.</span>
+                  </div>
+                  <Button
+                    type="button"
+                    disabled={connection !== "connected" || commandState === "sending"}
+                    onClick={() => void resumeSelectedSession()}
+                  >
+                    Resume session
+                  </Button>
                 </div>
-                <Button
-                  type="button"
-                  disabled={connection !== "connected" || commandState === "sending"}
-                  onClick={() => void resumeSelectedSession()}
-                >
-                  Resume session
-                </Button>
-              </div>
-            ) : (
-              SessionComposer({
-                message,
-                skillSuggestions: visibleSkillSuggestions,
-                activeSkillIndex,
-                composerAction,
-                sending: commandState === "sending",
-                onSubmit: submitMessage,
-                onMessageChange: setMessage,
-                onMoveActiveSkill: (direction) =>
-                  setActiveSkillIndex(
-                    (current) =>
-                      (current + direction + visibleSkillSuggestions.length) % visibleSkillSuggestions.length,
-                  ),
-                onSelectSkill: selectSkillSuggestion,
-                onDismissAutocomplete: setAutocompleteDismissedFor,
-              })
-            )}
+              ) : (
+                SessionComposer({
+                  message,
+                  skillSuggestions: visibleSkillSuggestions,
+                  activeSkillIndex,
+                  composerAction,
+                  sending: commandState === "sending",
+                  onSubmit: submitMessage,
+                  onMessageChange: setMessage,
+                  onMoveActiveSkill: (direction) =>
+                    setActiveSkillIndex(
+                      (current) =>
+                        (current + direction + visibleSkillSuggestions.length) %
+                        visibleSkillSuggestions.length,
+                    ),
+                  onSelectSkill: selectSkillSuggestion,
+                  onDismissAutocomplete: setAutocompleteDismissedFor,
+                })
+              )}
 
-            {commandError ? (
-              <p className="inline-error" role="alert">
-                {commandError}
-              </p>
-            ) : null}
-          </section>
-        ) : (
-          EmptyDashboard({ onLaunchSession: () => setLaunchOpen(true) })
-        )}
-      </SidebarInset>
+              {commandError ? (
+                <p className="inline-error" role="alert">
+                  {commandError}
+                </p>
+              ) : null}
+            </section>
+          ) : (
+            EmptyDashboard({ onLaunchSession: () => setLaunchOpen(true) })
+          )}
+        </SidebarInset>
+      )}
 
       <SubagentSessionViewer
         open={viewedSubagent !== null}
