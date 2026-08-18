@@ -146,8 +146,16 @@ export function SessionTranscript({
             preserveScrollOnPrepend
             onScroll={(event) => {
               const target = event.currentTarget;
+              const isNearTop = target.scrollTop <= 96;
+              const wasNearTop =
+                target.dataset.transcriptSessionId === session.id &&
+                target.dataset.transcriptNearTop === "true";
+              target.dataset.transcriptSessionId = session.id;
+              target.dataset.transcriptNearTop = String(isNearTop);
+
               if (
-                target.scrollTop <= 96 &&
+                !wasNearTop &&
+                isNearTop &&
                 transcriptHistory.status === "available" &&
                 !transcriptHistory.initialLoading &&
                 !transcriptHistory.olderLoading &&
@@ -163,6 +171,14 @@ export function SessionTranscript({
               aria-live="polite"
               aria-busy={session.messages.at(-1)?.streaming === true}
             >
+              {statusItem ? (
+                <MessageScrollerItem
+                  className="transcript-history-item"
+                  messageId={`transcript-status:${session.id}`}
+                >
+                  {statusItem}
+                </MessageScrollerItem>
+              ) : null}
               {!isLoading &&
               session.messages.length === 0 &&
               queuedMessages.length === 0 &&
@@ -231,14 +247,6 @@ export function SessionTranscript({
                     onRespond={(response) => onRespondToAsk(activeAskRequest, response)}
                     onActivity={() => void onAskActivity(activeAskRequest)}
                   />
-                </MessageScrollerItem>
-              ) : null}
-              {statusItem ? (
-                <MessageScrollerItem
-                  className="transcript-history-item"
-                  messageId={`transcript-status:${session.id}`}
-                >
-                  {statusItem}
                 </MessageScrollerItem>
               ) : null}
             </MessageScrollerContent>

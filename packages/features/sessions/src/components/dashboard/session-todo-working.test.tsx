@@ -324,7 +324,9 @@ function getTranscriptViewport(output: ReactNode) {
   expect(el).toBeDefined();
   return el as ReactElement<{
     preserveScrollOnPrepend?: boolean;
-    onScroll?: (event: { currentTarget: { scrollTop: number } }) => void;
+    onScroll?: (event: {
+      currentTarget: { scrollTop: number; dataset: Record<string, string | undefined> };
+    }) => void;
   }>;
 }
 
@@ -366,8 +368,8 @@ describe("transcript pagination and recovery", () => {
       expect(textContent(output)).toContain(label);
       const rows = findElements(output, (node) => node.type === MessageScrollerItem);
       expect(rows.some((row) => row.props.messageId === "m-1")).toBe(true);
-      expect(rows.findIndex((row) => row.props.messageId === "m-1")).toBeLessThan(
-        rows.findIndex((row) => row.props.messageId === `transcript-status:${session.id}`),
+      expect(rows.findIndex((row) => row.props.messageId === `transcript-status:${session.id}`)).toBeLessThan(
+        rows.findIndex((row) => row.props.messageId === "m-1"),
       );
     }
     const emptyOutput = renderControlledDashboard({
@@ -385,11 +387,24 @@ describe("transcript pagination and recovery", () => {
 
   it("configures preserveScrollOnPrepend and gates near-top scroll requests", () => {
     const onLoadOlderTranscript = vi.fn().mockResolvedValue(undefined);
+    const sessionWithMessages: Session = {
+      ...BASE_SESSION,
+      messages: [
+        {
+          id: "m-1",
+          role: "user",
+          text: "Kept message",
+          timestamp: "2026-08-17T12:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      ],
+    };
     const base = {
-      ...composerDashboardProps(),
+      ...composerDashboardProps(sessionWithMessages),
       onLoadOlderTranscript,
       transcriptHistory: {
-        sessionId: BASE_SESSION.id,
+        sessionId: sessionWithMessages.id,
         initialLoading: false,
         olderLoading: false,
         status: "available" as const,
@@ -397,25 +412,146 @@ describe("transcript pagination and recovery", () => {
       },
     };
 
-    const viewport = getTranscriptViewport(renderControlledDashboard(base));
+    const initialOutput = renderControlledDashboard(base);
+    const rows = findElements(initialOutput, (node) => node.type === MessageScrollerItem);
+    const statusIndex = rows.findIndex((row) => row.props.messageId === `transcript-status:${sessionWithMessages.id}`);
+    const messageIndex = rows.findIndex((row) => row.props.messageId === "m-1");
+    expect(statusIndex).toBeGreaterThanOrEqual(0);
+    expect(messageIndex).toBeGreaterThan(statusIndex);
+
+    const viewport = getTranscriptViewport(initialOutput);
     expect(viewport.props.preserveScrollOnPrepend).toBe(true);
 
-    viewport.props.onScroll?.({ currentTarget: { scrollTop: 50 } });
-    expect(onLoadOlderTranscript).toHaveBeenCalledOnce();
+    // Persistent scroll viewport DOM target for session 1
+    const s1Target = {
+      scrollTop: 50,
+      dataset: {} as Record<string, string | undefined>,
+    };
 
-    for (const [scrollTop, override] of [
-      [150, {}],
-      [50, { status: "complete" as const }],
-      [50, { error: "err" }],
-      [50, { olderLoading: true }],
+    // First outside-to-inside threshold crossing requests once
+    viewport.props.onScroll?.({ currentTarget: s1Target });
+    expect(onLoadOlderTranscript).toHaveBeenCalledTimes(1);
+
+    // Same-zone scroll events on the persistent target do not request again
+    s1Target.scrollTop = 40;
+    viewport.props.onScroll?.({ currentTarget: s1Target });
+    expect(onLoadOlderTranscript).toHaveBeenCalledTimes(1);
+
+    // After an olderLoading true -> false rerender, same-zone events on the persistent target do not request again
+    const loadingOutput = renderControlledDashboard(
+      {
+        ...base,
+        transcriptHistory: { ...base.transcriptHistory, olderLoading: true },
+      },
+      { preserveState: true },
+    );
+    const loadingViewport = getTranscriptViewport(loadingOutput);
+    s1Target.scrollTop = 50;
+    loadingViewport.props.onScroll?.({ currentTarget: s1Target });
+    expect(onLoadOlderTranscript).toHaveBeenCalledTimes(1);
+
+    const settledOutput = renderControlledDashboard(
+      {
+        ...base,
+        transcriptHistory: { ...base.transcriptHistory, olderLoading: false },
+      },
+      { preserveState: true },
+    );
+    const settledViewport = getTranscriptViewport(settledOutput);
+    s1Target.scrollTop = 60;
+    settledViewport.props.onScroll?.({ currentTarget: s1Target });
+    expect(onLoadOlderTranscript).toHaveBeenCalledTimes(1);
+
+    // Crossing outside then inside requests exactly once more
+    s1Target.scrollTop = 150;
+    settledViewport.props.onScroll?.({ currentTarget: s1Target });
+    expect(onLoadOlderTranscript).toHaveBeenCalledTimes(1);
+
+    s1Target.scrollTop = 50;
+    settledViewport.props.onScroll?.({ currentTarget: s1Target });
+    expect(onLoadOlderTranscript).toHaveBeenCalledTimes(2);
+
+    s1Target.scrollTop = 45;
+    settledViewport.props.onScroll?.({ currentTarget: s1Target });
+    expect(onLoadOlderTranscript).toHaveBeenCalledTimes(2);
+
+    // Complete/error/loading states still gate requests
+    for (const [override] of [
+      [{ status: "complete" as const }],
+      [{ status: "unavailable" as const }],
+      [{ error: "err" }],
+      [{ olderLoading: true }],
+      [{ initialLoading: true }],
     ] as const) {
       onLoadOlderTranscript.mockClear();
+      const gatedTarget = {
+        scrollTop: 150,
+        dataset: {} as Record<string, string | undefined>,
+      };
       const vp = getTranscriptViewport(
         renderControlledDashboard({ ...base, transcriptHistory: { ...base.transcriptHistory, ...override } }),
       );
-      vp.props.onScroll?.({ currentTarget: { scrollTop } });
+      vp.props.onScroll?.({ currentTarget: gatedTarget });
+      gatedTarget.scrollTop = 50;
+      vp.props.onScroll?.({ currentTarget: gatedTarget });
       expect(onLoadOlderTranscript).not.toHaveBeenCalled();
     }
+
+    // Selected-session change resets/scopes transition memory with a fresh keyed viewport target
+    const session2: Session = {
+      ...BASE_SESSION,
+      id: "session-2",
+    };
+
+    // Switch to session 2 with a fresh viewport element
+    const s2Target = {
+      scrollTop: 50,
+      dataset: {} as Record<string, string | undefined>,
+    };
+    const s2Output = renderControlledDashboard(
+      {
+        ...composerDashboardProps(session2),
+        sessions: [sessionWithMessages, session2],
+        selectedSessionId: session2.id,
+        onLoadOlderTranscript,
+        transcriptHistory: {
+          sessionId: session2.id,
+          initialLoading: false,
+          olderLoading: false,
+          status: "available" as const,
+          error: null,
+        },
+      },
+      { preserveState: true },
+    );
+    const s2Vp = getTranscriptViewport(s2Output);
+    onLoadOlderTranscript.mockClear();
+    s2Vp.props.onScroll?.({ currentTarget: s2Target });
+    expect(onLoadOlderTranscript).toHaveBeenCalledTimes(1);
+    s2Target.scrollTop = 40;
+    s2Vp.props.onScroll?.({ currentTarget: s2Target });
+    expect(onLoadOlderTranscript).toHaveBeenCalledTimes(1);
+
+    // Switch back to session 1; keyed viewport remounts with fresh dataset, so crossing inside requests again
+    const s1RemountTarget = {
+      scrollTop: 50,
+      dataset: {} as Record<string, string | undefined>,
+    };
+    const s1BackOutput = renderControlledDashboard(
+      {
+        ...base,
+        sessions: [sessionWithMessages, session2],
+        selectedSessionId: sessionWithMessages.id,
+      },
+      { preserveState: true },
+    );
+    const s1BackVp = getTranscriptViewport(s1BackOutput);
+    onLoadOlderTranscript.mockClear();
+    s1BackVp.props.onScroll?.({ currentTarget: s1RemountTarget });
+    expect(onLoadOlderTranscript).toHaveBeenCalledTimes(1);
+    s1RemountTarget.scrollTop = 40;
+    s1BackVp.props.onScroll?.({ currentTarget: s1RemountTarget });
+    expect(onLoadOlderTranscript).toHaveBeenCalledTimes(1);
   });
 
   it("renders status labels and handles corresponding button actions", async () => {
