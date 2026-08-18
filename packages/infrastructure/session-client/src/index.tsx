@@ -28,6 +28,8 @@ import {
   SessionSchema,
   type SessionTranscriptResponse,
   SessionTranscriptResponseSchema,
+  TRANSCRIPT_PAGE_SIZE,
+  type TranscriptHistoryStatus,
 } from "@omp-remote/protocol";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -56,6 +58,14 @@ export interface QueuedUserMessage {
   createdAt: string;
   status: "queued" | "failed";
   error?: string;
+}
+
+export interface TranscriptHistoryState {
+  sessionId: string | null;
+  initialLoading: boolean;
+  olderLoading: boolean;
+  status: TranscriptHistoryStatus | null;
+  error: string | null;
 }
 
 export interface ReportApplicationErrorInput {
@@ -102,6 +112,7 @@ export interface SessionClient {
   hasMoreHistory: boolean;
   connection: ConnectionState;
   error: string | null;
+  transcriptHistory: TranscriptHistoryState;
   applicationErrors: ApplicationErrorRecord[];
   applicationErrorsHealth: ApplicationErrorStorageHealth | null;
   applicationErrorsLoading: boolean;
@@ -128,6 +139,9 @@ export interface SessionClient {
   switchBranch(sessionId: string, branch: string): Promise<void>;
   loadCost(sessionId: string): Promise<void>;
   loadTranscript(sessionId: string): Promise<void>;
+  loadOlderTranscript(): Promise<void>;
+  retryTranscript(): Promise<void>;
+  reloadTranscript(): Promise<void>;
   loadSession(sessionId: string): Promise<void>;
   pushVapidPublicKey(): Promise<string>;
   registerPushSubscription(registration: PushSubscriptionRegistration): Promise<void>;
@@ -222,6 +236,9 @@ export function useSessionClient(): SessionClient {
   const catalogAbortRef = useRef<AbortController | null>(null);
   const transcriptAbortRef = useRef<AbortController | null>(null);
   const transcriptRequestRef = useRef(0);
+  const transcriptCursorRef = useRef<string | null>(null);
+  const transcriptProvenanceRef = useRef<WeakSet<Session["messages"][number]>>(new WeakSet());
+  const transcriptLastRequestRef = useRef<"initial" | "older" | null>(null);
   const detailsAbortRef = useRef<AbortController | null>(null);
   const costAbortRef = useRef<AbortController | null>(null);
   const applicationErrorsAbortRef = useRef<AbortController | null>(null);
@@ -253,6 +270,27 @@ export function useSessionClient(): SessionClient {
     useState<ApplicationErrorStorageHealth | null>(null);
   const [applicationErrorsLoading, setApplicationErrorsLoading] = useState(false);
   const [applicationErrorsError, setApplicationErrorsError] = useState<string | null>(null);
+  const transcriptHistoryRef = useRef<TranscriptHistoryState>({
+    sessionId: null,
+    initialLoading: false,
+    olderLoading: false,
+    status: null,
+    error: null,
+  });
+  const [transcriptHistory, setTranscriptHistory] = useState<TranscriptHistoryState>(
+    transcriptHistoryRef.current,
+  );
+  const updateTranscriptHistory = useCallback(
+    (
+      nextOrUpdater: TranscriptHistoryState | ((current: TranscriptHistoryState) => TranscriptHistoryState),
+    ) => {
+      const next =
+        typeof nextOrUpdater === "function" ? nextOrUpdater(transcriptHistoryRef.current) : nextOrUpdater;
+      transcriptHistoryRef.current = next;
+      setTranscriptHistory(next);
+    },
+    [],
+  );
 
   useEffect(() => {
     let disposed = false;
@@ -326,7 +364,14 @@ export function useSessionClient(): SessionClient {
         } else if (frame.type === "session_update") {
           setLiveSessions((current) => patchSession(current, frame.sessionId, frame.patch));
         } else if (frame.type === "transcript_upsert") {
-          setLiveSessions((current) => upsertTranscriptMessage(current, frame.sessionId, frame.message));
+          const selectedId = transcriptHistoryRef.current.sessionId;
+          setLiveSessions((current) =>
+            upsertTranscriptMessage(current, frame.sessionId, frame.message).map((s) =>
+              s.id === frame.sessionId && s.id !== selectedId
+                ? { ...s, messages: s.messages.slice(-TRANSCRIPT_PAGE_SIZE) }
+                : s,
+            ),
+          );
         } else if (frame.type === "ask_request") {
           setAskRequests((current) => upsertAskRequest(current, frame.request));
         } else if (frame.type === "ask_cancelled") {
@@ -559,26 +604,110 @@ export function useSessionClient(): SessionClient {
     return loadCatalogPage(historyQuery, historyNextOffset, true);
   }, [historyLoading, historyNextOffset, historyQuery, historySessionsReady, loadCatalogPage]);
 
-  const loadTranscript = useCallback(async (sessionId: string) => {
-    const requestNumber = ++transcriptRequestRef.current;
-    transcriptAbortRef.current?.abort();
-    const abortController = new AbortController();
-    transcriptAbortRef.current = abortController;
-    setHistoryError(null);
-    try {
-      const transcript = await loadSessionTranscript(sessionId, abortController.signal);
-      if (requestNumber !== transcriptRequestRef.current || abortController.signal.aborted) return;
-      setHistorySessions((sessions) => applyTranscriptToSessions(sessions, transcript));
-      setLiveSessions((sessions) => applyTranscriptToSessions(sessions, transcript));
-    } catch (error) {
-      if (abortController.signal.aborted || requestNumber !== transcriptRequestRef.current) return;
-      const message = error instanceof Error ? error.message : "Session transcript could not be loaded";
-      setHistoryError(message);
-      throw error;
-    } finally {
-      if (transcriptAbortRef.current === abortController) transcriptAbortRef.current = null;
+  const fetchTranscriptPage = useCallback(
+    async (sessionId: string, kind: "initial" | "older", cursor: string | null) => {
+      const requestNumber = ++transcriptRequestRef.current;
+      transcriptAbortRef.current?.abort();
+      const abortController = new AbortController();
+      transcriptAbortRef.current = abortController;
+      transcriptLastRequestRef.current = kind;
+      const previousProvenance = transcriptProvenanceRef.current;
+      updateTranscriptHistory((current) => ({
+        sessionId,
+        initialLoading: kind === "initial",
+        olderLoading: kind === "older",
+        status: kind === "initial" && current.sessionId !== sessionId ? null : current.status,
+        error: null,
+      }));
+      try {
+        const transcript = await loadSessionTranscript(sessionId, cursor, abortController.signal);
+        if (requestNumber !== transcriptRequestRef.current || abortController.signal.aborted) return;
+        transcriptCursorRef.current = transcript.olderCursor;
+        updateTranscriptHistory({
+          sessionId,
+          initialLoading: false,
+          olderLoading: false,
+          status: transcript.status,
+          error: null,
+        });
+        if (transcript.status !== "invalidated") {
+          if (kind === "initial") {
+            const nextProvenance = new WeakSet<Session["messages"][number]>();
+            for (const m of transcript.messages) nextProvenance.add(m);
+            transcriptProvenanceRef.current = nextProvenance;
+          } else {
+            for (const m of transcript.messages) transcriptProvenanceRef.current.add(m);
+          }
+          const update =
+            kind === "initial"
+              ? (s: Session[]) => applyTranscriptToSessions(s, transcript, previousProvenance)
+              : (s: Session[]) => prependTranscriptToSessions(s, transcript);
+          setHistorySessions(update);
+          setLiveSessions(update);
+        }
+      } catch (error) {
+        if (abortController.signal.aborted || requestNumber !== transcriptRequestRef.current) return;
+        const message = error instanceof Error ? error.message : "Session transcript could not be loaded";
+        updateTranscriptHistory((current) =>
+          current.sessionId === sessionId
+            ? { ...current, initialLoading: false, olderLoading: false, error: message }
+            : current,
+        );
+        throw error;
+      } finally {
+        if (transcriptAbortRef.current === abortController) transcriptAbortRef.current = null;
+      }
+    },
+    [updateTranscriptHistory],
+  );
+
+  const loadTranscript = useCallback(
+    async (sessionId: string) => {
+      const prevSessionId = transcriptHistoryRef.current.sessionId;
+      if (sessionId !== prevSessionId) {
+        const prevProvenance = transcriptProvenanceRef.current;
+        if (prevSessionId) {
+          const cleanup = (s: Session[]) => cleanupSessionHistory(s, prevSessionId, prevProvenance);
+          setHistorySessions(cleanup);
+          setLiveSessions(cleanup);
+        }
+        transcriptProvenanceRef.current = new WeakSet();
+        transcriptCursorRef.current = null;
+      }
+      return fetchTranscriptPage(sessionId, "initial", null);
+    },
+    [fetchTranscriptPage],
+  );
+
+  const loadOlderTranscript = useCallback(async () => {
+    const state = transcriptHistoryRef.current;
+    const cursor = transcriptCursorRef.current;
+    if (
+      !state.sessionId ||
+      state.status !== "available" ||
+      !cursor ||
+      state.initialLoading ||
+      state.olderLoading
+    ) {
+      return;
     }
-  }, []);
+    return fetchTranscriptPage(state.sessionId, "older", cursor);
+  }, [fetchTranscriptPage]);
+
+  const reloadTranscript = useCallback(async () => {
+    const sessionId = transcriptHistoryRef.current.sessionId;
+    if (!sessionId) return;
+    return fetchTranscriptPage(sessionId, "initial", null);
+  }, [fetchTranscriptPage]);
+
+  const retryTranscript = useCallback(async () => {
+    const state = transcriptHistoryRef.current;
+    if (!state.sessionId || state.error === null) return;
+    const kind = transcriptLastRequestRef.current ?? "initial";
+    const cursor = kind === "older" ? transcriptCursorRef.current : null;
+    if (kind === "older" && !cursor) return;
+    return fetchTranscriptPage(state.sessionId, kind, cursor);
+  }, [fetchTranscriptPage]);
 
   const loadSession = useCallback(async (sessionId: string) => {
     const requestNumber = ++detailsRequestRef.current;
@@ -879,6 +1008,7 @@ export function useSessionClient(): SessionClient {
     hasMoreHistory: historyNextOffset !== null,
     connection,
     error: historyError ?? connectionError,
+    transcriptHistory,
     subscribeNotificationEvents,
     launch,
     saveWorkingDirectory,
@@ -894,6 +1024,9 @@ export function useSessionClient(): SessionClient {
     searchHistory,
     loadMoreHistory,
     loadTranscript,
+    loadOlderTranscript,
+    retryTranscript,
+    reloadTranscript,
     loadSession,
     loadCost,
     loadSessionFileChanges: loadSessionFileChangesCallback,
@@ -926,13 +1059,15 @@ export async function loadSessionDetails(
 
 export async function loadSessionTranscript(
   sessionId: string,
+  cursor?: string | null,
   signal?: AbortSignal,
   fetcher: typeof fetch = fetch,
 ): Promise<SessionTranscriptResponse> {
-  const response = await fetcher(
-    `/api/sessions/${encodeURIComponent(sessionId)}/transcript`,
-    signal ? { signal } : {},
-  );
+  if (cursor === "") throw new Error("Transcript cursor cannot be empty");
+  const url = cursor
+    ? `/api/sessions/${encodeURIComponent(sessionId)}/transcript?cursor=${encodeURIComponent(cursor)}`
+    : `/api/sessions/${encodeURIComponent(sessionId)}/transcript`;
+  const response = await fetcher(url, signal ? { signal } : {});
   if (!response.ok) throw new Error(`Session transcript request failed (${response.status})`);
   const result = SessionTranscriptResponseSchema.parse(await response.json());
   if (result.sessionId !== sessionId)
@@ -1137,18 +1272,61 @@ export function snapshotSessionsWithCurrentMessages(
   }));
 }
 
+export type TranscriptProvenance = WeakSet<Session["messages"][number]>;
+
+export function cleanupSessionHistory(
+  sessions: Session[],
+  sessionId: string,
+  provenance: TranscriptProvenance,
+): Session[] {
+  return sessions.map((s) =>
+    s.id === sessionId
+      ? { ...s, messages: s.messages.filter((m) => !provenance.has(m)).slice(-TRANSCRIPT_PAGE_SIZE) }
+      : s,
+  );
+}
+
 export function applyTranscriptToSessions(
   sessions: Session[],
   transcript: SessionTranscriptResponse,
+  provenance?: TranscriptProvenance,
 ): Session[] {
   return sessions.map((session) => {
     if (session.id === transcript.sessionId) {
-      return { ...session, messages: mergeTranscriptMessages(transcript.messages, session.messages) };
+      const liveTail = provenance ? session.messages.filter((m) => !provenance.has(m)) : session.messages;
+      return { ...session, messages: mergeTranscriptMessages(transcript.messages, liveTail) };
     }
     return session.source === "history" && session.parentSessionId == null && session.messages.length > 0
       ? { ...session, messages: [] }
       : session;
   });
+}
+
+export function prependTranscriptMessages(
+  olderMessages: Session["messages"],
+  currentMessages: Session["messages"],
+): Session["messages"] {
+  const currentIds = new Set(currentMessages.map((message) => message.id));
+  const seen = new Set<string>();
+  const toPrepend: Session["messages"] = [];
+  for (const message of olderMessages) {
+    if (!currentIds.has(message.id) && !seen.has(message.id)) {
+      seen.add(message.id);
+      toPrepend.push(message);
+    }
+  }
+  return [...toPrepend, ...currentMessages];
+}
+
+export function prependTranscriptToSessions(
+  sessions: Session[],
+  transcript: SessionTranscriptResponse,
+): Session[] {
+  return sessions.map((s) =>
+    s.id === transcript.sessionId
+      ? { ...s, messages: prependTranscriptMessages(transcript.messages, s.messages) }
+      : s,
+  );
 }
 
 export function mergeTranscriptMessages(
@@ -1161,7 +1339,7 @@ export function mergeTranscriptMessages(
   for (const message of currentMessages) {
     if (!serverIds.has(message.id)) merged.push(message);
   }
-  return merged.slice(-200);
+  return merged;
 }
 
 export function upsertTranscriptMessage(
@@ -1175,7 +1353,7 @@ export function upsertTranscriptMessage(
     const messages = [...session.messages];
     if (existingIndex >= 0) messages[existingIndex] = message;
     else messages.push(message);
-    return { ...session, messages: messages.slice(-200), lastActivity: message.timestamp };
+    return { ...session, messages, lastActivity: message.timestamp };
   });
 }
 

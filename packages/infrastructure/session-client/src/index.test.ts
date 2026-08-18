@@ -4,6 +4,7 @@ import type {
   AskRequest,
   NotificationEvent,
   Session,
+  SessionTranscriptResponse,
 } from "@omp-remote/protocol";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
@@ -26,14 +27,16 @@ import {
   mergeTranscriptMessages,
   overlaySessionCosts,
   patchSession,
+  prependTranscriptMessages,
+  type QueuedUserMessage,
   rejectPendingCommands,
   removeAskRequest,
   resolvePendingCommand,
   sendBrowserCommand,
   snapshotSessionsWithCurrentMessages,
+  type TranscriptHistoryState,
   upsertAskRequest,
   upsertLoadedSession,
-  type QueuedUserMessage,
   upsertTranscriptMessage,
   useSessionClient,
 } from "./index.js";
@@ -84,6 +87,23 @@ const SESSION: Session = {
   activeSubagents: [],
   skillCommands: [],
 };
+const makeMsg = (id: string, text = id, streaming = false): Session["messages"][number] => ({
+  id,
+  role: "user",
+  text,
+  timestamp: "2026-08-01T00:00:00.000Z",
+  streaming,
+  presentation: "text",
+});
+const makePage = (
+  sessionId: string,
+  messages: Session["messages"] = [],
+  status: "available" | "complete" | "unavailable" | "invalidated" = "complete",
+  olderCursor: string | null = null,
+): SessionTranscriptResponse =>
+  (status === "available"
+    ? { sessionId, messages, status: "available", olderCursor: olderCursor ?? "cursor" }
+    : { sessionId, messages, status, olderCursor: null }) as SessionTranscriptResponse;
 
 class FakeWebSocket extends EventTarget {
   static readonly OPEN = 1;
@@ -621,25 +641,26 @@ describe("snapshotSessionsWithCurrentMessages", () => {
 });
 
 describe("applyTranscriptToSessions", () => {
-  it("hydrates the target, clears other root history transcripts, and preserves live and child transcripts", () => {
-    const target = { ...SESSION, source: "history" as const, id: "target", messages: [] };
-    const otherHistory = { ...SESSION, source: "history" as const, id: "other-history" };
+  it("hydrates target with live tail isolated by WeakSet provenance while clearing other root history", () => {
+    const old1 = makeMsg("old-1");
+    const live1 = makeMsg("live-1");
+    const target = { ...SESSION, id: "target", source: "history" as const, messages: [old1, live1] };
+    const otherHistory = { ...SESSION, id: "other-history", source: "history" as const };
     const historyChild = {
       ...SESSION,
-      source: "history" as const,
       id: "history-child",
+      source: "history" as const,
       parentSessionId: "other-history",
     };
     const otherLive = { ...SESSION, id: "other-live" };
+    const provenance = new WeakSet([old1]);
 
-    const result = applyTranscriptToSessions([target, otherHistory, historyChild, otherLive], {
-      sessionId: target.id,
-      messages: SESSION.messages,
-      status: "complete",
-      olderCursor: null,
-    });
-
-    expect(result[0]?.messages).toEqual(SESSION.messages);
+    const result = applyTranscriptToSessions(
+      [target, otherHistory, historyChild, otherLive],
+      makePage("target", [makeMsg("fresh-1")]),
+      provenance,
+    );
+    expect(result[0]?.messages.map((m) => m.id)).toEqual(["fresh-1", "live-1"]);
     expect(result[1]?.messages).toEqual([]);
     expect(result[2]?.messages).toEqual(SESSION.messages);
     expect(result[3]?.messages).toEqual(SESSION.messages);
@@ -724,6 +745,11 @@ describe("mergeTranscriptMessages", () => {
     ]);
     expect(mergeTranscriptMessages(hydrated, live)[0]).toEqual(live[0]);
   });
+  it("preserves more than 200 messages without slicing", () => {
+    const server = Array.from({ length: 150 }, (_, i) => makeMsg(`s-${i}`));
+    const current = Array.from({ length: 100 }, (_, i) => makeMsg(`c-${i}`));
+    expect(mergeTranscriptMessages(server, current)).toHaveLength(250);
+  });
 });
 
 describe("upsertTranscriptMessage", () => {
@@ -782,6 +808,11 @@ describe("upsertTranscriptMessage", () => {
 
     expect(sessions[1]).toBe(other);
     expect(sessions[0]?.messages).toHaveLength(2);
+  });
+  it("preserves more than 200 messages without slicing", () => {
+    const initial = Array.from({ length: 205 }, (_, i) => makeMsg(`m-${i}`));
+    const updated = upsertTranscriptMessage([{ ...SESSION, messages: initial }], "session-1", makeMsg("new"));
+    expect(updated[0]?.messages).toHaveLength(206);
   });
 });
 
@@ -1003,5 +1034,194 @@ describe("application errors client support", () => {
     });
     const result = await clearApplicationErrorsLedger(fetcher as unknown as typeof fetch);
     expect(result).toEqual({ ok: true, clearedCount: 1 });
+  });
+});
+
+describe("session client transcript pagination", () => {
+  let requests: Map<
+    string,
+    { resolve(response: Response): void; reject(error: Error): void; signal?: AbortSignal | null }
+  >;
+  const jsonRes = (data: unknown) => new Response(JSON.stringify(data), { status: 200 });
+  const respond = (url: string, data: unknown) => requests.get(url)?.resolve(jsonRes(data));
+  const evalSetter = <T>(setter: Mock | undefined, index = -1, initial?: T): T => {
+    const call = setter?.mock.calls.at(index)?.[0];
+    if (call === undefined) throw new Error(`Setter call not found at ${index}`);
+    return typeof call === "function" ? call(initial) : call;
+  };
+
+  beforeEach(() => {
+    hookHarness.effects.length = 0;
+    hookHarness.stateSetters.length = 0;
+    requests = new Map();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(
+        (input, init) =>
+          new Promise<Response>((resolve, reject) => {
+            requests.set(String(input), {
+              resolve,
+              reject,
+              ...(init?.signal ? { signal: init.signal } : {}),
+            });
+          }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("progressively paginates backwards, prepends chronologically, and stops at terminal state", async () => {
+    const client = useSessionClient();
+    const transcriptHistorySetter = hookHarness.stateSetters[18];
+    const p1 = client.loadTranscript("s1");
+    expect(evalSetter(transcriptHistorySetter, 0)).toMatchObject({
+      sessionId: "s1",
+      initialLoading: true,
+    });
+    respond("/api/sessions/s1/transcript", makePage("s1", [makeMsg("m2")], "available", "c1"));
+    await p1;
+    expect(evalSetter(transcriptHistorySetter)).toEqual({
+      sessionId: "s1",
+      initialLoading: false,
+      olderLoading: false,
+      status: "available",
+      error: null,
+    });
+
+    const p2 = client.loadOlderTranscript();
+    expect(requests.has("/api/sessions/s1/transcript?cursor=c1")).toBe(true);
+    respond("/api/sessions/s1/transcript?cursor=c1", makePage("s1", [makeMsg("m1")], "complete", null));
+    await p2;
+
+    const calls = (fetch as unknown as Mock).mock.calls.length;
+    await client.loadOlderTranscript();
+    expect((fetch as unknown as Mock).mock.calls.length).toBe(calls);
+  });
+
+  it.each([
+    ["complete", false],
+    ["unavailable", false],
+    ["invalidated", true],
+  ] as const)("handles terminal status %s", async (status, needsReload) => {
+    const client = useSessionClient();
+    const p = client.loadTranscript("s1");
+    respond("/api/sessions/s1/transcript", makePage("s1", [], status, null));
+    await p;
+    const calls = (fetch as unknown as Mock).mock.calls.length;
+    await client.loadOlderTranscript();
+    expect((fetch as unknown as Mock).mock.calls.length).toBe(calls);
+    if (needsReload) {
+      const reloadPromise = client.reloadTranscript();
+      expect((fetch as unknown as Mock).mock.calls.length).toBe(calls + 1);
+      respond("/api/sessions/s1/transcript", makePage("s1", [makeMsg("m1")]));
+      await reloadPromise;
+    }
+  });
+
+  it("handles initial and older request errors with retry", async () => {
+    const client = useSessionClient();
+    const transcriptHistorySetter = hookHarness.stateSetters[18];
+    const failInitial = client.loadTranscript("s1");
+    requests.get("/api/sessions/s1/transcript")?.reject(new Error("Net error"));
+    await expect(failInitial).rejects.toThrow("Net error");
+    expect(evalSetter(transcriptHistorySetter)).toMatchObject({
+      initialLoading: false,
+      error: "Net error",
+    });
+    const retryInitial = client.retryTranscript();
+    respond("/api/sessions/s1/transcript", makePage("s1", [makeMsg("m2")], "available", "c-abc"));
+    await retryInitial;
+
+    const failOlder = client.loadOlderTranscript();
+    requests.get("/api/sessions/s1/transcript?cursor=c-abc")?.reject(new Error("500 Error"));
+    await expect(failOlder).rejects.toThrow("500 Error");
+    const retryOlder = client.retryTranscript();
+    expect(requests.has("/api/sessions/s1/transcript?cursor=c-abc")).toBe(true);
+    respond("/api/sessions/s1/transcript?cursor=c-abc", makePage("s1", [makeMsg("m1")], "complete", null));
+    await retryOlder;
+  });
+
+  it("aborts active request when switching sessions and drops late response", async () => {
+    const client = useSessionClient();
+    const historySetter = hookHarness.stateSetters[3];
+    const pA = client.loadTranscript("sA");
+    const pB = client.loadTranscript("sB");
+    expect(requests.get("/api/sessions/sA/transcript")?.signal?.aborted).toBe(true);
+    expect(requests.get("/api/sessions/sB/transcript")?.signal?.aborted).toBe(false);
+    respond("/api/sessions/sA/transcript", makePage("sA", [makeMsg("mA")]));
+    respond("/api/sessions/sB/transcript", makePage("sB", [makeMsg("mB")]));
+    await Promise.all([pA, pB]);
+    const result = evalSetter<Session[]>(historySetter, -1, [
+      { ...SESSION, id: "sA", source: "history", messages: [] },
+      { ...SESSION, id: "sB", source: "history", messages: [] },
+    ]);
+    expect(result.find((s) => s.id === "sB")?.messages[0]?.id).toBe("mB");
+  });
+
+  it("reloads page 1 replacing loaded history while preserving live tail, and state-only on invalidated reload/older", async () => {
+    const client = useSessionClient();
+    const historySetter = hookHarness.stateSetters[3];
+    const transcriptHistorySetter = hookHarness.stateSetters[18];
+    const p1 = client.loadTranscript("s1");
+    respond("/api/sessions/s1/transcript", makePage("s1", [makeMsg("m2")], "available", "c1"));
+    await p1;
+    let sessions = evalSetter<Session[]>(historySetter, -1, [
+      { ...SESSION, id: "s1", source: "history", messages: [] },
+    ]);
+    const pOlder = client.loadOlderTranscript();
+    respond("/api/sessions/s1/transcript?cursor=c1", makePage("s1", [makeMsg("m1")], "complete", null));
+    await pOlder;
+    sessions = evalSetter(historySetter, -1, sessions);
+
+    sessions = upsertTranscriptMessage(sessions, "s1", makeMsg("m1", "live text"));
+    sessions = upsertTranscriptMessage(sessions, "s1", makeMsg("m-live"));
+
+    const pReloadInv = client.reloadTranscript();
+    respond("/api/sessions/s1/transcript", makePage("s1", [], "invalidated", null));
+    await pReloadInv;
+    expect(evalSetter(transcriptHistorySetter)).toMatchObject({
+      status: "invalidated",
+      initialLoading: false,
+    });
+    expect(sessions[0]?.messages.map((m) => m.id)).toEqual(["m1", "m2", "m-live"]);
+    expect(sessions[0]?.messages[0]?.text).toBe("live text");
+
+    const fetchCount = (fetch as unknown as Mock).mock.calls.length;
+    await client.loadOlderTranscript();
+    expect((fetch as unknown as Mock).mock.calls.length).toBe(fetchCount);
+
+    const pFresh = client.reloadTranscript();
+    respond("/api/sessions/s1/transcript", makePage("s1", [makeMsg("m2-fresh")], "available", "c2"));
+    await pFresh;
+    sessions = evalSetter(historySetter, -1, sessions);
+    expect(sessions[0]?.messages.map((m) => m.id)).toEqual(["m2-fresh", "m1", "m-live"]);
+  });
+
+  it("bounds nonselected live session retention to TRANSCRIPT_PAGE_SIZE and cleans up HTTP history on session switch", async () => {
+    const client = useSessionClient();
+    const historySetter = hookHarness.stateSetters[3];
+    const pA = client.loadTranscript("sA");
+    const httpA = makeMsg("mA-http");
+    respond("/api/sessions/sA/transcript", makePage("sA", [httpA]));
+    await pA;
+
+    const liveTailA = Array.from({ length: 60 }, (_, i) => makeMsg(`mA-live-${i}`));
+    let sessions: Session[] = evalSetter<Session[]>(historySetter, -1, [
+      { ...SESSION, id: "sA", source: "history", messages: [] },
+      { ...SESSION, id: "sB", source: "history", messages: [] },
+    ]);
+    sessions = sessions.map((s) => (s.id === "sA" ? { ...s, messages: [...s.messages, ...liveTailA] } : s));
+
+    const pB = client.loadTranscript("sB");
+    sessions = evalSetter(historySetter, -1, sessions);
+    const sA = sessions.find((s) => s.id === "sA");
+    expect(sA?.messages).toHaveLength(50);
+    expect(sA?.messages[0]?.id).toBe("mA-live-10");
+
+    respond("/api/sessions/sB/transcript", makePage("sB", [makeMsg("mB1")]));
+    await pB;
   });
 });

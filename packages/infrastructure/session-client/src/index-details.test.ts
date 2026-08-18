@@ -243,16 +243,18 @@ describe("exact session details", () => {
 });
 
 describe("loadSessionTranscript", () => {
-  it("rejects a transcript returned for a different session", async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ sessionId: "session-2", messages: [], status: "complete", olderCursor: null }), {
-        status: 200,
-      }),
-    );
-
-    await expect(loadSessionTranscript("session-1", undefined, fetcher)).rejects.toThrow(
+  it("validates response identity, cursor presence, and encodes query params", async () => {
+    await expect(loadSessionTranscript("s1", "")).rejects.toThrow("Transcript cursor cannot be empty");
+    const page = { messages: [], status: "complete", olderCursor: null };
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ sessionId: "session-2", ...page })));
+    await expect(loadSessionTranscript("session-1", undefined, undefined, fetcher)).rejects.toThrow(
       "Session transcript response did not match the request",
     );
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ sessionId: "s/a", ...page })));
+    await loadSessionTranscript("s/a", "c+1", undefined, fetcher);
+    expect(fetcher).toHaveBeenLastCalledWith("/api/sessions/s%2Fa/transcript?cursor=c%2B1", {});
   });
 });
 
