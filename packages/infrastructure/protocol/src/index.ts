@@ -249,6 +249,25 @@ export const TranscriptMessageSchema = z
     }
   });
 
+export function normalizeSkillPromptRecord(
+  record: unknown,
+  createFallbackId: (text: string) => string,
+): { id: string; text: string } | null {
+  if (typeof record !== "object" || record === null || Array.isArray(record)) return null;
+  const candidate = record as Record<string, unknown>;
+  if (candidate.type !== "custom_message" || candidate.customType !== "skill-prompt" || typeof candidate.content !== "string") {
+    return null;
+  }
+  const marker = "\nUser: ";
+  const markerIndex = candidate.content.lastIndexOf(marker);
+  if (markerIndex < 0) return null;
+  const text = candidate.content.slice(markerIndex + marker.length);
+  if (text.length === 0) return null;
+  const id = typeof candidate.id === "string" && candidate.id.length > 0 ? candidate.id : createFallbackId(text);
+  if (typeof id !== "string" || id.length === 0) return null;
+  return { id, text };
+}
+
 export const ActiveSubagentSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),

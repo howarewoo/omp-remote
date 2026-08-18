@@ -4,7 +4,7 @@ import type { FileHandle } from "node:fs/promises";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  boundTranscriptImageBudget, getTranscriptImageByteLength, TRANSCRIPT_IMAGE_MAX_BYTES,
+  boundTranscriptImageBudget, getTranscriptImageByteLength, normalizeSkillPromptRecord, TRANSCRIPT_IMAGE_MAX_BYTES,
   TRANSCRIPT_IMAGE_SESSION_MAX_BYTES, type TranscriptImage, type TranscriptImageMimeType,
   type TranscriptMessage, truncateTranscriptText, validateTranscriptImageBytes,
 } from "@omp-remote/protocol";
@@ -136,6 +136,19 @@ function normalizeTranscriptMessage(record: Record<string, unknown>, offset: num
   return message ? { ...message, text: truncateTranscriptText(message.text) } : null;
 }
 
+function normalizeSkillPromptMessage(record: Record<string, unknown>): TranscriptMessage | null {
+  const prompt = normalizeSkillPromptRecord(record, (text) => `skill-prompt-${createHash("sha256").update(text, "utf8").digest("hex")}`);
+  if (!prompt) return null;
+  return {
+    id: prompt.id,
+    role: "user",
+    text: truncateTranscriptText(prompt.text),
+    timestamp: normalizeTimestamp(record.timestamp),
+    streaming: false,
+    presentation: "text",
+  };
+}
+
 export async function readTranscriptPage(options: ReadTranscriptPageOptions): Promise<TranscriptPageResult> {
   const { sessionId, sessionPath, cursor } = options;
   const sessionHash = createHash("sha256").update(sessionId).digest("hex");
@@ -175,11 +188,17 @@ export async function readTranscriptPage(options: ReadTranscriptPageOptions): Pr
     const candidateRecords: Array<{ record: Record<string, unknown>; startOffset: number; endOffset: number }> = [];
     const pendingToolCallIds = new Set<string>();
     const olderMatchedAssistantRecords: Record<string, unknown>[] = [];
+    let skillPromptCandidate: { record: Record<string, unknown>; startOffset: number } | undefined;
     let oldestCandidateStartOffset = targetEnd;
     let hasOlderMeaningfulMessage = false;
 
     for await (const entry of readReverseJsonl<Record<string, unknown>>({ ...readerOpts, startOffset: 0, endOffset: targetEnd })) {
       if (typeof entry.value !== "object" || !entry.value || Array.isArray(entry.value)) continue;
+
+      const skillPromptMessage = normalizeSkillPromptMessage(entry.value);
+      if (skillPromptMessage) {
+        skillPromptCandidate = { record: entry.value, startOffset: entry.startOffset };
+      }
 
       if (entry.value.type === "message" && typeof entry.value.message === "object" && entry.value.message && !Array.isArray(entry.value.message)) {
         const rawMsg = entry.value.message as Record<string, unknown>;
@@ -211,7 +230,6 @@ export async function readTranscriptPage(options: ReadTranscriptPageOptions): Pr
               }
             }
           }
-          if (hasOlderMeaningfulMessage && pendingToolCallIds.size === 0) break;
         }
       }
     }
@@ -226,6 +244,7 @@ export async function readTranscriptPage(options: ReadTranscriptPageOptions): Pr
     const resolveImage = blobDir ? createReadImageResolver(blobDir) : undefined;
 
     const normalizedMessages: TranscriptMessage[] = [];
+    const normalizedOffsets: number[] = [];
     for (let i = candidateRecords.length - 1; i >= 0; i--) {
       const item = candidateRecords[i]!;
       const msg = normalizeTranscriptMessage(item.record, item.startOffset, toolCallTracker);
@@ -234,6 +253,30 @@ export async function readTranscriptPage(options: ReadTranscriptPageOptions): Pr
         ? materializeReadImages(msg, item.record.message, resolveImage)
         : msg;
       normalizedMessages.push(withImages);
+      normalizedOffsets.push(item.startOffset);
+    }
+
+    let nextCursorOffset = oldestCandidateStartOffset;
+    if (skillPromptCandidate) {
+      const prompt = normalizeSkillPromptMessage(skillPromptCandidate.record);
+      if (prompt && !normalizedMessages.some((message) => message.id === prompt.id)) {
+        if (normalizedMessages.length >= TRANSCRIPT_PAGE_SIZE) {
+          normalizedMessages.shift();
+          normalizedOffsets.shift();
+          hasOlderMeaningfulMessage = true;
+          if (candidateRecords.length > 0) {
+            nextCursorOffset = candidateRecords[candidateRecords.length - 1]!.endOffset;
+          }
+        }
+        const insertAt = normalizedOffsets.findIndex((offset) => offset > skillPromptCandidate!.startOffset);
+        if (insertAt < 0) {
+          normalizedMessages.push(prompt);
+          normalizedOffsets.push(skillPromptCandidate.startOffset);
+        } else {
+          normalizedMessages.splice(insertAt, 0, prompt);
+          normalizedOffsets.splice(insertAt, 0, skillPromptCandidate.startOffset);
+        }
+      }
     }
 
     const messages = boundTranscriptImageBudget(normalizedMessages);
@@ -243,7 +286,7 @@ export async function readTranscriptPage(options: ReadTranscriptPageOptions): Pr
 
     const payload: CursorPayload = {
       s: sessionHash, dev: stat.dev, ino: stat.ino, btime: Math.floor(stat.birthtimeMs),
-      end: initialEndOffset, next: oldestCandidateStartOffset,
+      end: initialEndOffset, next: nextCursorOffset,
     };
     if (!isValidCursorPayload(payload)) return { sessionId, messages: [], olderCursor: null, status: "invalidated" };
 

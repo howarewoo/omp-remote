@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   boundTranscriptImageBudget,
+  normalizeSkillPromptRecord,
   SessionTranscriptResponseSchema,
   TRANSCRIPT_IMAGE_MAX_BYTES,
   TRANSCRIPT_PAGE_SIZE,
@@ -292,5 +293,40 @@ describe("SessionTranscriptResponseSchema", () => {
     ["messages exceeding page size", { sessionId: "s1", status: "complete", messages: Array.from({ length: TRANSCRIPT_PAGE_SIZE + 1 }, (_, i) => ({ ...msg, id: `m-${i}` })), olderCursor: null }],
   ])("rejects invalid response: %s", (_case, payload) => {
     expect(SessionTranscriptResponseSchema.safeParse({ sessionId: "s1", ...payload }).success).toBe(false);
+  });
+});
+
+
+describe("normalizeSkillPromptRecord", () => {
+  const record = (content: string, id?: unknown) => ({
+    type: "custom_message",
+    customType: "skill-prompt",
+    content,
+    ...(id !== undefined ? { id } : {}),
+  });
+
+  it("extracts the non-empty suffix after the final exact marker", () => {
+    expect(normalizeSkillPromptRecord(record("wrapper\nUser: old\nUser: latest"), () => "fallback")).toEqual({
+      id: "fallback",
+      text: "latest",
+    });
+  });
+
+  it.each([
+    [null, "null"],
+    [{ type: "message", customType: "skill-prompt", content: "x\nUser: y" }, "unrelated"],
+    [record("wrapper"), "missing marker"],
+    [record("wrapper\nUser: "), "empty suffix"],
+  ] as const)("fails closed for %s", (value, _label) => {
+    expect(normalizeSkillPromptRecord(value, () => "fallback")).toBeNull();
+  });
+
+  it("preserves a valid persisted id and invokes fallback only when absent", () => {
+    const fallback = vi.fn(() => "generated");
+    expect(normalizeSkillPromptRecord(record("wrapper\nUser: text", "persisted"), fallback)).toEqual({ id: "persisted", text: "text" });
+    expect(fallback).not.toHaveBeenCalled();
+    expect(normalizeSkillPromptRecord(record("wrapper\nUser: text"), fallback)).toEqual({ id: "generated", text: "text" });
+    expect(normalizeSkillPromptRecord(record("wrapper\nUser: invalid-id", 42), fallback)).toEqual({ id: "generated", text: "invalid-id" });
+    expect(fallback).toHaveBeenCalledWith("invalid-id");
   });
 });

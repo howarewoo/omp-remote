@@ -986,7 +986,14 @@ describe("ompRemoteExtension", () => {
         timestamp: "2026-08-17T00:00:00.000Z",
       },
     };
-    branch = [userPromptEntry];
+    branch = [
+      {
+        type: "custom_message",
+        customType: "skill-prompt",
+        content: "skill wrapper\nUser: Original request",
+      },
+      userPromptEntry,
+    ];
 
     // 3. agent_start fires: sends refreshed prompt-bearing snapshot followed by agent_start event frame
     await handlers.get("agent_start")?.({}, context);
@@ -1001,6 +1008,11 @@ describe("ompRemoteExtension", () => {
         id: "session-live-terminal",
         name: "Live Terminal Session",
         messages: [
+          expect.objectContaining({
+            id: expect.stringMatching(/^skill-prompt-/),
+            role: "user",
+            text: "Original request",
+          }),
           expect.objectContaining({
             id: "msg-user-1",
             role: "user",
