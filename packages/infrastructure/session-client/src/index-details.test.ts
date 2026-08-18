@@ -213,7 +213,7 @@ describe("exact session details", () => {
 
       requests
         .get("/api/sessions/root/transcript")
-        ?.resolve(new Response(JSON.stringify({ sessionId: "root", messages: [] }), { status: 200 }));
+        ?.resolve(new Response(JSON.stringify({ sessionId: "root", messages: [], status: "complete", olderCursor: null }), { status: 200 }));
 
       const cleanupDetails = client.loadSession("child-c");
       const cleanupTranscript = client.loadTranscript("cleanup-root");
@@ -230,7 +230,7 @@ describe("exact session details", () => {
           ),
         );
       requests.get("/api/sessions/cleanup-root/transcript")?.resolve(
-        new Response(JSON.stringify({ sessionId: "cleanup-root", messages: [] }), {
+        new Response(JSON.stringify({ sessionId: "cleanup-root", messages: [], status: "complete", olderCursor: null }), {
           status: 200,
         }),
       );
@@ -245,7 +245,7 @@ describe("exact session details", () => {
 describe("loadSessionTranscript", () => {
   it("rejects a transcript returned for a different session", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
-      new Response(JSON.stringify({ sessionId: "session-2", messages: [] }), {
+      new Response(JSON.stringify({ sessionId: "session-2", messages: [], status: "complete", olderCursor: null }), {
         status: 200,
       }),
     );

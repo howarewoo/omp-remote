@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import type { ServerFrame, Session } from "@omp-remote/protocol";
+import { type ServerFrame, type Session, SessionTranscriptResponseSchema } from "@omp-remote/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 
@@ -200,35 +200,45 @@ afterAll(async () => {
 });
 
 describe("session transcript fallback integration", () => {
-  it("serves an exact live-registry transcript when catalog history is absent", async () => {
+  it("serves live transcript fallback and paginates persisted history via HTTP", async () => {
     const repository = await createRepository();
     const live = await registerExtension({
       ...session("transcript-live-fallback", repository),
-      messages: [
-        {
-          id: "live-message",
-          role: "assistant",
-          text: "Live transcript",
-          timestamp: "2026-08-01T00:00:00.000Z",
-          streaming: false,
-          presentation: "text",
-        },
-      ],
+      messages: [{ id: "live-msg", role: "assistant", text: "Live", timestamp: "2026-08-01T00:00:00.000Z", streaming: false, presentation: "text" }],
     });
+    const liveRes = await fetch(`http://127.0.0.1:${daemonPort}/api/sessions/transcript-live-fallback/transcript`);
+    expect(liveRes.status).toBe(200);
+    await expect(liveRes.json()).resolves.toEqual({ sessionId: "transcript-live-fallback", status: "unavailable", olderCursor: null, messages: [expect.objectContaining({ id: "live-msg", text: "Live" })] });
 
-    const response = await fetch(
-      `http://127.0.0.1:${daemonPort}/api/sessions/transcript-live-fallback/transcript`,
-    );
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      sessionId: "transcript-live-fallback",
-      messages: [{ id: "live-message", text: "Live transcript" }],
-    });
-    const missingResponse = await fetch(
-      `http://127.0.0.1:${daemonPort}/api/sessions/unrelated-missing-session/transcript`,
-    );
-    expect(missingResponse.status).toBe(404);
+    expect((await fetch(`http://127.0.0.1:${daemonPort}/api/sessions/transcript-live-fallback/transcript?cursor=`)).status).toBe(400);
+    await expect((await fetch(`http://127.0.0.1:${daemonPort}/api/sessions/transcript-live-fallback/transcript?cursor=bad.sig`)).json()).resolves.toEqual({ sessionId: "transcript-live-fallback", status: "invalidated", olderCursor: null, messages: [] });
+    expect((await fetch(`http://127.0.0.1:${daemonPort}/api/sessions/unrelated-missing/transcript`)).status).toBe(404);
     live.close();
+
+    const sessionPath = join(historyDirectory, "sessions", "integration", "paginated-history.jsonl");
+    const records = [
+      JSON.stringify({ type: "session", version: 3, id: "paginated-history", timestamp: "2026-08-01T00:00:00.000Z", cwd: "/tmp", title: "Paginated history" }),
+      ...Array.from({ length: 60 }, (_, i) => JSON.stringify({ type: "message", id: `msg-${i}`, timestamp: `2026-08-01T00:00:${String(i).padStart(2, "0")}.000Z`, message: { role: "assistant", content: [{ type: "text", text: `M${i}` }] } })),
+    ];
+    await writeFile(sessionPath, `${records.join("\n")}\n`);
+    await fetch(`http://127.0.0.1:${daemonPort}/api/sessions?q=paginated-history`);
+
+    const page1Res = await fetch(`http://127.0.0.1:${daemonPort}/api/sessions/paginated-history/transcript`);
+    expect(page1Res.status).toBe(200);
+    const page1 = SessionTranscriptResponseSchema.parse(await page1Res.json());
+    expect(page1).toMatchObject({ sessionId: "paginated-history", status: "available", olderCursor: expect.any(String) });
+    expect(page1.messages).toHaveLength(50);
+    expect(page1.messages[0]?.id).toBe("msg-10");
+    expect(page1.messages.at(-1)?.id).toBe("msg-59");
+
+    if (page1.status !== "available") throw new Error("Expected available page");
+    const page2Res = await fetch(`http://127.0.0.1:${daemonPort}/api/sessions/paginated-history/transcript?cursor=${encodeURIComponent(page1.olderCursor)}`);
+    expect(page2Res.status).toBe(200);
+    const page2 = SessionTranscriptResponseSchema.parse(await page2Res.json());
+    expect(page2).toMatchObject({ sessionId: "paginated-history", status: "complete", olderCursor: null });
+    expect(page2.messages).toHaveLength(10);
+    expect(page2.messages[0]?.id).toBe("msg-0");
+    expect(page2.messages.at(-1)?.id).toBe("msg-9");
   });
 });
 
@@ -445,10 +455,10 @@ describe("exact session details integration", () => {
       source: "history",
       parentSessionId: "details-root",
     });
-    expect(details.messages).toHaveLength(200);
+    expect(details.messages).toHaveLength(50);
     expect(details.messages[0]).toMatchObject({
-      id: "details-message-5",
-      text: `${"x".repeat(20_000)}…`,
+      id: "details-message-155",
+      text: "Saved detail 155",
     });
 
     const catalogResponse = await fetch(`http://127.0.0.1:${daemonPort}/api/sessions`);
@@ -499,7 +509,8 @@ describe("exact session details integration", () => {
         status: "running",
         parentSessionId: "details-root",
       });
-      expect(liveDetails.messages).toHaveLength(200);
+      expect(liveDetails.messages).toHaveLength(50);
+      expect(liveDetails.messages[0]).toMatchObject({ id: "live-detail-155" });
       expect(liveDetails.messages.at(-1)).toMatchObject({
         id: "live-detail-204",
         streaming: true,

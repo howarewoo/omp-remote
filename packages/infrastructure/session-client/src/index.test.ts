@@ -635,6 +635,8 @@ describe("applyTranscriptToSessions", () => {
     const result = applyTranscriptToSessions([target, otherHistory, historyChild, otherLive], {
       sessionId: target.id,
       messages: SESSION.messages,
+      status: "complete",
+      olderCursor: null,
     });
 
     expect(result[0]?.messages).toEqual(SESSION.messages);

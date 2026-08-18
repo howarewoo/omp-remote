@@ -1,37 +1,27 @@
 import { createHash } from "node:crypto";
-import {
-  closeSync,
-  createReadStream,
-  type Dir,
-  constants as fsConstants,
-  fstatSync,
-  openSync,
-  readSync,
-} from "node:fs";
+import { createReadStream, type Dir } from "node:fs";
 import { type FileHandle, open, opendir, readdir, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { StringDecoder } from "node:string_decoder";
 import {
-  boundTranscriptImageBudget,
   compareSessionsByCreation,
-  getTranscriptImageByteLength,
   type Session,
   type SessionCostAgent,
   type SessionCostSummary,
-  TRANSCRIPT_IMAGE_MAX_BYTES,
-  TRANSCRIPT_IMAGE_SESSION_MAX_BYTES,
-  type TranscriptImage,
-  type TranscriptImageMimeType,
   type TranscriptMessage,
-  truncateTranscriptText,
-  validateTranscriptImageBytes,
 } from "@omp-remote/protocol";
-import { materializeReadImages, normalizeRawMessage, ToolCallTracker } from "./message-normalizer.js";
+import {
+  createReadImageResolver,
+  readTranscriptPage,
+  resolveAgentBlobDirectory,
+  type TranscriptPageResult,
+} from "./transcript-pagination.js";
+
+export { createReadImageResolver, resolveAgentBlobDirectory };
 
 const METADATA_READ_BYTES = 16 * 1024;
 const LIFECYCLE_SCAN_BYTES = 128 * 1024;
-const MAX_TRANSCRIPT_MESSAGES = 200;
 const METADATA_READ_CONCURRENCY = 32;
 const COST_HYDRATION_CONCURRENCY = 4;
 const MAX_FILE_CHANGE_SOURCES = 256;
@@ -189,10 +179,25 @@ export class SessionCatalog {
     const session = this.#entriesBySessionId.get(sessionId)?.session;
     return session ? cloneSession(session) : undefined;
   }
-  async transcript(sessionId: string): Promise<TranscriptMessage[]> {
+  async transcript(
+    sessionId: string,
+    cursor?: string | null,
+    sessionPath?: string | null,
+  ): Promise<TranscriptPageResult> {
     const entry = this.#entriesBySessionId.get(sessionId);
-    if (!entry) throw new Error("Session history was not found");
-    return readTranscript(entry.path, findOwningBlobDirectory(entry.path, this.#roots));
+    const resolvedPath = sessionPath ?? entry?.path ?? null;
+    if (!resolvedPath && !entry && sessionPath === undefined) {
+      throw new Error("Session history was not found");
+    }
+    const blobDirectory = resolvedPath
+      ? (findOwningBlobDirectory(resolvedPath, this.#roots) ?? resolveAgentBlobDirectory(resolvedPath))
+      : undefined;
+    return readTranscriptPage({
+      sessionId,
+      sessionPath: resolvedPath,
+      ...(cursor !== undefined ? { cursor } : {}),
+      ...(blobDirectory !== undefined ? { blobDirectory } : {}),
+    });
   }
 
   async costSummary(sessionId: string): Promise<SessionCostSummary | undefined> {
@@ -662,52 +667,9 @@ async function readSessionCost(path: string): Promise<SessionCostData> {
   return { totalUsd, exact };
 }
 
-async function readTranscript(path: string, blobDirectory?: string): Promise<TranscriptMessage[]> {
-  const ring = new Array<{ record: Record<string, unknown>; message: TranscriptMessage }>(
-    MAX_TRANSCRIPT_MESSAGES,
-  );
-  let messageCount = 0;
-  const toolCallTracker = new ToolCallTracker();
-  const lines = createInterface({ input: createReadStream(path), crlfDelay: Number.POSITIVE_INFINITY });
-  for await (const line of lines) {
-    const record = parseRecord(line);
-    const message = record ? normalizeTranscriptMessage(record, toolCallTracker) : null;
-    if (!message || !record) continue;
-    ring[messageCount % MAX_TRANSCRIPT_MESSAGES] = { record, message };
-    messageCount += 1;
-  }
-  const retained =
-    messageCount <= MAX_TRANSCRIPT_MESSAGES
-      ? ring.slice(0, messageCount)
-      : (() => {
-          const start = messageCount % MAX_TRANSCRIPT_MESSAGES;
-          return [...ring.slice(start), ...ring.slice(0, start)];
-        })();
-  if (!blobDirectory) return boundTranscriptImageBudget(retained.map(({ message }) => message));
-  const resolveImage = createReadImageResolver(blobDirectory);
-  return boundTranscriptImageBudget(
-    retained.map(({ record, message }) => materializeReadImages(message, record.message, resolveImage)),
-  );
-}
-
-function normalizeTranscriptMessage(
-  record: Record<string, unknown>,
-  toolCallTracker: ToolCallTracker,
-): TranscriptMessage | null {
-  if (record.type !== "message" || !isRecord(record.message)) return null;
-  const timestamp = normalizeTimestamp(record.timestamp ?? record.message.timestamp);
-  const message = normalizeRawMessage(
-    record.message,
-    false,
-    typeof record.id === "string" ? record.id : (text) => `${timestamp}-${messageHash(text)}`,
-    {
-      timestamp,
-      omitEmptyText: true,
-      ignoreRawId: true,
-      toolCallTracker,
-    },
-  );
-  return message ? { ...message, text: truncateTranscriptText(message.text) } : null;
+function findOwningBlobDirectory(path: string, roots: readonly string[]): string | undefined {
+  const owningRoot = roots.find((root) => path === root || path.startsWith(`${root}/`));
+  return owningRoot ? join(dirname(owningRoot), "blobs") : undefined;
 }
 
 function normalizeTimestamp(value: unknown, fallback?: Date): string {
@@ -716,73 +678,6 @@ function normalizeTimestamp(value: unknown, fallback?: Date): string {
     if (!Number.isNaN(date.getTime())) return date.toISOString();
   }
   return (fallback ?? new Date()).toISOString();
-}
-
-export function resolveAgentBlobDirectory(sessionPath: string): string | undefined {
-  const marker = "/sessions/";
-  const markerIndex = sessionPath.lastIndexOf(marker);
-  return markerIndex >= 0 ? join(sessionPath.slice(0, markerIndex), "blobs") : undefined;
-}
-
-function findOwningBlobDirectory(path: string, roots: readonly string[]): string | undefined {
-  const owningRoot = roots.find((root) => path === root || path.startsWith(`${root}/`));
-  return owningRoot ? join(dirname(owningRoot), "blobs") : undefined;
-}
-
-function resolveReadImage(
-  blobDirectory: string,
-  reference: string,
-  mimeType: string,
-  maxBytes = TRANSCRIPT_IMAGE_MAX_BYTES,
-): TranscriptImage {
-  const match = /^blob:sha256:([a-f0-9]{64})$/.exec(reference);
-  const hash = match?.[1];
-  if (!hash) return { status: "unavailable", reason: "invalid_reference" };
-  let handle: number | undefined;
-  try {
-    const blobPath = join(blobDirectory, hash);
-    handle = openSync(blobPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-    const fileStats = fstatSync(handle);
-    if (!fileStats.isFile()) return { status: "unavailable", reason: "invalid_reference" };
-    if (fileStats.size > TRANSCRIPT_IMAGE_MAX_BYTES) return { status: "unavailable", reason: "oversized" };
-    if (fileStats.size > maxBytes) return { status: "unavailable", reason: "budget_exceeded" };
-    const buffer = Buffer.allocUnsafe(Math.min(TRANSCRIPT_IMAGE_MAX_BYTES, maxBytes) + 1);
-    const bytesRead = readSync(handle, buffer, 0, buffer.length, 0);
-    if (bytesRead > TRANSCRIPT_IMAGE_MAX_BYTES) return { status: "unavailable", reason: "oversized" };
-    if (bytesRead > maxBytes) return { status: "unavailable", reason: "budget_exceeded" };
-    const bytes = buffer.subarray(0, bytesRead);
-    if (createHash("sha256").update(bytes).digest("hex") !== hash) {
-      return { status: "unavailable", reason: "invalid_reference" };
-    }
-    const reason = validateTranscriptImageBytes(bytes, mimeType);
-    if (reason) return { status: "unavailable", reason };
-    return {
-      status: "available",
-      mimeType: mimeType as TranscriptImageMimeType,
-      data: bytes.toString("base64"),
-    };
-  } catch {
-    return { status: "unavailable", reason: "missing" };
-  } finally {
-    if (handle !== undefined) closeSync(handle);
-  }
-}
-export function createReadImageResolver(
-  blobDirectory: string,
-): (data: string, mimeType: string) => TranscriptImage {
-  let retainedBytes = 0;
-  return (data, mimeType) => {
-    const remainingBytes = TRANSCRIPT_IMAGE_SESSION_MAX_BYTES - retainedBytes;
-    if (remainingBytes <= 0) return { status: "unavailable", reason: "budget_exceeded" };
-    const image = resolveReadImage(blobDirectory, data, mimeType, remainingBytes);
-    if (image.status !== "available") return image;
-    const imageBytes = getTranscriptImageByteLength(image);
-    if (retainedBytes + imageBytes > TRANSCRIPT_IMAGE_SESSION_MAX_BYTES) {
-      return { status: "unavailable", reason: "budget_exceeded" };
-    }
-    retainedBytes += imageBytes;
-    return image;
-  };
 }
 
 function fallbackSessionName(path: string, id: string, cwd: string, rawTimestamp: unknown): string | null {
@@ -920,11 +815,6 @@ function cloneSession(session: Session): Session {
   };
 }
 
-function messageHash(text: string): string {
-  let hash = 0;
-  for (let index = 0; index < text.length; index += 1) hash = (hash * 31 + text.charCodeAt(index)) >>> 0;
-  return hash.toString(16);
-}
 
 async function mapWithConcurrency<Input, Output>(
   values: Input[],

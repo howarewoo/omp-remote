@@ -871,18 +871,23 @@ describe("SessionCatalog", () => {
     );
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
-    await expect(catalog.transcript("session-edit")).resolves.toEqual([
-      {
-        id: "edit-result-1",
-        role: "tool",
-        text: "-1|before\n+1|after",
-        timestamp: "2026-07-29T12:01:00.000Z",
-        streaming: false,
-        presentation: "diff",
-        toolName: "edit",
-        lifecycle: { state: "success" },
-      },
-    ]);
+    await expect(catalog.transcript("session-edit")).resolves.toEqual({
+      sessionId: "session-edit",
+      status: "complete",
+      olderCursor: null,
+      messages: [
+        {
+          id: "edit-result-1",
+          role: "tool",
+          text: "-1|before\n+1|after",
+          timestamp: "2026-07-29T12:01:00.000Z",
+          streaming: false,
+          presentation: "diff",
+          toolName: "edit",
+          lifecycle: { state: "success" },
+        },
+      ],
+    });
   });
   it("preserves requested read selectors by correlating historical tool calls and results", async () => {
     const root = await makeTemporaryDirectory();
@@ -926,18 +931,24 @@ describe("SessionCatalog", () => {
     );
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
-    await expect(catalog.transcript("session-read-selectors")).resolves.toEqual([
-      expect.objectContaining({
-        id: "read-result-0",
-        toolName: "read",
-        readTarget: "/workspace/project/src/logs.d.ts:1-180",
-      }),
-      expect.objectContaining({
-        id: "read-result-1",
-        toolName: "read",
-        readTarget: "/workspace/project/src/logs.d.ts:raw",
-      }),
-    ]);
+    const result = await catalog.transcript("session-read-selectors");
+    expect(result).toMatchObject({
+      sessionId: "session-read-selectors",
+      status: "complete",
+      olderCursor: null,
+      messages: [
+        expect.objectContaining({
+          id: "read-result-0",
+          toolName: "read",
+          readTarget: "/workspace/project/src/logs.d.ts:1-180",
+        }),
+        expect.objectContaining({
+          id: "read-result-1",
+          toolName: "read",
+          readTarget: "/workspace/project/src/logs.d.ts:raw",
+        }),
+      ],
+    });
   });
 });
 function assistantUsage(total: unknown): Record<string, unknown> {

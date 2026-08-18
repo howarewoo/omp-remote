@@ -381,10 +381,21 @@ export const SessionCatalogPageSchema = z.object({
   nextOffset: z.number().int().nonnegative().nullable(),
 });
 
-export const SessionTranscriptResponseSchema = z.object({
+export const TRANSCRIPT_PAGE_SIZE = 50;
+export const TranscriptHistoryStatusSchema = z.enum(["complete", "available", "unavailable", "invalidated"]);
+export type TranscriptHistoryStatus = z.infer<typeof TranscriptHistoryStatusSchema>;
+
+const baseTranscriptPageSchema = {
   sessionId: z.string().min(1),
-  messages: z.array(TranscriptMessageSchema),
-});
+  messages: z.array(TranscriptMessageSchema).max(TRANSCRIPT_PAGE_SIZE),
+};
+
+export const SessionTranscriptResponseSchema = z.discriminatedUnion("status", [
+  z.object({ ...baseTranscriptPageSchema, status: z.literal("complete"), olderCursor: z.null() }).strict(),
+  z.object({ ...baseTranscriptPageSchema, status: z.literal("available"), olderCursor: z.string().min(1) }).strict(),
+  z.object({ ...baseTranscriptPageSchema, status: z.literal("unavailable"), olderCursor: z.null() }).strict(),
+  z.object({ ...baseTranscriptPageSchema, status: z.literal("invalidated"), olderCursor: z.null() }).strict(),
+]);
 export const SessionCostResponseSchema = z
   .object({
     sessionId: z.string().min(1),
