@@ -7,8 +7,13 @@ import type {
   Session,
   SessionBranchTopology,
   SessionFileChangesResponse,
+  TranscriptHistoryStatus,
 } from "@omp-remote/protocol";
-export type { ApplicationErrorRecord, ApplicationErrorStorageHealth } from "@omp-remote/protocol";
+export type {
+  ApplicationErrorRecord,
+  ApplicationErrorStorageHealth,
+  TranscriptHistoryStatus,
+} from "@omp-remote/protocol";
 import type { NotificationState } from "./dashboard/session-header.js";
 
 type ComposerMode = "prompt" | "steer" | "follow_up";
@@ -26,6 +31,13 @@ export interface QueuedMessage {
 export type ApplicationErrorSource = "daemon" | "browser";
 export type ApplicationErrorSeverity = "error" | "fatal";
 
+export interface DashboardTranscriptHistoryState {
+  sessionId: string | null;
+  initialLoading: boolean;
+  olderLoading: boolean;
+  status: TranscriptHistoryStatus | null;
+  error: string | null;
+}
 
 export type DashboardViewMode = "sessions" | "application-errors";
 
@@ -67,6 +79,10 @@ export interface DashboardProps {
   onSearchHistory(query: string): Promise<void>;
   onLoadMoreHistory(): Promise<void>;
   onLoadTranscript(sessionId: string): Promise<void>;
+  transcriptHistory: DashboardTranscriptHistoryState;
+  onLoadOlderTranscript(): Promise<void>;
+  onRetryTranscript(): Promise<void>;
+  onReloadTranscript(): Promise<void>;
   onLoadSession(sessionId: string): Promise<void>;
   onLoadCost(sessionId: string): Promise<void>;
   onLoadSessionFileChanges(sessionId: string, signal?: AbortSignal): Promise<SessionFileChangesResponse>;

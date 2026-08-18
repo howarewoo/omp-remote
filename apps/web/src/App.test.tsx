@@ -15,6 +15,13 @@ const appMocks = vi.hoisted(() => {
     hasMoreHistory: false,
     connection: "connected",
     error: null,
+    transcriptHistory: {
+      sessionId: null,
+      initialLoading: false,
+      olderLoading: false,
+      status: null,
+      error: null,
+    },
     applicationErrors: [],
     applicationErrorsHealth: null,
     applicationErrorsLoading: false,
@@ -33,6 +40,9 @@ const appMocks = vi.hoisted(() => {
     searchHistory: vi.fn(),
     loadMoreHistory: vi.fn(),
     loadTranscript: vi.fn(),
+    loadOlderTranscript: vi.fn(),
+    retryTranscript: vi.fn(),
+    reloadTranscript: vi.fn(),
     loadSession: vi.fn(),
     loadCost: vi.fn(),
     loadSessionFileChanges: vi.fn(),
@@ -99,6 +109,10 @@ interface ControlledDashboardProps {
   onLoadSessionBranchTopology?: (sessionId: string, signal?: AbortSignal) => Promise<unknown>;
   onSwitchBranch?: (sessionId: string, branch: string) => Promise<void>;
   onSelectedSessionChange?: (sessionId: string) => void;
+  transcriptHistory?: unknown;
+  onLoadOlderTranscript?: () => Promise<void>;
+  onRetryTranscript?: () => Promise<void>;
+  onReloadTranscript?: () => Promise<void>;
 }
 
 interface AppContentProps {
@@ -218,6 +232,19 @@ describe("App session URL state", () => {
     expect(dashboard.props.onClearApplicationErrors).toBe(appMocks.sessionClient.clearApplicationErrors);
     expect(dashboard.props.onReloadApplicationErrors).toBe(appMocks.sessionClient.loadApplicationErrors);
     expect(dashboard.props.selectedSessionId).toBe("active-session-123");
+  });
+
+  it("wires transcript pagination state and actions into the dashboard", () => {
+    vi.stubGlobal("window", {
+      location: new URL("https://app.test/"),
+      history: { replaceState: vi.fn() },
+    });
+
+    const [, dashboard] = (App() as ReactElement<AppContentProps>).props.children;
+    expect(dashboard.props.transcriptHistory).toBe(appMocks.sessionClient.transcriptHistory);
+    expect(dashboard.props.onLoadOlderTranscript).toBe(appMocks.sessionClient.loadOlderTranscript);
+    expect(dashboard.props.onRetryTranscript).toBe(appMocks.sessionClient.retryTranscript);
+    expect(dashboard.props.onReloadTranscript).toBe(appMocks.sessionClient.reloadTranscript);
   });
 
   it("mounts exactly one root toaster inside the theme provider", () => {

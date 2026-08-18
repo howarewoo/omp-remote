@@ -1,5 +1,11 @@
-import { type ActiveSubagent, type AskRequest, type AskResponse, type Session } from "@omp-remote/protocol";
-import type { QueuedMessage } from "../dashboard-props.js";
+import {
+  type ActiveSubagent,
+  type AskRequest,
+  type AskResponse,
+  type Session,
+  type TranscriptHistoryStatus,
+} from "@omp-remote/protocol";
+import type { DashboardTranscriptHistoryState, QueuedMessage } from "../dashboard-props.js";
 import { AskToolCall } from "../ask/ask-tool-call.js";
 import { formatSubagentActivityLabel } from "../dashboard-actions.js";
 import {
@@ -22,7 +28,7 @@ import { formatSessionTime } from "./session-sidebar.js";
 export interface SessionTranscriptProps {
   queuedMessages: readonly QueuedMessage[];
   session: Session;
-  transcriptLoading: boolean;
+  transcriptHistory: DashboardTranscriptHistoryState;
   activeAskRequest: AskRequest | null;
   connection: "connecting" | "connected" | "disconnected";
   onCancelQueuedMessage(messageId: string): void;
@@ -30,12 +36,14 @@ export interface SessionTranscriptProps {
   onAskActivity(request: AskRequest): Promise<void>;
   onViewSubagent(subagent: ActiveSubagent): void;
   onRegisterScrollToEnd(handler: (() => void) | null): void;
+  onLoadOlderTranscript(): Promise<void>;
+  onRetryTranscript(): Promise<void>;
+  onReloadTranscript(): Promise<void>;
 }
-
 export function SessionTranscript({
   queuedMessages,
   session,
-  transcriptLoading,
+  transcriptHistory,
   activeAskRequest,
   connection,
   onCancelQueuedMessage,
@@ -43,7 +51,86 @@ export function SessionTranscript({
   onAskActivity,
   onViewSubagent,
   onRegisterScrollToEnd,
+  onLoadOlderTranscript,
+  onRetryTranscript,
+  onReloadTranscript,
 }: SessionTranscriptProps) {
+  const isLoading = transcriptHistory.initialLoading || transcriptHistory.olderLoading;
+  const statusLabel =
+    transcriptHistory.status === "invalidated"
+      ? "Transcript invalidated on host"
+      : transcriptHistory.status === "unavailable"
+        ? "Earlier messages unavailable"
+        : transcriptHistory.status === "available"
+          ? "Earlier messages available"
+          : transcriptHistory.status === "complete"
+            ? "Start of session"
+            : null;
+
+  const statusItem =
+    transcriptHistory.initialLoading || transcriptHistory.olderLoading ? (
+      <div className="transcript-history-status" role="status" aria-live="polite">
+        <span className="transcript-history-message">
+          {transcriptHistory.initialLoading ? "Loading recent messages…" : "Loading earlier messages…"}
+        </span>
+      </div>
+    ) : transcriptHistory.error ? (
+      <div className="transcript-history-status" data-state="error">
+        <span className="transcript-history-message" role="alert">
+          Transcript history could not be loaded.
+        </span>
+        <div className="transcript-history-actions">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={isLoading}
+            onClick={() => void onRetryTranscript().catch(() => undefined)}
+          >
+            Retry
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={isLoading}
+            onClick={() => void onReloadTranscript().catch(() => undefined)}
+          >
+            Reload history
+          </Button>
+        </div>
+      </div>
+    ) : statusLabel ? (
+      <div className="transcript-history-status" data-state={transcriptHistory.status ?? undefined}>
+        <span className="transcript-history-message" role="status" aria-live="polite">
+          {statusLabel}
+        </span>
+        {transcriptHistory.status !== "unavailable" ? (
+          <div className="transcript-history-actions">
+            {transcriptHistory.status === "available" ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isLoading}
+                onClick={() => void onLoadOlderTranscript().catch(() => undefined)}
+              >
+                Load earlier
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={isLoading}
+              onClick={() => void onReloadTranscript().catch(() => undefined)}
+            >
+              Reload history
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    ) : null;
   return (
     <>
       <MessageScrollerProvider
@@ -53,22 +140,33 @@ export function SessionTranscript({
         scrollEdgeThreshold={80}
       >
         <MessageScroller className="transcript-region">
-          <MessageScrollerViewport className="transcript" aria-label="Session transcript">
+          <MessageScrollerViewport
+            className="transcript"
+            aria-label="Session transcript"
+            preserveScrollOnPrepend
+            onScroll={(event) => {
+              const target = event.currentTarget;
+              if (
+                target.scrollTop <= 96 &&
+                transcriptHistory.status === "available" &&
+                !transcriptHistory.initialLoading &&
+                !transcriptHistory.olderLoading &&
+                !transcriptHistory.error
+              ) {
+                void onLoadOlderTranscript().catch(() => undefined);
+              }
+            }}
+          >
             <MessageScrollerContent
               className="transcript-messages"
               role="log"
               aria-live="polite"
               aria-busy={session.messages.at(-1)?.streaming === true}
             >
-              {transcriptLoading ? (
-                <MessageScrollerItem messageId={`transcript-loading:${session.id}`}>
-                  <div className="empty-transcript" role="status">
-                    <span className="status-orbit" aria-hidden="true" />
-                    <strong>Reading session transcript</strong>
-                    <p>Large transcripts stay on the host and load only when selected.</p>
-                  </div>
-                </MessageScrollerItem>
-              ) : session.messages.length === 0 && queuedMessages.length === 0 && !activeAskRequest ? (
+              {!isLoading &&
+              session.messages.length === 0 &&
+              queuedMessages.length === 0 &&
+              !activeAskRequest ? (
                 <MessageScrollerItem messageId={`transcript-empty:${session.id}`}>
                   <div className="empty-transcript">
                     <span className="terminal-prompt" aria-hidden="true">
@@ -133,6 +231,14 @@ export function SessionTranscript({
                     onRespond={(response) => onRespondToAsk(activeAskRequest, response)}
                     onActivity={() => void onAskActivity(activeAskRequest)}
                   />
+                </MessageScrollerItem>
+              ) : null}
+              {statusItem ? (
+                <MessageScrollerItem
+                  className="transcript-history-item"
+                  messageId={`transcript-status:${session.id}`}
+                >
+                  {statusItem}
                 </MessageScrollerItem>
               ) : null}
             </MessageScrollerContent>

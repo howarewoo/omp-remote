@@ -186,6 +186,16 @@ const DASHBOARD_DEFAULTS = {
   onSearchHistory: vi.fn().mockResolvedValue(undefined),
   onLoadMoreHistory: vi.fn().mockResolvedValue(undefined),
   onLoadTranscript: vi.fn().mockResolvedValue(undefined),
+  transcriptHistory: {
+    sessionId: null,
+    initialLoading: false,
+    olderLoading: false,
+    status: null,
+    error: null,
+  },
+  onLoadOlderTranscript: vi.fn().mockResolvedValue(undefined),
+  onRetryTranscript: vi.fn().mockResolvedValue(undefined),
+  onReloadTranscript: vi.fn().mockResolvedValue(undefined),
   onLoadSession: vi.fn().mockResolvedValue(undefined),
   onLoadCost: vi.fn().mockResolvedValue(undefined),
   onLoadSessionBranchTopology: vi.fn().mockResolvedValue({
@@ -443,6 +453,7 @@ describe("dashboard current Todo tracker", () => {
       "todo-streaming-tail",
     ]);
   });
+
   it("renders the Todo tracker as the first element in the metadata line", () => {
     const output = renderControlledDashboard(composerDashboardProps({ ...BASE_SESSION, messages }));
     const metadataElement = findElements(output, (element) => element.props.className === "session-metadata")[0];
@@ -453,7 +464,6 @@ describe("dashboard current Todo tracker", () => {
     );
     expect(labels).toEqual(["Todo", "Branch", "Model · Effort", "Context", "Changes", "Cost"]);
   });
-
 
   it("opens the full latest Todo in a responsive drawer", () => {
     const props = composerDashboardProps({ ...BASE_SESSION, messages });

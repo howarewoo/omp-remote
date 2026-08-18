@@ -6,12 +6,19 @@ import {
   renderControlledDashboard,
   renderTranscriptNodes,
   SELECT_ASK,
+  textContent,
 } from "./dashboard-test-support.js";
+import type { Session } from "@omp-remote/protocol";
 import type { ReactElement, ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { formatWorkingLabel, MessageScrollerScrollController, WorkingIndicator } from "../dashboard.js";
 import { SubagentSessionViewer } from "../subagent-session-viewer.js";
-import { MessageScrollerButton, MessageScrollerItem } from "../ui/message-scroller.js";
+import { Button } from "../ui/button.js";
+import {
+  MessageScrollerButton,
+  MessageScrollerItem,
+  MessageScrollerViewport,
+} from "../ui/message-scroller.js";
 const messageScrollerHarness = getMessageScrollerHarness();
 
 describe("dashboard working status", () => {
@@ -309,5 +316,201 @@ describe("message scroller controls", () => {
     expect(handler).toBeTypeOf("function");
     handler?.();
     expect(messageScrollerHarness.scrollToEnd).toHaveBeenCalledWith({ behavior: "auto" });
+  });
+});
+
+function getTranscriptViewport(output: ReactNode) {
+  const el = findElements(output, (node) => node.type === MessageScrollerViewport)[0];
+  expect(el).toBeDefined();
+  return el as ReactElement<{
+    preserveScrollOnPrepend?: boolean;
+    onScroll?: (event: { currentTarget: { scrollTop: number } }) => void;
+  }>;
+}
+
+function getButton(output: ReactNode, label: string) {
+  return findElements(output, (el) => el.type === Button).find((b) => textContent(b) === label) as
+    | ReactElement<{ onClick?: () => void }>
+    | undefined;
+}
+
+describe("transcript pagination and recovery", () => {
+  it("keeps messages anchored and hides the empty state during loading", () => {
+    const session: Session = {
+      ...BASE_SESSION,
+      messages: [
+        {
+          id: "m-1",
+          role: "user",
+          text: "Kept message",
+          timestamp: "2026-08-17T12:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      ],
+    };
+    for (const [initialLoading, olderLoading, label] of [
+      [true, false, "Loading recent messages…"],
+      [false, true, "Loading earlier messages…"],
+    ] as const) {
+      const output = renderControlledDashboard({
+        ...composerDashboardProps(session),
+        transcriptHistory: {
+          sessionId: session.id,
+          initialLoading,
+          olderLoading,
+          status: "available",
+          error: null,
+        },
+      });
+      expect(textContent(output)).toContain(label);
+      const rows = findElements(output, (node) => node.type === MessageScrollerItem);
+      expect(rows.some((row) => row.props.messageId === "m-1")).toBe(true);
+      expect(rows.findIndex((row) => row.props.messageId === "m-1")).toBeLessThan(
+        rows.findIndex((row) => row.props.messageId === `transcript-status:${session.id}`),
+      );
+    }
+    const emptyOutput = renderControlledDashboard({
+      ...composerDashboardProps({ ...BASE_SESSION, source: "history" }),
+      transcriptHistory: {
+        sessionId: BASE_SESSION.id,
+        initialLoading: true,
+        olderLoading: false,
+        status: null,
+        error: null,
+      },
+    });
+    expect(textContent(emptyOutput)).not.toContain("No text messages in this session");
+  });
+
+  it("configures preserveScrollOnPrepend and gates near-top scroll requests", () => {
+    const onLoadOlderTranscript = vi.fn().mockResolvedValue(undefined);
+    const base = {
+      ...composerDashboardProps(),
+      onLoadOlderTranscript,
+      transcriptHistory: {
+        sessionId: BASE_SESSION.id,
+        initialLoading: false,
+        olderLoading: false,
+        status: "available" as const,
+        error: null,
+      },
+    };
+
+    const viewport = getTranscriptViewport(renderControlledDashboard(base));
+    expect(viewport.props.preserveScrollOnPrepend).toBe(true);
+
+    viewport.props.onScroll?.({ currentTarget: { scrollTop: 50 } });
+    expect(onLoadOlderTranscript).toHaveBeenCalledOnce();
+
+    for (const [scrollTop, override] of [
+      [150, {}],
+      [50, { status: "complete" as const }],
+      [50, { error: "err" }],
+      [50, { olderLoading: true }],
+    ] as const) {
+      onLoadOlderTranscript.mockClear();
+      const vp = getTranscriptViewport(
+        renderControlledDashboard({ ...base, transcriptHistory: { ...base.transcriptHistory, ...override } }),
+      );
+      vp.props.onScroll?.({ currentTarget: { scrollTop } });
+      expect(onLoadOlderTranscript).not.toHaveBeenCalled();
+    }
+  });
+
+  it("renders status labels and handles corresponding button actions", async () => {
+    const onLoadOlderTranscript = vi.fn().mockResolvedValue(undefined);
+    const onRetryTranscript = vi.fn().mockRejectedValue(new Error("offline"));
+    const onReloadTranscript = vi.fn().mockResolvedValue(undefined);
+    const base = {
+      ...composerDashboardProps(),
+      onLoadOlderTranscript,
+      onRetryTranscript,
+      onReloadTranscript,
+    };
+
+    const cases = [
+      {
+        history: { error: "Host disconnected" },
+        text: "Transcript history could not be loaded.",
+        actions: [
+          ["Retry", onRetryTranscript],
+          ["Reload history", onReloadTranscript],
+        ],
+      },
+      {
+        history: { status: "invalidated" as const },
+        text: "Transcript invalidated on host",
+        actions: [["Reload history", onReloadTranscript]],
+      },
+      {
+        history: { status: "complete" as const },
+        text: "Start of session",
+        actions: [["Reload history", onReloadTranscript]],
+      },
+      {
+        history: { status: "available" as const },
+        text: "Earlier messages available",
+        actions: [
+          ["Load earlier", onLoadOlderTranscript],
+          ["Reload history", onReloadTranscript],
+        ],
+      },
+      { history: { status: "unavailable" as const }, text: "Earlier messages unavailable", actions: [] },
+    ] as const;
+
+    for (const { history, text, actions } of cases) {
+      const output = renderControlledDashboard({
+        ...base,
+        transcriptHistory: {
+          sessionId: BASE_SESSION.id,
+          initialLoading: false,
+          olderLoading: false,
+          status: null,
+          error: null,
+          ...history,
+        },
+      });
+      expect(textContent(output)).toContain(text);
+      for (const [btnLabel, fn] of actions) {
+        fn.mockClear();
+        const btn = getButton(output, btnLabel);
+        expect(btn).toBeDefined();
+        btn?.props.onClick?.();
+        expect(fn).toHaveBeenCalledOnce();
+      }
+    }
+    await Promise.resolve();
+  });
+
+  it("triggers onLoadTranscript exactly once per session selection including live sessions", () => {
+    const onLoadTranscript = vi.fn().mockResolvedValue(undefined);
+    const liveSession: Session = {
+      ...BASE_SESSION,
+      id: "live-session-1",
+      status: "running",
+      source: "rpc",
+      connected: true,
+      messages: [
+        {
+          id: "m-live",
+          role: "assistant",
+          text: "Working",
+          timestamp: "2026-08-17T12:00:00.000Z",
+          streaming: false,
+          presentation: "text",
+        },
+      ],
+    };
+
+    renderControlledDashboard({
+      ...composerDashboardProps(liveSession),
+      sessions: [liveSession],
+      selectedSessionId: liveSession.id,
+      onLoadTranscript,
+    });
+
+    expect(onLoadTranscript).toHaveBeenCalledOnce();
+    expect(onLoadTranscript).toHaveBeenCalledWith("live-session-1");
   });
 });
