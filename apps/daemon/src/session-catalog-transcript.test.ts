@@ -45,15 +45,17 @@ describe("SessionCatalog transcript and file changes", () => {
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
 
-    const messages = await catalog.transcript("session-long-idless");
-    expect(messages.map(({ text }) => text)).toEqual([`${commonPrefix}…`, `${commonPrefix}…`]);
-    expect(messages[0]?.id).not.toBe(messages[1]?.id);
+    const page = await catalog.transcript("session-long-idless");
+    expect(page.messages.map(({ text }) => text)).toEqual([`${commonPrefix}…`, `${commonPrefix}…`]);
+    expect(page.messages[0]?.id).not.toBe(page.messages[1]?.id);
+    expect(page.status).toBe("complete");
+    expect(page.olderCursor).toBeNull();
   });
 
-  it("streams the latest 200 meaningful transcript messages on demand", async () => {
+  it("streams the latest 50 meaningful transcript messages on demand and paginates backwards", async () => {
     const root = await makeTemporaryDirectory();
     const sessionPath = join(root, "project", "long-session.jsonl");
-    const records = Array.from({ length: 205 }, (_, index) => ({
+    const records = Array.from({ length: 105 }, (_, index) => ({
       type: "message",
       id: `message-${index}`,
       timestamp: `2026-07-28T10:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`,
@@ -81,11 +83,26 @@ describe("SessionCatalog transcript and file changes", () => {
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
 
-    const messages = await catalog.transcript("session-long");
+    const initialPage = await catalog.transcript("session-long");
+    expect(initialPage.messages).toHaveLength(50);
+    expect(initialPage.status).toBe("available");
+    expect(initialPage.olderCursor).toBeTruthy();
+    expect(initialPage.messages[0]).toMatchObject({ id: "message-55", text: "Message 55", streaming: false });
+    expect(initialPage.messages.at(-1)).toMatchObject({ id: "message-104", text: "Message 104" });
 
-    expect(messages).toHaveLength(200);
-    expect(messages[0]).toMatchObject({ id: "message-5", text: "Message 5", streaming: false });
-    expect(messages.at(-1)).toMatchObject({ id: "message-204", text: "Message 204" });
+    const olderPage = await catalog.transcript("session-long", initialPage.olderCursor);
+    expect(olderPage.messages).toHaveLength(50);
+    expect(olderPage.status).toBe("available");
+    expect(olderPage.olderCursor).toBeTruthy();
+    expect(olderPage.messages[0]).toMatchObject({ id: "message-5", text: "Message 5" });
+    expect(olderPage.messages.at(-1)).toMatchObject({ id: "message-54", text: "Message 54" });
+
+    const terminalPage = await catalog.transcript("session-long", olderPage.olderCursor);
+    expect(terminalPage.messages).toHaveLength(5);
+    expect(terminalPage.status).toBe("complete");
+    expect(terminalPage.olderCursor).toBeNull();
+    expect(terminalPage.messages[0]).toMatchObject({ id: "message-0", text: "Message 0" });
+    expect(terminalPage.messages.at(-1)).toMatchObject({ id: "message-4", text: "Message 4" });
   });
 
   it("hydrates thinking-only assistant messages from persisted session history", async () => {
@@ -114,8 +131,8 @@ describe("SessionCatalog transcript and file changes", () => {
     const catalog = new SessionCatalog([root]);
     await catalog.refresh();
 
-    const messages = await catalog.transcript("session-thinking");
-    expect(messages).toEqual([
+    const page = await catalog.transcript("session-thinking");
+    expect(page.messages).toEqual([
       expect.objectContaining({
         id: "message-thinking-1",
         role: "assistant",
@@ -123,6 +140,8 @@ describe("SessionCatalog transcript and file changes", () => {
         streaming: false,
       }),
     ]);
+    expect(page.status).toBe("complete");
+    expect(page.olderCursor).toBeNull();
   });
   it("selects one root and all descendants while excluding unrelated roots", async () => {
     const historyRoot = await makeTemporaryDirectory();

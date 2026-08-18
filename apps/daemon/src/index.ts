@@ -23,6 +23,7 @@ import {
   SessionFileChangesResponseSchema,
   SessionSchema,
   SessionTranscriptResponseSchema,
+  TRANSCRIPT_PAGE_SIZE,
   type TranscriptMessage,
   truncateTranscriptText,
   validateTranscriptImageBytes,
@@ -90,7 +91,7 @@ function sanitizeExtensionSession<T extends { messages: TranscriptMessage[] }>(
 function sanitizeSessionDetails<T extends { messages: TranscriptMessage[] }>(
   session: T,
 ): Omit<T, "messages"> & { messages: TranscriptMessage[] } {
-  const messages = session.messages.slice(-200).map((message) => ({
+  const messages = session.messages.slice(-TRANSCRIPT_PAGE_SIZE).map((message) => ({
     ...sanitizeTranscriptMessageImages(message),
     text: truncateTranscriptText(message.text),
   }));
@@ -118,6 +119,11 @@ const CatalogQuerySchema = z.object({
   q: z.string().trim().max(200).default(""),
 });
 const SessionParamsSchema = z.object({ sessionId: z.string().min(1) });
+const TranscriptQuerySchema = z
+  .object({
+    cursor: z.string().min(1).max(512).optional(),
+  })
+  .strict();
 
 const environment = EnvironmentSchema.parse(process.env);
 const pushSubscriptions = await PushSubscriptionStore.load();
@@ -213,7 +219,7 @@ app.get("/api/sessions/:sessionId", async (request, reply) => {
       ? sanitizeSessionDetails(liveSession)
       : {
           ...catalogSession,
-          messages: await sessionCatalog.transcript(sessionId),
+          messages: (await sessionCatalog.transcript(sessionId)).messages,
         };
     return SessionSchema.parse(session);
   } catch (error) {
@@ -225,17 +231,33 @@ app.get("/api/sessions/:sessionId", async (request, reply) => {
 app.get("/api/sessions/:sessionId/transcript", async (request, reply) => {
   const params = SessionParamsSchema.safeParse(request.params);
   if (!params.success) return reply.code(404).send({ error: "Session history was not found" });
+  const query = TranscriptQuerySchema.safeParse(request.query);
+  if (!query.success) return reply.code(400).send({ error: "Invalid session transcript query" });
+
   const sessionId = params.data.sessionId;
-  const catalogSession = sessionCatalog.get(sessionId);
-  const liveSession = registry.get(sessionId);
-  if (!catalogSession && !liveSession) {
+  const cursor = query.data.cursor ?? null;
+  let liveSession = registry.get(sessionId);
+  let catalogSession = liveSession ? undefined : sessionCatalog.get(sessionId);
+  if (!liveSession && !catalogSession) {
+    await requestCatalogReconciliation();
+    liveSession = registry.get(sessionId);
+    catalogSession = liveSession ? undefined : sessionCatalog.get(sessionId);
+  }
+  if (!liveSession && !catalogSession) {
     return reply.code(404).send({ error: "Session history was not found" });
   }
   try {
-    return SessionTranscriptResponseSchema.parse({
-      sessionId,
-      messages: catalogSession ? await sessionCatalog.transcript(sessionId) : (liveSession?.messages ?? []),
-    });
+    if (liveSession && !liveSession.sessionPath && !catalogSession) {
+      const sanitized = sanitizeSessionDetails(liveSession).messages;
+      return SessionTranscriptResponseSchema.parse({
+        sessionId,
+        messages: cursor ? [] : sanitized,
+        olderCursor: null,
+        status: cursor ? "invalidated" : "unavailable",
+      });
+    }
+    const page = await sessionCatalog.transcript(sessionId, cursor, liveSession?.sessionPath);
+    return SessionTranscriptResponseSchema.parse(page);
   } catch (error) {
     logger.error("Could not read OMP session transcript", error, { sessionId });
     return reply.code(500).send({ error: "Session history could not be read" });

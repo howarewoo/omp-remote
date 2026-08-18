@@ -330,6 +330,7 @@ describe("historical session schemas", () => {
     expect(
       SessionTranscriptResponseSchema.parse({
         sessionId: "session-history",
+        status: "complete",
         messages: [
           {
             id: "message-1",
@@ -339,8 +340,9 @@ describe("historical session schemas", () => {
             streaming: false,
           },
         ],
+        olderCursor: null,
       }),
-    ).toMatchObject({ sessionId: "session-history" });
+    ).toMatchObject({ sessionId: "session-history", status: "complete", olderCursor: null });
   });
 
   it("validates exact and unavailable on-demand cost responses", () => {

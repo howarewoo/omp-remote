@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   boundTranscriptImageBudget,
+  SessionTranscriptResponseSchema,
   TRANSCRIPT_IMAGE_MAX_BYTES,
+  TRANSCRIPT_PAGE_SIZE,
   TRANSCRIPT_TEXT_LIMIT,
   TranscriptImageSchema,
   TranscriptMessageSchema,
@@ -265,5 +267,30 @@ describe("TranscriptMessageSchema", () => {
       ...patch,
     };
     expect(TranscriptMessageSchema.safeParse(candidate).success).toBe(false);
+  });
+});
+
+describe("SessionTranscriptResponseSchema", () => {
+  const msg = { id: "m1", role: "user" as const, text: "hi", timestamp: "2026-08-01T00:00:00.000Z", streaming: false, presentation: "text" as const };
+
+  it.each([
+    ["complete", { status: "complete", olderCursor: null, messages: [msg] }],
+    ["available", { status: "available", olderCursor: "cursor-123", messages: [msg] }],
+    ["unavailable", { status: "unavailable", olderCursor: null, messages: [msg] }],
+    ["invalidated", { status: "invalidated", olderCursor: null, messages: [] }],
+  ] as const)("validates %s variant", (_name, variant) => {
+    expect(SessionTranscriptResponseSchema.parse({ sessionId: "s1", ...variant })).toMatchObject({ sessionId: "s1", ...variant });
+  });
+
+  it.each([
+    ["available with null cursor", { status: "available", messages: [], olderCursor: null }],
+    ["complete with string cursor", { status: "complete", messages: [], olderCursor: "c" }],
+    ["unavailable with string cursor", { status: "unavailable", messages: [], olderCursor: "c" }],
+    ["invalidated with string cursor", { status: "invalidated", messages: [], olderCursor: "c" }],
+    ["empty sessionId", { sessionId: "", status: "complete", messages: [], olderCursor: null }],
+    ["unknown property (strict)", { sessionId: "s1", status: "complete", messages: [], olderCursor: null, extra: 1 }],
+    ["messages exceeding page size", { sessionId: "s1", status: "complete", messages: Array.from({ length: TRANSCRIPT_PAGE_SIZE + 1 }, (_, i) => ({ ...msg, id: `m-${i}` })), olderCursor: null }],
+  ])("rejects invalid response: %s", (_case, payload) => {
+    expect(SessionTranscriptResponseSchema.safeParse({ sessionId: "s1", ...payload }).success).toBe(false);
   });
 });
