@@ -68,6 +68,10 @@ export default function App() {
         onSearchHistory={client.searchHistory}
         onLoadMoreHistory={client.loadMoreHistory}
         onLoadTranscript={client.loadTranscript}
+        transcriptHistory={client.transcriptHistory}
+        onLoadOlderTranscript={client.loadOlderTranscript}
+        onRetryTranscript={client.retryTranscript}
+        onReloadTranscript={client.reloadTranscript}
         onLoadSession={client.loadSession}
         onLoadCost={client.loadCost}
         onLoadSessionFileChanges={client.loadSessionFileChanges}

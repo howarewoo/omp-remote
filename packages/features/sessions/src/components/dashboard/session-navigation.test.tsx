@@ -230,6 +230,7 @@ describe("controlled dashboard selection", () => {
   });
 
   it("keeps a connected metadata-only session selected while hydrating it once", () => {
+    reactHarness.lifecycleEffects = true;
     const onLoadTranscript = vi.fn(() => new Promise<void>(() => undefined));
     const props = {
       ...composerDashboardProps({ ...BASE_SESSION, messages: [] }),

@@ -90,6 +90,10 @@ function DashboardContent({
   onSearchHistory,
   onLoadMoreHistory,
   onLoadTranscript,
+  transcriptHistory,
+  onLoadOlderTranscript,
+  onRetryTranscript,
+  onReloadTranscript,
   onLoadSession,
   onLoadCost,
   onLoadSessionFileChanges,
@@ -150,10 +154,10 @@ function DashboardContent({
   const [todoOpenSessionId, setTodoOpenSessionId] = useState<string | null>(null);
   const [costDrawerOpen, setCostDrawerOpen] = useState(false);
   const [selectedDirectory, setSelectedDirectory] = useState<string | null>(null);
-  const [transcriptLoadingId, setTranscriptLoadingId] = useState<string | null>(null);
+
   const [historyQuery, setHistoryQuery] = useState("");
   const [activeHistoryQuery, setActiveHistoryQuery] = useState("");
-  const loadedTranscriptIdRef = useRef<string | null>(null);
+
   const transcriptScrollToEndRef = useRef<(() => void) | null>(null);
   const registerTranscriptScrollToEnd = useCallback((handler: (() => void) | null) => {
     transcriptScrollToEndRef.current = handler;
@@ -560,23 +564,24 @@ function DashboardContent({
     void onLoadCost(selectedCostSessionId).catch(() => undefined);
   }, [onLoadCost, selectedCostSessionId]);
 
+  const selectedTranscriptHistory = useMemo(() => {
+    if (selectedSession && transcriptHistory.sessionId === selectedSession.id) {
+      return transcriptHistory;
+    }
+    return {
+      sessionId: selectedSession?.id ?? null,
+      initialLoading: false,
+      olderLoading: false,
+      status: null,
+      error: null,
+    };
+  }, [selectedSession, transcriptHistory]);
+
   useEffect(() => {
-    if (
-      !selectedSession ||
-      (selectedSession.source !== "history" &&
-        (!selectedSession.connected || selectedSession.messages.length > 0)) ||
-      loadedTranscriptIdRef.current === selectedSession.id
-    )
-      return;
-    const sessionId = selectedSession.id;
-    loadedTranscriptIdRef.current = sessionId;
-    setTranscriptLoadingId(sessionId);
-    void onLoadTranscript(sessionId)
-      .catch(() => {
-        if (loadedTranscriptIdRef.current === sessionId) loadedTranscriptIdRef.current = null;
-      })
-      .finally(() => setTranscriptLoadingId((current) => (current === sessionId ? null : current)));
-  }, [onLoadTranscript, selectedSession]);
+    const sessionId = selectedSession?.id;
+    if (!sessionId) return;
+    void onLoadTranscript(sessionId).catch(() => undefined);
+  }, [onLoadTranscript, selectedSession?.id]);
 
   const selectSkillSuggestion = (commandName: string) => {
     setMessage(`/${commandName} `);
@@ -860,7 +865,7 @@ function DashboardContent({
               {SessionTranscript({
                 session: selectedSession,
                 queuedMessages: queuedMessages.filter((message) => message.sessionId === selectedSession.id),
-                transcriptLoading: transcriptLoadingId === selectedSession.id,
+                transcriptHistory: selectedTranscriptHistory,
                 activeAskRequest,
                 connection,
                 onRespondToAsk: (request, response) =>
@@ -869,6 +874,9 @@ function DashboardContent({
                 onCancelQueuedMessage,
                 onViewSubagent: setViewedSubagent,
                 onRegisterScrollToEnd: registerTranscriptScrollToEnd,
+                onLoadOlderTranscript,
+                onRetryTranscript,
+                onReloadTranscript,
               })}
               {SessionMetadata({
                 session: selectedSession,
