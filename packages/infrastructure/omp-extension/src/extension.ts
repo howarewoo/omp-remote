@@ -13,6 +13,7 @@ import {
   type AskResponse,
   type ExtensionCommand,
   getTranscriptImageByteLength,
+  normalizeSkillPromptRecord,
   TRANSCRIPT_IMAGE_MAX_BYTES,
   TRANSCRIPT_IMAGE_SESSION_MAX_BYTES,
   type TranscriptImage,
@@ -164,7 +165,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
     z.object({ requestId: z.string().min(1), command: z.literal("ask_unavailable") }),
   ]);
   const SessionEntrySchema = z
-    .object({ id: z.string(), type: z.literal("message"), message: z.unknown() })
+    .object({ id: z.string().optional(), type: z.string() })
     .passthrough();
   const sessionCreatedAt = new Map<string, string>();
   type AskRelay = {
@@ -195,6 +196,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
   const liveToolCallTracker = new ExtensionToolCallTracker();
   let producerReadImageResolver: (data: string, mimeType: string) => TranscriptImage = resolveOwnReadImage;
   const retainedMessagesBySession = new Map<string, Map<string, ExtensionTranscriptMessage>>();
+  const firstPromptIdBySession = new Map<string, string>();
 
   const boundLiveMessage = (
     sessionId: string,
@@ -204,9 +206,16 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
       retainedMessagesBySession.get(sessionId) ?? new Map<string, ExtensionTranscriptMessage>();
     retained.set(message.id, message);
     while (retained.size > 200) {
+      const promptId = firstPromptIdBySession.get(sessionId);
       const oldestId = retained.keys().next().value;
       if (oldestId === undefined) break;
-      retained.delete(oldestId);
+      if (oldestId === promptId) {
+        const nextId = retained.keys().next().value;
+        if (nextId === undefined) break;
+        retained.delete(nextId);
+      } else {
+        retained.delete(oldestId);
+      }
     }
     const bounded = boundExtensionTranscriptMessages([...retained.values()]);
     retained.clear();
@@ -413,15 +422,30 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
   const sessionSnapshot = (ctx: ExtensionContext) => {
     const snapshotToolCallTracker = new ExtensionToolCallTracker();
     producerReadImageResolver = createOwnReadImageResolver(TRANSCRIPT_IMAGE_SESSION_MAX_BYTES);
-    const messages = ctx.sessionManager
+    const entries = ctx.sessionManager
       .getBranch()
-      .slice(-200)
       .map((entry) => SessionEntrySchema.safeParse(entry))
       .filter((entry) => entry.success)
-      .map((entry) => normalizeMessage(entry.data.message, false, entry.data.id, snapshotToolCallTracker))
-      .filter((message) => message !== null)
-      .slice(-200);
+      .map((entry) => entry.data);
+    let firstPrompt: ExtensionTranscriptMessage | null = null;
+    const ordinaryMessages: ExtensionTranscriptMessage[] = [];
+    for (const entry of entries) {
+      if (entry.type === "custom_message") {
+        const prompt = normalizeSkillPromptRecord(entry, (text) => `skill-prompt-${createHash("sha256").update(text, "utf8").digest("hex")}`);
+        if (prompt && firstPrompt === null) {
+          firstPrompt = normalizeMessage({ role: "user", content: prompt.text, id: prompt.id, timestamp: entry.timestamp }, false, prompt.id, snapshotToolCallTracker);
+        }
+        continue;
+      }
+      if (entry.type !== "message") continue;
+      const message = normalizeMessage(entry.message, false, entry.id, snapshotToolCallTracker);
+      if (message) ordinaryMessages.push(message);
+    }
+    const messages = ordinaryMessages.slice(-(firstPrompt ? 199 : 200));
+    if (firstPrompt && !messages.some((message) => message.id === firstPrompt.id)) messages.unshift(firstPrompt);
     const sessionId = ctx.sessionManager.getSessionId();
+    if (firstPrompt) firstPromptIdBySession.set(sessionId, firstPrompt.id);
+    else firstPromptIdBySession.delete(sessionId);
     const boundedMessages = boundExtensionTranscriptMessages(messages);
     messages.splice(0, messages.length, ...boundedMessages);
     retainedMessagesBySession.set(

@@ -233,4 +233,34 @@ describe("readTranscriptPage", () => {
     expect(budgetResolver(`blob:sha256:${validHash}`, "image/png").status).toBe("available");
     expect(budgetResolver(`blob:sha256:${validHash}`, "image/png")).toEqual({ status: "unavailable", reason: "budget_exceeded" });
   });
+  it("retains the earliest valid skill prompt across multiple custom records and preserves evicted boundary messages via cursor", async () => {
+    const sessionPath = join(testDir, "multi-prompt-boundary.jsonl");
+    const firstPrompt = "Earliest prompt";
+    const secondPrompt = "Later prompt";
+    const records = [
+      { type: "custom_message", customType: "skill-prompt", content: `wrapper\nUser: ${firstPrompt}` },
+      { type: "custom_message", customType: "skill-prompt", content: `wrapper\nUser: ${secondPrompt}` },
+      ...Array.from({ length: 50 }, (_, i) => ({
+        type: "message", id: `m-${i}`, message: { role: "user", content: `M ${i}` },
+      })),
+    ];
+    await writeFile(sessionPath, records.map((record) => JSON.stringify(record)).join("\n") + "\n");
+
+    const p1 = await readTranscriptPage({ sessionId: "multi-prompt", sessionPath });
+    expect(p1.status).toBe("available");
+    expect(p1.messages).toHaveLength(50);
+    expect(p1.messages[0]).toMatchObject({
+      id: `skill-prompt-${createHash("sha256").update(firstPrompt, "utf8").digest("hex")}`,
+      role: "user",
+      text: firstPrompt,
+    });
+    expect(p1.messages[1]?.id).toBe("m-1");
+    expect(p1.messages.at(-1)?.id).toBe("m-49");
+    expect(p1.olderCursor).not.toBeNull();
+
+    const p2 = await readTranscriptPage({ sessionId: "multi-prompt", sessionPath, cursor: p1.olderCursor });
+    expect(p2.status).toBe("complete");
+    expect(p2.messages.some((m) => m.id === "m-0")).toBe(true);
+  });
+
 });
