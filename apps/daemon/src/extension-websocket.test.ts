@@ -1,10 +1,10 @@
 import { EventEmitter } from "node:events";
-import {
-  type AskRequest,
-  type ExtensionFrame,
-  type Session,
-  type SessionModelOption,
-  type TranscriptMessage,
+import type {
+  AskRequest,
+  ExtensionFrame,
+  Session,
+  SessionModelOption,
+  TranscriptMessage,
 } from "@omp-remote/protocol";
 import { SessionRegistry } from "@omp-remote/sessions/services";
 import type { FastifyInstance } from "fastify";
@@ -37,7 +37,11 @@ const RPC_SESSION = {
 function fakeRegistry(getSession: () => typeof RPC_SESSION | undefined): SessionRegistry {
   return {
     get: getSession,
-    update: (_id: string, patch: Partial<typeof RPC_SESSION>) => Object.assign(getSession()!, patch),
+    update: (_id: string, patch: Partial<typeof RPC_SESSION>) => {
+      const session = getSession();
+      if (!session) throw new Error("Expected fake registry session");
+      Object.assign(session, patch);
+    },
   } as unknown as SessionRegistry;
 }
 
@@ -272,8 +276,9 @@ function createTestHarness(overrides: Partial<Parameters<typeof registerExtensio
   });
 
   const connectSocket = (ip = "127.0.0.1") => {
+    if (!routeHandler) throw new Error("Expected extension route handler");
     const socket = new FakeExtensionWebSocket() as unknown as WebSocket & FakeExtensionWebSocket;
-    routeHandler!(socket, { ip });
+    routeHandler(socket, { ip });
     return socket;
   };
 
@@ -324,6 +329,92 @@ describe("registerExtensionWebSocketRoute", () => {
     resolveReconcile(true);
     await vi.waitFor(() => {
       expect(harness.registerExtensionSession).toHaveBeenCalled();
+    });
+  });
+
+  it("admits and acknowledges an Ask while authoritative registration remains pending", async () => {
+    const registration = Promise.withResolvers<boolean>();
+    const registerExtensionSession = vi.fn(() => registration.promise);
+    const harness = createTestHarness({ registerExtensionSession });
+    const socket = harness.connectSocket();
+    const askRequest: AskRequest = {
+      sessionId: "session-live-1",
+      requestId: "ask-during-registration",
+      kind: "rich",
+      questions: [{ id: "q1", question: "Proceed?", options: [{ label: "Yes" }] }],
+      expiresAt: null,
+    };
+
+    socket.receiveFrame({ type: "register", session: BASE_EXTENSION_SESSION });
+    await vi.waitFor(() => {
+      expect(harness.registry.get("session-live-1")).toBeDefined();
+      expect(registerExtensionSession).toHaveBeenCalledOnce();
+    });
+
+    socket.receiveFrame({ type: "ask_request", request: askRequest });
+    await vi.waitFor(() => {
+      expect(harness.setPendingAsk).toHaveBeenCalledWith(askRequest, "extension");
+      expect(socket.sent.map((frame) => JSON.parse(frame))).toContainEqual({
+        command: "ask_admitted",
+        requestId: "ask-during-registration",
+      });
+    });
+
+    registration.resolve(true);
+  });
+
+  it("merges live application updates before late authoritative registration succeeds", async () => {
+    const reconciliation = Promise.withResolvers<void>();
+    const registry = new SessionRegistry();
+    const registerExtensionSession = vi.fn(
+      async (session: Session | (() => Session), isCurrent: () => boolean = () => true) => {
+        await reconciliation.promise;
+        if (!isCurrent()) return false;
+        const currentSession = typeof session === "function" ? session() : session;
+        if (!isCurrent()) return false;
+        registry.upsert({ ...currentSession, parentSessionId: "session-parent" });
+        return true;
+      },
+    );
+    const harness = createTestHarness({ registry, registerExtensionSession });
+    const socket = harness.connectSocket();
+    const liveMessage: TranscriptMessage = {
+      id: "message-before-reconciliation",
+      role: "assistant",
+      text: "Live output",
+      timestamp: "2026-08-17T00:00:02.000Z",
+      streaming: false,
+      presentation: "text",
+    };
+
+    socket.receiveFrame({ type: "register", session: BASE_EXTENSION_SESSION });
+    await vi.waitFor(() => expect(registerExtensionSession).toHaveBeenCalledOnce());
+    socket.receiveFrame(createExtensionEventFrame("message_end", liveMessage));
+    socket.receiveFrame({
+      type: "heartbeat",
+      sessionId: "session-live-1",
+      name: "Live after registration",
+      model: "anthropic/claude-sonnet-4",
+      contextPercent: 45,
+      effort: "medium",
+      idle: true,
+    });
+    await vi.waitFor(() => {
+      expect(registry.get("session-live-1")).toMatchObject({
+        status: "idle",
+        model: "anthropic/claude-sonnet-4",
+        messages: [liveMessage],
+      });
+    });
+
+    reconciliation.resolve();
+    await vi.waitFor(() => {
+      expect(registry.get("session-live-1")).toMatchObject({
+        parentSessionId: "session-parent",
+        status: "idle",
+        model: "anthropic/claude-sonnet-4",
+        messages: [liveMessage],
+      });
     });
   });
 
@@ -422,11 +513,11 @@ describe("registerExtensionWebSocketRoute", () => {
       expect(harness.registry.get("session-live-1")?.messages).toEqual([userMessage]);
     });
 
-    // Gen 1 resolves late
-    firstReconcile.resolve(true);
-    await vi.waitFor(() => {
-      expect(harness.registry.get("session-live-1")?.messages).toEqual([userMessage]);
-    });
+    // Gen 1 fails late without closing the socket now owned by gen 2
+    firstReconcile.reject(new Error("stale reconciliation failed"));
+    await firstReconcile.promise.catch(() => undefined);
+    expect(harness.registry.get("session-live-1")?.messages).toEqual([userMessage]);
+    expect(socket.closeCode).toBeUndefined();
   });
 
   it("cleans up replaced socket ownership, invalidates pending asks, and avoids marking session historical on replaced socket closure", async () => {
@@ -564,17 +655,17 @@ describe("registerExtensionWebSocketRoute", () => {
     );
   });
 
-  it("discards queued frames and clears pending ask when socket closes", async () => {
-    const { promise: reconcilePromise, resolve: resolveReconcile } = Promise.withResolvers<boolean>();
+  it("cancels deferred reconciliation and clears pending Ask ownership when the socket closes", async () => {
+    const { promise: reconcilePromise, reject: rejectReconcile } = Promise.withResolvers<boolean>();
     const harness = createTestHarness({ registerExtensionSession: vi.fn(async () => reconcilePromise) });
     const socket = harness.connectSocket();
 
     socket.receiveFrame({ type: "register", session: BASE_EXTENSION_SESSION });
-    socket.receiveFrame(createExtensionEventFrame("agent_start", null));
     socket.close();
-    resolveReconcile(true);
-    await vi.waitFor(() => {
-      expect(harness.markSessionHistorical).toHaveBeenCalledWith("session-live-1");
-    });
+    rejectReconcile(new Error("closed socket reconciliation failed"));
+    await reconcilePromise.catch(() => undefined);
+    expect(harness.markSessionHistorical).toHaveBeenCalledWith("session-live-1");
+    expect(harness.clearPendingAsk).toHaveBeenCalledWith("session-live-1");
+    expect(socket.closeCode).toBeUndefined();
   });
 });

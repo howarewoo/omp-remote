@@ -85,8 +85,7 @@ export function createDeferredRegistrationReplay<Frame>(
       if (registered) return;
       registered = true;
       replaying = true;
-      for (let index = 0; index < deferredFrames.length; index += 1) {
-        const frame = deferredFrames[index]!;
+      for (const frame of deferredFrames) {
         if (shouldReplay(frame)) applyFrame(frame);
       }
       deferredFrames.length = 0;
@@ -240,14 +239,18 @@ export function createReconciledSessionRegistrar({
   registerSession,
   requestCatalogReconciliation,
   resolveSession,
-}: ReconciledSessionRegistrarOptions): (session: Session, isCurrent?: () => boolean) => Promise<boolean> {
+}: ReconciledSessionRegistrarOptions): (
+  session: Session | (() => Session),
+  isCurrent?: () => boolean,
+) => Promise<boolean> {
   return async (session, isCurrent = () => true) => {
     await requestCatalogReconciliation();
     if (!isCurrent()) return false;
-    const resolvedSession = resolveSession?.(session);
+    const currentSession = typeof session === "function" ? session() : session;
+    const resolvedSession = resolveSession?.(currentSession);
     if (resolveSession && !resolvedSession) return false;
     if (!isCurrent()) return false;
-    registerSession(resolvedSession ?? session);
+    registerSession(resolvedSession ?? currentSession);
     return true;
   };
 }

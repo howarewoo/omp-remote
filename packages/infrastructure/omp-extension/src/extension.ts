@@ -10,6 +10,7 @@ import type {
   ExtensionUIDialogOptions,
 } from "@oh-my-pi/pi-coding-agent";
 import {
+  type AskRequest,
   type AskResponse,
   type ExtensionCommand,
   getTranscriptImageByteLength,
@@ -21,22 +22,22 @@ import {
   type TranscriptMessage,
   validateTranscriptImageBytes,
 } from "@omp-remote/protocol";
+import { getConfiguredRoleEffort, getSessionModelOptions, getSkillCommands } from "./model-options.js";
+import { normalizeRemoteAskResponse, type RemoteAskOutcome } from "./remote-ask.js";
 import {
   boundExtensionTranscriptMessages,
   ExtensionToolCallTracker,
   normalizeExtensionMessage,
 } from "./transcript-normalizer.js";
-import { getConfiguredRoleEffort, getSessionModelOptions, getSkillCommands } from "./model-options.js";
-import { normalizeRemoteAskResponse, type RemoteAskOutcome } from "./remote-ask.js";
 
+export { getConfiguredRoleEffort, getSessionModelOptions, getSkillCommands } from "./model-options.js";
+export { normalizeRemoteAskResponse } from "./remote-ask.js";
 export {
   boundExtensionTranscriptMessages,
   ExtensionToolCallTracker,
   materializeExtensionReadImages,
   normalizeExtensionMessage,
 } from "./transcript-normalizer.js";
-export { getConfiguredRoleEffort, getSessionModelOptions, getSkillCommands } from "./model-options.js";
-export { normalizeRemoteAskResponse } from "./remote-ask.js";
 
 const DEFAULT_EXTENSION_URL = "ws://127.0.0.1:4387/extension";
 const RECONNECT_DELAY_MS = 2_000;
@@ -164,9 +165,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
     }),
     z.object({ requestId: z.string().min(1), command: z.literal("ask_unavailable") }),
   ]);
-  const SessionEntrySchema = z
-    .object({ id: z.string().optional(), type: z.string() })
-    .passthrough();
+  const SessionEntrySchema = z.object({ id: z.string().optional(), type: z.string() }).passthrough();
   const sessionCreatedAt = new Map<string, string>();
   type AskRelay = {
     context: ExtensionContext;
@@ -175,7 +174,9 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
   };
   type PendingRemoteAsk = {
     sessionId: string;
+    request: AskRequest;
     relay: AskRelay;
+    publishedSocket?: WebSocket;
     admitted: boolean;
     settled: boolean;
     admit(): void;
@@ -248,6 +249,28 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(frame));
   };
 
+  const publishRemoteAsk = (pending: PendingRemoteAsk): void => {
+    const currentSocket = socket;
+    if (
+      !currentSocket ||
+      currentSocket.readyState !== WebSocket.OPEN ||
+      pending.settled ||
+      pending.publishedSocket === currentSocket
+    ) {
+      return;
+    }
+    pending.admitted = false;
+    pending.publishedSocket = currentSocket;
+    currentSocket.send(JSON.stringify({ type: "ask_request", request: pending.request }));
+  };
+
+  const disconnectRemoteAsks = (disconnectedSocket: WebSocket): void => {
+    for (const pending of pendingRemoteAsks.values()) {
+      if (pending.publishedSocket !== disconnectedSocket) continue;
+      pending.admitted = false;
+    }
+  };
+
   const cleanupRemoteAsk = (requestId: string): PendingRemoteAsk | undefined => {
     const pending = pendingRemoteAsks.get(requestId);
     if (!pending) return undefined;
@@ -287,41 +310,35 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
       questions: ExtensionAskDialogQuestion[],
       dialogOptions?: ExtensionUIDialogOptions,
     ): Promise<ExtensionAskDialogResult | undefined> => {
-      const localAskDialog = (
-        localQuestions: ExtensionAskDialogQuestion[],
-        localOptions?: ExtensionUIDialogOptions,
-      ) => relay.nativeAskDialog.call(relay.context.ui, localQuestions, localOptions);
-      if (socket?.readyState !== WebSocket.OPEN) return localAskDialog(questions, dialogOptions);
-
       const requestId = crypto.randomUUID();
       const sessionId = relay.context.sessionManager.getSessionId();
-      let resolveAdmission!: () => void;
       let resolveRemote!: (outcome: RemoteAskOutcome) => void;
       let resolveAbort!: () => void;
-      const admission = new Promise<void>((resolve) => {
-        resolveAdmission = resolve;
-      });
       const remote = new Promise<RemoteAskOutcome>((resolve) => {
         resolveRemote = resolve;
       });
       const parentAbort = new Promise<"aborted">((resolve) => {
         resolveAbort = () => resolve("aborted");
       });
+      const timeout = dialogOptions?.timeout;
+      const expiresAt =
+        typeof timeout === "number" && timeout > 0 ? new Date(Date.now() + timeout).toISOString() : null;
+      const request: AskRequest = {
+        sessionId,
+        requestId,
+        kind: "rich",
+        questions,
+        expiresAt,
+      };
       const pending: PendingRemoteAsk = {
         sessionId,
+        request,
         relay,
         admitted: false,
         settled: false,
         admit() {
           if (this.admitted || this.settled) return;
           this.admitted = true;
-          this.unsubscribeTerminalInput = this.relay.context.ui.onTerminalInput(() => {
-            if (pendingRemoteAsks.get(requestId) === this && this.admitted && !this.settled) {
-              send({ type: "ask_activity", sessionId: this.sessionId, requestId });
-            }
-            return undefined;
-          });
-          resolveAdmission();
         },
         settle(outcome) {
           if (this.settled) return;
@@ -330,26 +347,42 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
         },
       };
       pendingRemoteAsks.set(requestId, pending);
+      pending.unsubscribeTerminalInput = pending.relay.context.ui.onTerminalInput(() => {
+        if (pendingRemoteAsks.get(requestId) !== pending || pending.settled) return undefined;
+        if (typeof timeout === "number" && timeout > 0) {
+          pending.request = {
+            ...pending.request,
+            expiresAt: new Date(Date.now() + timeout).toISOString(),
+          };
+        }
+        if (pending.admitted) {
+          send({ type: "ask_activity", sessionId: pending.sessionId, requestId });
+        }
+        return undefined;
+      });
       const onParentAbort = () => resolveAbort();
       dialogOptions?.signal?.addEventListener("abort", onParentAbort, { once: true });
       if (dialogOptions?.signal?.aborted) resolveAbort();
-      const timeout = dialogOptions?.timeout;
-      const expiresAt =
-        typeof timeout === "number" && timeout > 0 ? new Date(Date.now() + timeout).toISOString() : null;
-      send({
-        type: "ask_request",
-        request: { sessionId, requestId, kind: "rich", questions, expiresAt },
-      });
 
-      const remoteResult = async (
-        outcome: RemoteAskOutcome,
-      ): Promise<ExtensionAskDialogResult | undefined> => {
+      const localAbort = new AbortController();
+      const localSignal = dialogOptions?.signal
+        ? AbortSignal.any([dialogOptions.signal, localAbort.signal])
+        : localAbort.signal;
+      const localDialogOptions: ExtensionUIDialogOptions = { ...dialogOptions, signal: localSignal };
+      const local = Promise.resolve(
+        relay.nativeAskDialog.call(relay.context.ui, questions, localDialogOptions),
+      ).then((value) => ({
+        source: "local" as const,
+        value,
+      }));
+      publishRemoteAsk(pending);
+
+      const finishRemote = (outcome: Exclude<RemoteAskOutcome, { type: "unavailable" }>) => {
         cleanupRemoteAsk(requestId);
-        if (outcome.type === "unavailable") return localAskDialog(questions, dialogOptions);
         if (outcome.type === "response") return outcome.response;
         dialogOptions?.onTimeout?.();
         return {
-          kind: "submit",
+          kind: "submit" as const,
           results: questions.map((question) => {
             const selected = question.options[question.recommended ?? 0];
             return {
@@ -364,51 +397,38 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
         };
       };
 
-      const first = await Promise.race([
-        admission.then(() => ({ source: "admitted" as const })),
-        remote.then((outcome) => ({ source: "remote" as const, outcome })),
-        parentAbort.then(() => ({ source: "aborted" as const })),
-      ]);
-      if (first.source === "aborted") {
-        cancelRemoteAsk(requestId);
-        dialogOptions?.signal?.removeEventListener("abort", onParentAbort);
-        return undefined;
-      }
-      if (first.source === "remote") {
-        dialogOptions?.signal?.removeEventListener("abort", onParentAbort);
-        return remoteResult(first.outcome);
-      }
-
-      const localAbort = new AbortController();
-      const localSignal = dialogOptions?.signal
-        ? AbortSignal.any([dialogOptions.signal, localAbort.signal])
-        : localAbort.signal;
-      const localDialogOptions: ExtensionUIDialogOptions = { ...dialogOptions, signal: localSignal };
-      delete localDialogOptions.timeout;
-      delete localDialogOptions.onTimeout;
-      delete localDialogOptions.onTimeoutStart;
-      delete localDialogOptions.onTimeoutReset;
-      const local = localAskDialog(questions, localDialogOptions).then((value) => ({
-        source: "local" as const,
-        value,
-      }));
       const winner = await Promise.race([
         local,
         remote.then((outcome) => ({ source: "remote" as const, outcome })),
         parentAbort.then(() => ({ source: "aborted" as const })),
       ]);
-      dialogOptions?.signal?.removeEventListener("abort", onParentAbort);
       if (winner.source === "aborted") {
+        dialogOptions?.signal?.removeEventListener("abort", onParentAbort);
         localAbort.abort();
         cancelRemoteAsk(requestId);
         return undefined;
       }
       if (winner.source === "local") {
+        dialogOptions?.signal?.removeEventListener("abort", onParentAbort);
         cancelRemoteAsk(requestId);
         return winner.value;
       }
+      if (winner.outcome.type === "unavailable") {
+        cleanupRemoteAsk(requestId);
+        const fallback = await Promise.race([
+          local,
+          parentAbort.then(() => ({ source: "aborted" as const })),
+        ]);
+        dialogOptions?.signal?.removeEventListener("abort", onParentAbort);
+        if (fallback.source === "aborted") {
+          localAbort.abort();
+          return undefined;
+        }
+        return fallback.value;
+      }
+      dialogOptions?.signal?.removeEventListener("abort", onParentAbort);
       localAbort.abort();
-      return remoteResult(winner.outcome);
+      return finishRemote(winner.outcome);
     };
     relay = {
       context: ctx,
@@ -431,9 +451,17 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
     const ordinaryMessages: ExtensionTranscriptMessage[] = [];
     for (const entry of entries) {
       if (entry.type === "custom_message") {
-        const prompt = normalizeSkillPromptRecord(entry, (text) => `skill-prompt-${createHash("sha256").update(text, "utf8").digest("hex")}`);
+        const prompt = normalizeSkillPromptRecord(
+          entry,
+          (text) => `skill-prompt-${createHash("sha256").update(text, "utf8").digest("hex")}`,
+        );
         if (prompt && firstPrompt === null) {
-          firstPrompt = normalizeMessage({ role: "user", content: prompt.text, id: prompt.id, timestamp: entry.timestamp }, false, prompt.id, snapshotToolCallTracker);
+          firstPrompt = normalizeMessage(
+            { role: "user", content: prompt.text, id: prompt.id, timestamp: entry.timestamp },
+            false,
+            prompt.id,
+            snapshotToolCallTracker,
+          );
         }
         continue;
       }
@@ -442,7 +470,8 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
       if (message) ordinaryMessages.push(message);
     }
     const messages = ordinaryMessages.slice(-(firstPrompt ? 199 : 200));
-    if (firstPrompt && !messages.some((message) => message.id === firstPrompt.id)) messages.unshift(firstPrompt);
+    if (firstPrompt && !messages.some((message) => message.id === firstPrompt.id))
+      messages.unshift(firstPrompt);
     const sessionId = ctx.sessionManager.getSessionId();
     if (firstPrompt) firstPromptIdBySession.set(sessionId, firstPrompt.id);
     else firstPromptIdBySession.delete(sessionId);
@@ -478,7 +507,11 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
 
   const register = (): void => {
     if (!context) return;
-    send({ type: "register", session: sessionSnapshot(context) });
+    const session = sessionSnapshot(context);
+    send({ type: "register", session });
+    for (const pending of pendingRemoteAsks.values()) {
+      if (pending.sessionId === session.id) publishRemoteAsk(pending);
+    }
   };
 
   const connect = (): void => {
@@ -510,7 +543,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
         command.command === "ask_unavailable"
       ) {
         const pending = pendingRemoteAsks.get(command.requestId);
-        if (!pending) return;
+        if (!pending || socket !== nextSocket || pending.publishedSocket !== nextSocket) return;
         if (command.command === "ask_admitted") {
           pending.admit();
           return;
@@ -554,7 +587,7 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
     });
     nextSocket.addEventListener("close", () => {
       if (socket === nextSocket) socket = undefined;
-      loseRemoteAsks();
+      disconnectRemoteAsks(nextSocket);
       if (active && context) context.setTimeout(connect, RECONNECT_DELAY_MS);
     });
     nextSocket.addEventListener("error", () => nextSocket.close());
@@ -602,13 +635,14 @@ export default function ompRemoteExtension(pi: ExtensionAPI): void {
   };
 
   const sendMetadata = (): void => {
-    if (!metadataContext || metadataSocket?.readyState !== WebSocket.OPEN) return;
+    const currentContext = metadataContext;
+    if (!currentContext || metadataSocket?.readyState !== WebSocket.OPEN) return;
     metadataSocket.send(
       JSON.stringify({
         type: "metadata",
-        sessionId: metadataContext.sessionManager.getSessionId(),
-        availableModels: getSessionModelOptions(metadataContext.models.list(), (role) =>
-          resolveRoleAssignment(metadataContext!, role),
+        sessionId: currentContext.sessionManager.getSessionId(),
+        availableModels: getSessionModelOptions(currentContext.models.list(), (role) =>
+          resolveRoleAssignment(currentContext, role),
         ),
       }),
     );
