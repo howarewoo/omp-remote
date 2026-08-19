@@ -30,7 +30,10 @@ type ExtensionWebSocketDependencies = {
   pendingAskBySession: Map<string, PendingAsk>;
   sessionCatalog: SessionCatalog;
   registry: SessionRegistry;
-  registerExtensionSession: (session: Session, isCurrent?: () => boolean) => Promise<boolean>;
+  registerExtensionSession: (
+    session: Session | (() => Session),
+    isCurrent?: () => boolean,
+  ) => Promise<boolean>;
   sanitizeExtensionSession: <T extends { messages: TranscriptMessage[] }>(
     session: T,
   ) => Omit<T, "messages"> & { messages: TranscriptMessage[] };
@@ -121,23 +124,29 @@ export function registerExtensionWebSocketRoute(
             frame.session.lastActivity,
           activeSubagents: catalogSession?.activeSubagents ?? existingSession?.activeSubagents ?? [],
         };
+        const authoritativeSession: Session = {
+          ...sanitized,
+          ...(catalogSession?.parentSessionId !== undefined
+            ? { parentSessionId: catalogSession.parentSessionId }
+            : {}),
+          createdAt: catalogSession?.createdAt ?? frame.session.createdAt ?? frame.session.lastActivity,
+          activeSubagents: catalogSession?.activeSubagents ?? [],
+        };
         registry.upsert(provisionalSession);
 
-        const registered = await registerDeferredSession(
-          {
-            ...sanitized,
-            ...(catalogSession?.parentSessionId !== undefined
-              ? { parentSessionId: catalogSession.parentSessionId }
-              : {}),
-            createdAt: catalogSession?.createdAt ?? frame.session.createdAt ?? frame.session.lastActivity,
-            activeSubagents: catalogSession?.activeSubagents ?? [],
-          },
-          registerExtensionSession,
+        void registerDeferredSession(
+          authoritativeSession,
+          (_session, currentRegistration) =>
+            registerExtensionSession(() => {
+              const liveSession = registry.get(frame.session.id);
+              return liveSession ? { ...authoritativeSession, ...liveSession } : authoritativeSession;
+            }, currentRegistration),
           isCurrent,
           () => waitForRegistrationRetry(socketClosed.promise),
-        );
-        if (!registered || !isCurrent()) return false;
-        return true;
+        ).catch(() => {
+          if (isCurrent()) socket.close(1011, "Extension frame handling failed");
+        });
+        return isCurrent();
       },
       (frame) => {
         if (frame.type === "ask_request") {

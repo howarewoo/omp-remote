@@ -2,14 +2,14 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionUIDialogOptions } from "@oh-my-pi/pi-coding-agent";
-import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import ompRemoteExtension, {
   getConfiguredRoleEffort,
   getSessionModelOptions,
   isRpcMode,
-  normalizeRemoteAskResponse,
   normalizeExtensionMessage,
+  normalizeRemoteAskResponse,
 } from "./extension.js";
 
 const compatibilityZ = { ...z };
@@ -50,6 +50,7 @@ class FakeWebSocket {
 afterEach(async () => {
   process.argv.splice(0, process.argv.length, ...originalArgv);
   vi.unstubAllGlobals();
+  vi.useRealTimers();
   FakeWebSocket.instances.length = 0;
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true })));
 });
@@ -491,7 +492,10 @@ describe("ompRemoteExtension", () => {
     });
     await expect(resultPromise).resolves.toEqual(nativeResult);
     expect(nativeAskDialog).toHaveBeenCalledTimes(1);
-    expect(nativeAskDialog).toHaveBeenCalledWith(questions, options);
+    expect(nativeAskDialog).toHaveBeenCalledWith(
+      questions,
+      expect.objectContaining({ timeout: 500, signal: expect.any(AbortSignal) }),
+    );
 
     await handlers.get("session_shutdown")?.();
     expect(ui.askDialog).toBe(nativeAskDialog);
@@ -587,10 +591,13 @@ describe("ompRemoteExtension", () => {
     const result = await resultPromise;
     expect(result).toMatchObject(nativeResult);
     expect(nativeAskDialog).toHaveBeenCalledTimes(1);
-    expect(nativeAskDialog).toHaveBeenCalledWith(questions, options);
+    expect(nativeAskDialog).toHaveBeenCalledWith(
+      questions,
+      expect.objectContaining({ timeout: 300, signal: expect.any(AbortSignal) }),
+    );
   });
 
-  it("waits for admission, disables the competitor timeout, emits activity, and honors parent abort", async () => {
+  it("presents locally before admission, emits admitted activity, and honors the first valid response or abort", async () => {
     process.argv.splice(0, process.argv.length, "node", "omp", "--mode", "text");
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
     const terminalHandlers = new Set<(data: string) => unknown>();
@@ -641,15 +648,16 @@ describe("ompRemoteExtension", () => {
     const parentAbort = new AbortController();
     const resultPromise = ui.askDialog(questions, { timeout: 500, signal: parentAbort.signal });
     const request = JSON.parse(socket.sent.at(-1) ?? "");
-    expect(nativeAskDialog).not.toHaveBeenCalled();
+    expect(nativeAskDialog).toHaveBeenCalledOnce();
+    const competingOptions = nativeAskDialog.mock.calls[0]?.[1];
+    expect(competingOptions).toEqual(
+      expect.objectContaining({ timeout: 500, signal: expect.any(AbortSignal) }),
+    );
+    expect(terminalHandlers.size).toBe(1);
 
     await socket.emit("message", {
       data: JSON.stringify({ command: "ask_admitted", requestId: request.request.requestId }),
     });
-    await vi.waitFor(() => expect(nativeAskDialog).toHaveBeenCalledOnce());
-    const competingOptions = nativeAskDialog.mock.calls[0]?.[1];
-    expect(competingOptions).toEqual(expect.objectContaining({ signal: expect.any(AbortSignal) }));
-    expect(competingOptions).not.toHaveProperty("timeout");
     expect(terminalHandlers.size).toBe(1);
     for (const handler of terminalHandlers) handler("x");
     expect(JSON.parse(socket.sent.at(-1) ?? "")).toEqual({
@@ -713,7 +721,7 @@ describe("ompRemoteExtension", () => {
     expect(terminalHandlers.size).toBe(0);
   });
 
-  it("returns native timeout results and reopens native UI after admitted socket loss", async () => {
+  it("returns remote timeout results and keeps one native Ask alive across admitted socket loss", async () => {
     process.argv.splice(0, process.argv.length, "node", "omp", "--mode", "text");
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
     const localResolvers: Array<(value: { kind: "chat" } | undefined) => void> = [];
@@ -800,10 +808,192 @@ describe("ompRemoteExtension", () => {
     await socket.emit("message", {
       data: JSON.stringify({ command: "ask_admitted", requestId: fallbackRequest.request.requestId }),
     });
+    expect(nativeAskDialog).toHaveBeenCalledTimes(2);
+    expect(nativeAskDialog.mock.calls.at(-1)?.[1]).toEqual(
+      expect.objectContaining({ timeout: 500, signal: expect.any(AbortSignal) }),
+    );
     await socket.emit("close");
-    await vi.waitFor(() => expect(nativeAskDialog).toHaveBeenLastCalledWith(questions, fallbackOptions));
+    expect(nativeAskDialog).toHaveBeenCalledTimes(2);
     localResolvers.at(-1)?.({ kind: "chat" });
     await expect(fallbackPromise).resolves.toEqual({ kind: "chat" });
+  });
+
+  it("publishes one unsettled disconnected Ask per connection with its activity-refreshed deadline", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-19T00:00:00.000Z"));
+    process.argv.splice(0, process.argv.length, "node", "omp", "--mode", "text");
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const localResolvers: Array<(value: { kind: "chat" } | undefined) => void> = [];
+    const nativeAskDialog = vi.fn(
+      (_questions: unknown, options: ExtensionUIDialogOptions = {}) =>
+        new Promise<{ kind: "chat" } | undefined>((resolve) => {
+          localResolvers.push(resolve);
+          options.signal?.addEventListener("abort", () => resolve(undefined), { once: true });
+        }),
+    );
+    const terminalHandlers = new Set<(data: string) => unknown>();
+    const ui = {
+      askDialog: nativeAskDialog,
+      onTerminalInput: vi.fn((handler: (data: string) => unknown) => {
+        terminalHandlers.add(handler);
+        return () => terminalHandlers.delete(handler);
+      }),
+    };
+    const pi = {
+      zod: { z: compatibilityZ },
+      on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => handlers.set(event, handler)),
+      getThinkingLevel: vi.fn(() => "high"),
+      getCommands: vi.fn(() => []),
+    };
+    let reconnect: (() => void) | undefined;
+    const context = {
+      cwd: "/workspace/project",
+      ui,
+      isIdle: () => true,
+      hasPendingMessages: () => false,
+      getContextUsage: () => undefined,
+      models: {
+        current: () => ({ provider: "openai", id: "gpt-5.6", name: "GPT-5.6" }),
+        list: () => [],
+      },
+      sessionManager: {
+        getBranch: () => [],
+        getSessionId: () => "session-1",
+        getSessionName: () => null,
+        getSessionFile: () => null,
+      },
+      setInterval: vi.fn(),
+      setTimeout: vi.fn((callback: () => void) => {
+        reconnect = callback;
+        return 0;
+      }),
+    };
+    vi.stubGlobal("WebSocket", FakeWebSocket);
+    ompRemoteExtension(pi as unknown as ExtensionAPI);
+    await handlers.get("session_start")?.({}, context);
+    const firstSocket = FakeWebSocket.instances[0];
+    if (!firstSocket) throw new Error("The extension did not open its host connection");
+    firstSocket.readyState = FakeWebSocket.CONNECTING;
+    const questions = [{ id: "database", question: "", options: [{ label: "SQLite" }] }];
+
+    const onTimeoutReset = vi.fn();
+    const remoteResultPromise = ui.askDialog(questions, { timeout: 500, onTimeoutReset });
+    expect(nativeAskDialog).toHaveBeenCalledOnce();
+    expect(nativeAskDialog.mock.calls[0]?.[1]?.onTimeoutReset).toBe(onTimeoutReset);
+    expect(terminalHandlers.size).toBe(1);
+    expect(
+      firstSocket.sent.map((frame) => JSON.parse(frame)).filter((frame) => frame.type === "ask_request"),
+    ).toHaveLength(0);
+
+    firstSocket.readyState = FakeWebSocket.OPEN;
+    await firstSocket.emit("open");
+    await firstSocket.emit("open");
+    const firstRequests = firstSocket.sent
+      .map((frame) => JSON.parse(frame))
+      .filter((frame) => frame.type === "ask_request");
+    expect(firstRequests).toHaveLength(1);
+    expect(firstRequests[0].request.expiresAt).toBe("2026-08-19T00:00:00.500Z");
+    const sentBeforeUnadmittedInput = firstSocket.sent.length;
+    vi.setSystemTime(new Date("2026-08-19T00:00:00.100Z"));
+    for (const handler of terminalHandlers) handler("unadmitted activity");
+    expect(firstSocket.sent).toHaveLength(sentBeforeUnadmittedInput);
+    expect(onTimeoutReset).not.toHaveBeenCalled();
+
+    await firstSocket.emit("message", {
+      data: JSON.stringify({
+        command: "ask_admitted",
+        requestId: firstRequests[0].request.requestId,
+      }),
+    });
+    vi.setSystemTime(new Date("2026-08-19T00:00:00.250Z"));
+    for (const handler of terminalHandlers) handler("admitted activity");
+    expect(JSON.parse(firstSocket.sent.at(-1) ?? "")).toEqual({
+      type: "ask_activity",
+      sessionId: "session-1",
+      requestId: firstRequests[0].request.requestId,
+    });
+    expect(onTimeoutReset).not.toHaveBeenCalled();
+
+    firstSocket.readyState = 3;
+    await firstSocket.emit("close");
+    if (!reconnect) throw new Error("The extension did not schedule its reconnect");
+    reconnect();
+    const secondSocket = FakeWebSocket.instances[1];
+    if (!secondSocket) throw new Error("The extension did not reconnect its host socket");
+    await secondSocket.emit("open");
+    await secondSocket.emit("open");
+    const secondRequests = secondSocket.sent
+      .map((frame) => JSON.parse(frame))
+      .filter((frame) => frame.type === "ask_request");
+    expect(secondRequests).toHaveLength(1);
+    expect(secondRequests[0].request).toEqual({
+      ...firstRequests[0].request,
+      expiresAt: "2026-08-19T00:00:00.750Z",
+    });
+
+    await secondSocket.emit("message", {
+      data: JSON.stringify({
+        command: "ask_admitted",
+        requestId: secondRequests[0].request.requestId,
+      }),
+    });
+    await secondSocket.emit("message", {
+      data: JSON.stringify({
+        command: "ask_response",
+        requestId: secondRequests[0].request.requestId,
+        response: { kind: "chat" },
+      }),
+    });
+    await expect(remoteResultPromise).resolves.toEqual({ kind: "chat" });
+    expect(terminalHandlers.size).toBe(0);
+
+    secondSocket.readyState = FakeWebSocket.CONNECTING;
+    const localResultPromise = ui.askDialog(questions, { timeout: 500 });
+    expect(nativeAskDialog).toHaveBeenCalledTimes(2);
+    expect(
+      secondSocket.sent.map((frame) => JSON.parse(frame)).filter((frame) => frame.type === "ask_request"),
+    ).toHaveLength(1);
+    localResolvers.at(-1)?.({ kind: "chat" });
+    await expect(localResultPromise).resolves.toEqual({ kind: "chat" });
+
+    secondSocket.readyState = FakeWebSocket.OPEN;
+    await secondSocket.emit("open");
+    expect(
+      secondSocket.sent.map((frame) => JSON.parse(frame)).filter((frame) => frame.type === "ask_request"),
+    ).toHaveLength(1);
+
+    const localWinnerPromise = ui.askDialog(questions);
+    const connectedRequests = secondSocket.sent
+      .map((frame) => JSON.parse(frame))
+      .filter((frame) => frame.type === "ask_request");
+    expect(connectedRequests).toHaveLength(2);
+    const localWinnerRequest = connectedRequests.at(-1);
+    localResolvers.at(-1)?.({ kind: "chat" });
+    await expect(localWinnerPromise).resolves.toEqual({ kind: "chat" });
+    expect(JSON.parse(secondSocket.sent.at(-1) ?? "")).toEqual({
+      type: "ask_cancelled",
+      sessionId: "session-1",
+      requestId: localWinnerRequest.request.requestId,
+    });
+    await secondSocket.emit("message", {
+      data: JSON.stringify({
+        command: "ask_response",
+        requestId: localWinnerRequest.request.requestId,
+        response: {
+          kind: "submit",
+          results: [
+            {
+              id: "database",
+              question: "",
+              options: ["SQLite"],
+              multi: false,
+              selectedOptions: ["SQLite"],
+            },
+          ],
+        },
+      }),
+    });
+    await expect(localWinnerPromise).resolves.toEqual({ kind: "chat" });
   });
 
   it.each([
@@ -859,8 +1049,9 @@ describe("ompRemoteExtension", () => {
     vi.stubGlobal("WebSocket", FakeWebSocket);
     ompRemoteExtension(pi as unknown as ExtensionAPI);
     await handlers.get("session_start")?.({}, context);
-    const socket = FakeWebSocket.instances[0]!;
+    const socket = FakeWebSocket.instances[0];
     expect(socket).toBeDefined();
+    if (!socket) throw new Error("Expected extension WebSocket");
     expect(context.ui.askDialog).toBe(origAsk);
     await socket.emit("open");
     const expected = {
