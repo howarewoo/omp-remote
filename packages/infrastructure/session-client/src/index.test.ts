@@ -11,6 +11,7 @@ import {
   addApplicationErrorRecord,
   applyTranscriptToSessions,
   boundedServerError,
+  cleanupSessionHistory,
   clearApplicationErrorsLedger,
   commandResultValue,
   compareApplicationErrorsNewestFirst,
@@ -35,6 +36,7 @@ import {
   sendBrowserCommand,
   snapshotSessionsWithCurrentMessages,
   type TranscriptHistoryState,
+  type TranscriptProvenance,
   upsertAskRequest,
   upsertLoadedSession,
   upsertTranscriptMessage,
@@ -641,10 +643,13 @@ describe("snapshotSessionsWithCurrentMessages", () => {
 });
 
 describe("applyTranscriptToSessions", () => {
-  it("hydrates target with live tail isolated by WeakSet provenance while clearing other root history", () => {
-    const old1 = makeMsg("old-1");
-    const live1 = makeMsg("live-1");
-    const target = { ...SESSION, id: "target", source: "history" as const, messages: [old1, live1] };
+  it("replaces completed live fallback messages with canonical history while clearing other root history", () => {
+    const fallbackCompleted = makeMsg(
+      "extension-message-1",
+      "Planning precise feature implementation",
+      false,
+    );
+    const target = { ...SESSION, id: "target", source: "extension" as const, messages: [fallbackCompleted] };
     const otherHistory = { ...SESSION, id: "other-history", source: "history" as const };
     const historyChild = {
       ...SESSION,
@@ -653,17 +658,71 @@ describe("applyTranscriptToSessions", () => {
       parentSessionId: "other-history",
     };
     const otherLive = { ...SESSION, id: "other-live" };
-    const provenance = new WeakSet([old1]);
 
     const result = applyTranscriptToSessions(
       [target, otherHistory, historyChild, otherLive],
-      makePage("target", [makeMsg("fresh-1")]),
-      provenance,
+      makePage("target", [makeMsg("ffac29ab", "Planning precise feature implementation", false)]),
     );
-    expect(result[0]?.messages.map((m) => m.id)).toEqual(["fresh-1", "live-1"]);
+    expect(result[0]?.messages.map((m) => m.id)).toEqual(["ffac29ab"]);
+    expect(result[0]?.messages[0]?.text).toBe("Planning precise feature implementation");
     expect(result[1]?.messages).toEqual([]);
     expect(result[2]?.messages).toEqual(SESSION.messages);
     expect(result[3]?.messages).toEqual(SESSION.messages);
+  });
+
+  it("retains active streaming live tail entries not represented by canonical IDs", () => {
+    const fallbackCompleted = makeMsg("extension-message-1", "earlier turn", false);
+    const fallbackStreaming = makeMsg("extension-message-2", "streaming in progress", true);
+    const target = {
+      ...SESSION,
+      id: "target",
+      source: "extension" as const,
+      messages: [fallbackCompleted, fallbackStreaming],
+    };
+
+    const result = applyTranscriptToSessions(
+      [target],
+      makePage("target", [makeMsg("ffac29ab", "earlier turn", false)]),
+    );
+    expect(result[0]?.messages.map((m) => m.id)).toEqual(["ffac29ab", "extension-message-2"]);
+    expect(result[0]?.messages[1]?.streaming).toBe(true);
+    expect(result[0]?.messages[1]?.text).toBe("streaming in progress");
+  });
+
+  it("updates distinct streaming fallback in place on subsequent upsert without duplication", () => {
+    const fallbackStreaming = makeMsg("extension-message-2", "streaming in progress", true);
+    const target = {
+      ...SESSION,
+      id: "target",
+      source: "extension" as const,
+      messages: [fallbackStreaming],
+    };
+
+    const hydrated = applyTranscriptToSessions(
+      [target],
+      makePage("target", [makeMsg("ffac29ab", "earlier turn", false)]),
+    );
+    expect(hydrated[0]?.messages.map((m) => m.id)).toEqual(["ffac29ab", "extension-message-2"]);
+
+    const updated = upsertTranscriptMessage(
+      hydrated,
+      "target",
+      makeMsg("extension-message-2", "streaming complete", false),
+    );
+    expect(updated[0]?.messages.map((m) => m.id)).toEqual(["ffac29ab", "extension-message-2"]);
+    expect(updated[0]?.messages[1]?.text).toBe("streaming complete");
+    expect(updated[0]?.messages[1]?.streaming).toBe(false);
+  });
+});
+describe("cleanupSessionHistory", () => {
+  it("removes provenance-tracked HTTP messages on session switch while retaining completed live tail with fewer than 50 messages", () => {
+    const httpMsg = makeMsg("mA-http", "canonical text", false);
+    const liveMsg = makeMsg("mA-live", "completed live turn", false);
+    const provenance: TranscriptProvenance = new WeakSet([httpMsg]);
+    const session = { ...SESSION, id: "sA", messages: [httpMsg, liveMsg] };
+
+    const result = cleanupSessionHistory([session], "sA", provenance);
+    expect(result[0]?.messages.map((m) => m.id)).toEqual(["mA-live"]);
   });
 });
 
@@ -1177,7 +1236,7 @@ describe("session client transcript pagination", () => {
     sessions = evalSetter(historySetter, -1, sessions);
 
     sessions = upsertTranscriptMessage(sessions, "s1", makeMsg("m1", "live text"));
-    sessions = upsertTranscriptMessage(sessions, "s1", makeMsg("m-live"));
+    sessions = upsertTranscriptMessage(sessions, "s1", makeMsg("m-live", "m-live", true));
 
     const pReloadInv = client.reloadTranscript();
     respond("/api/sessions/s1/transcript", makePage("s1", [], "invalidated", null));
@@ -1197,7 +1256,88 @@ describe("session client transcript pagination", () => {
     respond("/api/sessions/s1/transcript", makePage("s1", [makeMsg("m2-fresh")], "available", "c2"));
     await pFresh;
     sessions = evalSetter(historySetter, -1, sessions);
-    expect(sessions[0]?.messages.map((m) => m.id)).toEqual(["m2-fresh", "m1", "m-live"]);
+    expect(sessions[0]?.messages.map((m) => m.id)).toEqual(["m2-fresh", "m-live"]);
+  });
+
+  it("preserves a same-ID WebSocket completion that wins an unavailable transcript race", async () => {
+    const client = useSessionClient();
+    const liveSetter = hookHarness.stateSetters[0];
+    const stale = makeMsg("m1", "partial", true);
+    const request = client.loadTranscript("s1");
+    const initial: Session[] = [{ ...SESSION, id: "s1", source: "extension", messages: [stale] }];
+    evalSetter<Session[]>(liveSetter, -1, initial);
+
+    respond("/api/sessions/s1/transcript", makePage("s1", [stale], "unavailable", null));
+    await request;
+
+    const completed = makeMsg("m1", "complete", false);
+    const sessions = evalSetter<Session[]>(
+      liveSetter,
+      -1,
+      initial.map((session) => ({ ...session, messages: [completed] })),
+    );
+
+    expect(sessions[0]?.messages).toEqual([completed]);
+  });
+
+  it("accepts a fresher unavailable transcript over a same-ID message stale before the request", async () => {
+    const client = useSessionClient();
+    const liveSetter = hookHarness.stateSetters[0];
+    const stale = makeMsg("m1", "partial", true);
+    const initial: Session[] = [{ ...SESSION, id: "s1", source: "extension", messages: [stale] }];
+    const request = client.loadTranscript("s1");
+    evalSetter<Session[]>(liveSetter, -1, initial);
+
+    const completed = makeMsg("m1", "complete", false);
+    respond("/api/sessions/s1/transcript", makePage("s1", [completed], "unavailable", null));
+    await request;
+    const sessions = evalSetter<Session[]>(liveSetter, -1, initial);
+
+    expect(sessions[0]?.messages).toEqual([completed]);
+  });
+
+  it("keeps a completed unavailable transcript over a later partial WebSocket update", async () => {
+    const client = useSessionClient();
+    const liveSetter = hookHarness.stateSetters[0];
+    const initial: Session[] = [{ ...SESSION, id: "s1", source: "extension", messages: [] }];
+    const request = client.loadTranscript("s1");
+    evalSetter<Session[]>(liveSetter, -1, initial);
+
+    const completed = makeMsg("m1", "complete", false);
+    respond("/api/sessions/s1/transcript", makePage("s1", [completed], "unavailable", null));
+    await request;
+    const partial = makeMsg("m1", "partial", true);
+    const sessions = evalSetter<Session[]>(
+      liveSetter,
+      -1,
+      initial.map((session) => ({ ...session, messages: [partial] })),
+    );
+
+    expect(sessions[0]?.messages).toEqual([completed]);
+  });
+
+  it("cleans up hydrated HTTP history on session switch while retaining completed live tail with fewer than 50 messages", async () => {
+    const client = useSessionClient();
+    const historySetter = hookHarness.stateSetters[3];
+    const pA = client.loadTranscript("sA");
+    const httpA = makeMsg("mA-http");
+    respond("/api/sessions/sA/transcript", makePage("sA", [httpA]));
+    await pA;
+
+    const liveA = makeMsg("mA-live", "completed live message", false);
+    let sessions: Session[] = evalSetter<Session[]>(historySetter, -1, [
+      { ...SESSION, id: "sA", source: "extension", messages: [] },
+      { ...SESSION, id: "sB", source: "history", messages: [] },
+    ]);
+    sessions = sessions.map((s) => (s.id === "sA" ? { ...s, messages: [...s.messages, liveA] } : s));
+
+    const pB = client.loadTranscript("sB");
+    sessions = evalSetter(historySetter, -1, sessions);
+    const sA = sessions.find((s) => s.id === "sA");
+    expect(sA?.messages.map((m) => m.id)).toEqual(["mA-live"]);
+
+    respond("/api/sessions/sB/transcript", makePage("sB", [makeMsg("mB1")]));
+    await pB;
   });
 
   it("bounds nonselected live session retention to TRANSCRIPT_PAGE_SIZE and cleans up HTTP history on session switch", async () => {

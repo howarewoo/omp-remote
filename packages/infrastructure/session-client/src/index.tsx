@@ -237,7 +237,7 @@ export function useSessionClient(): SessionClient {
   const transcriptAbortRef = useRef<AbortController | null>(null);
   const transcriptRequestRef = useRef(0);
   const transcriptCursorRef = useRef<string | null>(null);
-  const transcriptProvenanceRef = useRef<WeakSet<Session["messages"][number]>>(new WeakSet());
+  const transcriptProvenanceRef = useRef<TranscriptProvenance>(new WeakSet());
   const transcriptLastRequestRef = useRef<"initial" | "older" | null>(null);
   const detailsAbortRef = useRef<AbortController | null>(null);
   const costAbortRef = useRef<AbortController | null>(null);
@@ -611,7 +611,14 @@ export function useSessionClient(): SessionClient {
       const abortController = new AbortController();
       transcriptAbortRef.current = abortController;
       transcriptLastRequestRef.current = kind;
-      const previousProvenance = transcriptProvenanceRef.current;
+      const liveMessagesAtRequestStart: TranscriptProvenance = new WeakSet();
+      if (kind === "initial") {
+        setLiveSessions((current) => {
+          const session = current.find((candidate) => candidate.id === sessionId);
+          for (const message of session?.messages ?? []) liveMessagesAtRequestStart.add(message);
+          return current;
+        });
+      }
       updateTranscriptHistory((current) => ({
         sessionId,
         initialLoading: kind === "initial",
@@ -632,18 +639,28 @@ export function useSessionClient(): SessionClient {
         });
         if (transcript.status !== "invalidated") {
           if (kind === "initial") {
-            const nextProvenance = new WeakSet<Session["messages"][number]>();
+            const nextProvenance: TranscriptProvenance = new WeakSet();
             for (const m of transcript.messages) nextProvenance.add(m);
             transcriptProvenanceRef.current = nextProvenance;
           } else {
             for (const m of transcript.messages) transcriptProvenanceRef.current.add(m);
           }
-          const update =
-            kind === "initial"
-              ? (s: Session[]) => applyTranscriptToSessions(s, transcript, previousProvenance)
-              : (s: Session[]) => prependTranscriptToSessions(s, transcript);
-          setHistorySessions(update);
-          setLiveSessions(update);
+          if (kind === "initial") {
+            setHistorySessions((sessions) => applyTranscriptToSessions(sessions, transcript));
+            setLiveSessions((sessions) =>
+              applyTranscriptToSessions(
+                sessions,
+                transcript,
+                transcript.status === "unavailable"
+                  ? (message) => !liveMessagesAtRequestStart.has(message)
+                  : undefined,
+              ),
+            );
+          } else {
+            const prepend = (sessions: Session[]) => prependTranscriptToSessions(sessions, transcript);
+            setHistorySessions(prepend);
+            setLiveSessions(prepend);
+          }
         }
       } catch (error) {
         if (abortController.signal.aborted || requestNumber !== transcriptRequestRef.current) return;
@@ -1281,7 +1298,12 @@ export function cleanupSessionHistory(
 ): Session[] {
   return sessions.map((s) =>
     s.id === sessionId
-      ? { ...s, messages: s.messages.filter((m) => !provenance.has(m)).slice(-TRANSCRIPT_PAGE_SIZE) }
+      ? {
+          ...s,
+          messages: (provenance ? s.messages.filter((m) => !provenance.has(m)) : s.messages).slice(
+            -TRANSCRIPT_PAGE_SIZE,
+          ),
+        }
       : s,
   );
 }
@@ -1289,12 +1311,31 @@ export function cleanupSessionHistory(
 export function applyTranscriptToSessions(
   sessions: Session[],
   transcript: SessionTranscriptResponse,
-  provenance?: TranscriptProvenance,
+  preserveUnavailableMessage?: (message: Session["messages"][number]) => boolean,
 ): Session[] {
+  const canonicalIds = new Set(transcript.messages.map((m) => m.id));
   return sessions.map((session) => {
     if (session.id === transcript.sessionId) {
-      const liveTail = provenance ? session.messages.filter((m) => !provenance.has(m)) : session.messages;
-      return { ...session, messages: mergeTranscriptMessages(transcript.messages, liveTail) };
+      if (transcript.status === "unavailable" && preserveUnavailableMessage) {
+        const currentById = new Map(session.messages.map((message) => [message.id, message]));
+        const messages = transcript.messages.map((serverMessage) => {
+          const currentMessage = currentById.get(serverMessage.id);
+          if (!currentMessage) return serverMessage;
+          if (currentMessage.streaming === true && serverMessage.streaming !== true) return serverMessage;
+          if (currentMessage.streaming !== true && serverMessage.streaming === true) return currentMessage;
+          return preserveUnavailableMessage(currentMessage) ? currentMessage : serverMessage;
+        });
+        for (const currentMessage of session.messages) {
+          if (!canonicalIds.has(currentMessage.id) && preserveUnavailableMessage(currentMessage)) {
+            messages.push(currentMessage);
+          }
+        }
+        return { ...session, messages };
+      }
+      const activeStreamingTail = session.messages.filter(
+        (m) => m.streaming === true && !canonicalIds.has(m.id),
+      );
+      return { ...session, messages: [...transcript.messages, ...activeStreamingTail] };
     }
     return session.source === "history" && session.parentSessionId == null && session.messages.length > 0
       ? { ...session, messages: [] }
