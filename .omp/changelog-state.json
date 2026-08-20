@@ -1,7 +1,7 @@
 {
-  "lastCheckedVersion": "17.3.4",
-  "lastCheckedAt": "2026-08-15T16:54:58.561Z",
-  "baseSupportedVersion": "17.1.8",
+  "lastCheckedVersion": "17.4.0",
+  "lastCheckedAt": "2026-08-20T16:42:55.106Z",
+  "baseSupportedVersion": "17.3.4",
   "history": [
     {
       "checkedAt": "2026-08-15T12:00:00.000Z",
@@ -44,6 +44,13 @@
       "toVersion": "17.3.4",
       "releaseCount": 21,
       "breakingChangeCount": 16
+    },
+    {
+      "checkedAt": "2026-08-20T16:42:55.106Z",
+      "fromVersion": "17.3.4",
+      "toVersion": "17.4.0",
+      "releaseCount": 4,
+      "breakingChangeCount": 2
     }
   ]
 }
