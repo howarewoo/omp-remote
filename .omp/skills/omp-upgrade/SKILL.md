@@ -114,7 +114,7 @@ The repository tracks when the changelog was last checked and the version checkp
 
 ### Multi-Version Workflow
 1. **Incremental audits**: Running `pnpm run check:omp` automatically starts from `lastCheckedVersion` (or the catalog version on initial run) and evaluates newly published releases up to the latest installed CLI or GitHub tag.
-2. **Checkpoint saving**: Each run updates `lastCheckedVersion`, `lastCheckedAt`, and records a history entry into `.omp/changelog-state.json` (use `--no-save` for read-only / dry-run checks).
+2. **Checkpoint saving**: Audit-only runs update `lastCheckedVersion`, `lastCheckedAt`, and append history to `.omp/changelog-state.json` (use `--no-save` for read-only checks). Automated PR runs defer this mutation until dependency locking and every verification gate passes.
 3. **Full re-audits**: Use `--from-catalog` or `--from <version>` to audit all versions since the repository's base supported version rather than the incremental checkpoint.
 
 ---
@@ -136,13 +136,15 @@ node scripts/check-omp-changelog.mjs --to 17.3.4 --create-pr
 
 ### What Automated Upgrade Performs:
 1. **Audits Releases & Breaking Changes**: Fetches releases from GitHub and evaluates subsystem disruptions.
-2. **Updates Workspace Files**:
+2. **Updates and Locks Workspace Files**:
    - Updates `@oh-my-pi/pi-coding-agent` under `catalog:` in `pnpm-workspace.yaml`.
    - Updates `@oh-my-pi/*` entries in `minimumReleaseAgeExclude` in `pnpm-workspace.yaml`.
    - Updates `README.md` Stack table OMP integration version.
-3. **Records Checkpoint State**: Updates `.omp/changelog-state.json` with target version, timestamp, and audit summary.
-4. **Creates Task Branch**: Creates `upgrade-omp-to-v<version>` branch via Graphite (`gt create`) or Git (`git checkout -b`).
-5. **Submits Pull Request**: Submits PR via Graphite (`gt submit`) or GitHub CLI (`gh pr create`) with a structured Goal, Summary, Breaking Changes Addressed, Affected Subsystems, and Test Plan.
+   - Runs `pnpm install --lockfile-only` and includes `pnpm-lock.yaml` in the upgrade commit.
+3. **Runs Verification Before Delivery**: Runs the complete verification pipeline below before checkpointing, branching, committing, or submitting a PR. Any failed command aborts delivery and must remain visible; never claim a skipped or failed command passed.
+4. **Records Checkpoint State**: Only after every verification command passes, updates `.omp/changelog-state.json` with the target version, timestamp, and audit summary.
+5. **Creates Task Branch**: Creates `upgrade-omp-to-v<version>` via Graphite (`gt create`) or Git (`git checkout -b`).
+6. **Submits Pull Request**: Submits via Graphite (`gt submit`) or GitHub CLI (`gh pr create`). The Test Plan is generated only from observed verification results. Dry-run metadata labels commands as pending and never claims execution.
 
 ---
 
@@ -220,6 +222,7 @@ Review the audit report against each `omp-remote` subsystem:
   - `catalog:`: `@oh-my-pi/pi-coding-agent: <new-version>`
   - `minimumReleaseAgeExclude:`: Update `@oh-my-pi/*@<version>` entries.
 - Update `README.md` Stack table row for `OMP integration`.
+- Regenerate `pnpm-lock.yaml` with `pnpm install --lockfile-only`.
 
 ### Step 4: Verification Pipeline
 
@@ -238,6 +241,7 @@ pnpm run lint:lines
 pnpm test
 
 # 4. Verify extension bundling and user installation test
+pnpm --filter @omp-remote/omp-extension build
 pnpm --filter @omp-remote/omp-extension test
 ```
 

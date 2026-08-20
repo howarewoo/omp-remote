@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -13,13 +13,15 @@ import {
   detectSupportedVersion,
   executeUpgradeAndCreatePr,
   formatMarkdownReport,
-  getDefaultStatePath,
   generatePrBranchName,
   generatePrMetadata,
+  getDefaultStatePath,
   loadChangelogState,
   parseReleaseBody,
   parseSemver,
+  runUpgradeVerification,
   saveChangelogState,
+  UPGRADE_VERIFICATION_COMMANDS,
   updateChangelogState,
   updateReadmeContent,
   updateWorkspaceYamlContent,
@@ -27,6 +29,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const checkerPath = fileURLToPath(new URL("./check-omp-changelog.mjs", import.meta.url));
+const formatTestCommand = (command, args) => [command, ...args].join(" ");
 
 test("parseSemver handles version strings with prefixes and pre-releases", () => {
   assert.deepEqual(parseSemver("17.1.8"), {
@@ -226,12 +229,16 @@ test("generatePrMetadata builds structured title and body", () => {
     },
   };
 
-  const { title, body } = generatePrMetadata(report);
+  const verification = [{ command: "pnpm test", status: "passed" }];
+  const { title, body } = generatePrMetadata(report, { verification, checkpointSaved: true });
   assert.equal(title, "feat(omp): upgrade OMP integration to v17.3.4");
   assert.ok(body.includes("## Goal"));
   assert.ok(body.includes("Upgrade OMP integration from `17.1.8` to `17.3.4`"));
+  assert.ok(body.includes("Regenerated `pnpm-lock.yaml`"));
   assert.ok(body.includes("Removed DEL and COPY operations."));
   assert.ok(body.includes("omp-extension"));
+  assert.ok(body.includes("`pnpm test` — passed"));
+  assert.ok(body.includes("Recorded audit checkpoint"));
   assert.ok(body.includes("## Test plan"));
 });
 
@@ -249,6 +256,74 @@ test("executeUpgradeAndCreatePr preview works with dryRun", async () => {
   assert.equal(result.branchName, "upgrade-omp-to-v17-3-4");
   assert.ok(result.title.includes("v17.3.4"));
   assert.ok(result.body.includes("Upgrade OMP integration"));
+  assert.ok(result.body.includes("pending dry run"));
+  assert.ok(!result.body.includes("— passed"));
+  assert.ok(result.body.includes("Audit checkpoint remains unchanged"));
+});
+
+test("runUpgradeVerification stops on the first failed gate", async () => {
+  const calls = [];
+  await assert.rejects(
+    runUpgradeVerification("/workspace", async (command, args) => {
+      calls.push([command, args]);
+      if (args.includes("format:check")) throw new Error("format failed");
+    }),
+    /format failed/,
+  );
+  assert.deepEqual(calls, UPGRADE_VERIFICATION_COMMANDS.slice(0, 2));
+});
+
+test("executeUpgradeAndCreatePr locks, verifies, checkpoints, then submits", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "omp-upgrade-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(
+    join(directory, "pnpm-workspace.yaml"),
+    "catalog:\n  '@oh-my-pi/pi-coding-agent': 17.1.8\nminimumReleaseAgeExclude:\n  - '@oh-my-pi/hashline@17.1.8'\n",
+  );
+  await writeFile(
+    join(directory, "README.md"),
+    "| OMP integration | OMP SDK + RPC | `17.1.8` | Native lifecycle events |\n",
+  );
+
+  const calls = [];
+  const runCommand = async (command, args) => {
+    calls.push(formatTestCommand(command, args));
+    if (command === "gt" && args[0] === "submit") {
+      return { stdout: "https://app.graphite.com/github/pr/example/123\n" };
+    }
+    return { stdout: "" };
+  };
+  const report = {
+    fromVersion: "17.1.8",
+    toVersion: "17.3.4",
+    releaseCount: 1,
+    breakingChanges: [],
+    summary: { breakingChangeCount: 0, affectedComponents: [] },
+  };
+
+  const result = await executeUpgradeAndCreatePr(directory, report, {
+    runCommand,
+    saveCheckpoint: async () => {
+      calls.push("save checkpoint");
+      return true;
+    },
+  });
+
+  assert.deepEqual(calls.slice(0, 1), ["pnpm install --lockfile-only"]);
+  assert.deepEqual(
+    calls.slice(1, 1 + UPGRADE_VERIFICATION_COMMANDS.length),
+    UPGRADE_VERIFICATION_COMMANDS.map(([command, args]) => formatTestCommand(command, args)),
+  );
+  assert.equal(calls[1 + UPGRADE_VERIFICATION_COMMANDS.length], "save checkpoint");
+  assert.equal(
+    calls[2 + UPGRADE_VERIFICATION_COMMANDS.length],
+    "gt create --no-interactive -m feat(omp): upgrade OMP integration to v17.3.4",
+  );
+  assert.equal(result.verification.length, UPGRADE_VERIFICATION_COMMANDS.length);
+  assert.ok(result.body.includes("Recorded audit checkpoint"));
+  assert.ok(result.body.includes("pnpm run format:check` — passed"));
+  assert.match(await readFile(join(directory, "pnpm-workspace.yaml"), "utf8"), /17\.3\.4/);
+  assert.match(await readFile(join(directory, "README.md"), "utf8"), /17\.3\.4/);
 });
 
 test("parseReleaseBody parses packages and sections correctly", () => {
