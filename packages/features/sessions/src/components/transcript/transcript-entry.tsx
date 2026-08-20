@@ -74,6 +74,7 @@ export const TOOL_NAME_COLOR_CLASS: Record<string, string> = {
 };
 
 const TOOL_TITLE_LABEL: Record<string, string> = {
+  ask: "Ask",
   edit: "Edit",
   grep: "Grep",
   read: "Read",

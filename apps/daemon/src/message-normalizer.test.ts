@@ -363,6 +363,18 @@ describe("normalizeRawMessage", () => {
       expected: "Write: packages/features/sessions/src/components/dashboard.tsx",
     },
     {
+      toolName: "ask",
+      arguments: {
+        questions: [
+          { id: "target", question: "Which deployment target?", options: [{ label: "Preview" }] },
+          { id: "region", question: "Which region?", options: [{ label: "iad1" }] },
+        ],
+      },
+      details: {},
+      content: "Preview, iad1",
+      expected: "Ask: Which deployment target? +1 more",
+    },
+    {
       toolName: "edit",
       arguments: {
         input:

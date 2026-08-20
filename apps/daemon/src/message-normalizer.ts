@@ -314,6 +314,11 @@ function formatToolTitle(
   details: unknown,
   canonicalDiff: string | undefined,
 ): string | undefined {
+  if (toolName === "ask") {
+    const questions = extractAskQuestions(args?.questions);
+    if (questions.length === 0) return undefined;
+    return `Ask: ${questions[0]}${questions.length > 1 ? ` +${questions.length - 1} more` : ""}`;
+  }
   if (toolName === "bash") {
     const command = normalizeHeaderValue(args?.command);
     return command ? `Bash: ${command}` : undefined;
@@ -384,6 +389,15 @@ function formatToolTitle(
     return `IRC ➤ ${target}${receipt ? ` ${receipt.outcome}` : ""}`;
   }
   return undefined;
+}
+
+function extractAskQuestions(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return [];
+    const question = normalizeHeaderValue((candidate as Record<string, unknown>).question);
+    return question ? [question] : [];
+  });
 }
 
 function extractEditPaths(value: unknown): string[] {
