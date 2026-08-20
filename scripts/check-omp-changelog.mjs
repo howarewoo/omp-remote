@@ -470,14 +470,41 @@ export function generatePrBranchName(toVersion) {
   return `upgrade-omp-to-v${sanitized}`;
 }
 
-export function generatePrMetadata(report) {
+export const UPGRADE_VERIFICATION_COMMANDS = [
+  ["pnpm", ["run", "typecheck"]],
+  ["pnpm", ["run", "format:check"]],
+  ["pnpm", ["run", "lint"]],
+  ["pnpm", ["run", "lint:lines"]],
+  ["pnpm", ["test"]],
+  ["pnpm", ["--filter", "@omp-remote/omp-extension", "build"]],
+  ["pnpm", ["--filter", "@omp-remote/omp-extension", "test"]],
+];
+
+function formatCommand(command, args) {
+  return [command, ...args].join(" ");
+}
+
+export async function runUpgradeVerification(workspaceRoot, runCommand = execFileAsync) {
+  const results = [];
+  for (const [command, args] of UPGRADE_VERIFICATION_COMMANDS) {
+    await runCommand(command, args, { cwd: workspaceRoot });
+    results.push({ command: formatCommand(command, args), status: "passed" });
+  }
+  return results;
+}
+
+export function generatePrMetadata(report, options = {}) {
+  const { verification = [], dryRun = false, checkpointSaved = false } = options;
   const title = `feat(omp): upgrade OMP integration to v${report.toVersion}`;
 
   const summaryItems = [
     `- Updated \`@oh-my-pi/pi-coding-agent\` catalog dependency and \`minimumReleaseAgeExclude\` to \`v${report.toVersion}\` in \`pnpm-workspace.yaml\`.`,
+    `- Regenerated \`pnpm-lock.yaml\` for OMP \`v${report.toVersion}\`.`,
     `- Updated \`README.md\` Stack table OMP integration version to \`v${report.toVersion}\`.`,
     `- Evaluated ${report.releaseCount} releases and ${report.summary.breakingChangeCount} breaking changes from \`v${report.fromVersion}\` to \`v${report.toVersion}\`.`,
-    `- Recorded audit checkpoint to \`.omp/changelog-state.json\`.`,
+    checkpointSaved
+      ? "- Recorded audit checkpoint to `.omp/changelog-state.json`."
+      : "- Audit checkpoint remains unchanged.",
   ];
 
   const breakingBullets =
@@ -491,6 +518,15 @@ export function generatePrMetadata(report) {
     report.summary.affectedComponents.length > 0
       ? report.summary.affectedComponents.map((comp) => `- **${comp}**`).join("\n")
       : "- No subsystem disruptions identified.";
+
+  const verificationBullets =
+    verification.length > 0
+      ? verification.map((result) => `- \`${result.command}\` — ${result.status}`).join("\n")
+      : dryRun
+        ? UPGRADE_VERIFICATION_COMMANDS.map(
+            ([command, args]) => `- \`${formatCommand(command, args)}\` — pending dry run`,
+          ).join("\n")
+        : "- No verification results recorded.";
 
   const body = `## Goal
 Upgrade OMP integration from \`${report.fromVersion}\` to \`${report.toVersion}\` and ensure compatibility across all omp-remote subsystems.
@@ -506,77 +542,73 @@ ${affectedSubsystems}
 
 ## Test plan
 ### Automated
-- \`node --test scripts/check-omp-changelog.test.mjs\` — passed
-- \`pnpm --filter @omp-remote/omp-extension test\` — passed
-- \`pnpm run typecheck\` — passed
-- \`pnpm test\` — passed
-
-### Manual
-- Verified extension build and RPC protocol readiness for OMP \`v${report.toVersion}\`.
+${verificationBullets}
 `;
 
   return { title, body };
 }
 
 export async function executeUpgradeAndCreatePr(workspaceRoot, report, options = {}) {
-  const { dryRun = false } = options;
+  const { dryRun = false, runCommand = execFileAsync, saveCheckpoint = async () => false } = options;
   const branchName = generatePrBranchName(report.toVersion);
-  const { title, body } = generatePrMetadata(report);
 
   if (dryRun) {
+    const { title, body } = generatePrMetadata(report, { dryRun: true });
     return {
       dryRun: true,
       branchName,
       title,
       body,
+      verification: [],
     };
   }
 
-  // 1. Apply file updates to pnpm-workspace.yaml and README.md
   await applyWorkspaceVersionUpdates(workspaceRoot, report.toVersion);
+  await runCommand("pnpm", ["install", "--lockfile-only"], { cwd: workspaceRoot });
+  const verification = await runUpgradeVerification(workspaceRoot, runCommand);
+  const checkpointSaved = await saveCheckpoint();
+  const { title, body } = generatePrMetadata(report, { verification, checkpointSaved });
 
-  // 2. Try Graphite or Git branch creation
   let createdWithGraphite = false;
   try {
-    await execFileAsync("gt", ["create", "--no-interactive", "-m", title], { cwd: workspaceRoot });
+    await runCommand("gt", ["create", "--no-interactive", "-m", title], { cwd: workspaceRoot });
     createdWithGraphite = true;
   } catch {
-    // Fall back to git branch
     try {
-      await execFileAsync("git", ["checkout", "-b", branchName], { cwd: workspaceRoot });
+      await runCommand("git", ["checkout", "-b", branchName], { cwd: workspaceRoot });
     } catch {
-      // Branch might already exist
+      // Branch might already exist.
     }
   }
 
-  // 3. Stage and commit changes if git fallback
   if (!createdWithGraphite) {
-    await execFileAsync("git", ["add", "pnpm-workspace.yaml", "README.md", ".omp/changelog-state.json"], {
-      cwd: workspaceRoot,
-    });
-    await execFileAsync("git", ["commit", "-m", title], { cwd: workspaceRoot });
+    await runCommand(
+      "git",
+      ["add", "pnpm-workspace.yaml", "pnpm-lock.yaml", "README.md", ".omp/changelog-state.json"],
+      { cwd: workspaceRoot },
+    );
+    await runCommand("git", ["commit", "-m", title], { cwd: workspaceRoot });
   }
 
-  // 4. Submit via Graphite or GitHub CLI
   let prUrl = null;
   if (createdWithGraphite) {
     try {
-      const { stdout } = await execFileAsync("gt", ["submit", "--no-interactive", "--no-edit", "--publish"], {
+      const { stdout } = await runCommand("gt", ["submit", "--no-interactive", "--no-edit", "--publish"], {
         cwd: workspaceRoot,
       });
       const prMatch = /https:\/\/app\.graphite\.com\/github\/pr\/[^\s]+/i.exec(stdout);
       prUrl = prMatch?.[0] || null;
     } catch {
-      // Ignore submit failure in non-interactive / local test runs
+      // Ignore submit failure in non-interactive / local test runs.
     }
   } else {
     try {
-      const { stdout } = await execFileAsync("gh", ["pr", "create", "--title", title, "--body", body], {
+      const { stdout } = await runCommand("gh", ["pr", "create", "--title", title, "--body", body], {
         cwd: workspaceRoot,
       });
       prUrl = stdout.trim();
     } catch {
-      // Fall back if gh is not authenticated
+      // Fall back if gh is not authenticated.
     }
   }
 
@@ -586,6 +618,7 @@ export async function executeUpgradeAndCreatePr(workspaceRoot, report, options =
     body,
     prUrl,
     createdWithGraphite,
+    verification,
   };
 }
 
@@ -669,34 +702,40 @@ Options:
     const resolvedTo =
       toVersion || (releases.length > 0 ? releases[releases.length - 1].version : fromVersion);
 
-    let stateSaved = false;
-    if (shouldSaveState && !dryRun) {
-      const updatedState = updateChangelogState(changelogState, {
-        fromVersion,
-        toVersion: resolvedTo,
-        baseSupportedVersion: catalogVersion,
-        report: {
-          releaseCount: releases.length,
-          summary: {
-            breakingChangeCount: releases.flatMap((r) => r.breakingChanges).length,
+    const nextState = shouldSaveState
+      ? updateChangelogState(changelogState, {
+          fromVersion,
+          toVersion: resolvedTo,
+          baseSupportedVersion: catalogVersion,
+          report: {
+            releaseCount: releases.length,
+            summary: {
+              breakingChangeCount: releases.flatMap((release) => release.breakingChanges).length,
+            },
           },
-        },
-      });
-      await saveChangelogState(resolvedStatePath, updatedState);
-      stateSaved = true;
-    }
-
-    const report = buildAuditReport(fromVersion, resolvedTo, releases, {
+        })
+      : null;
+    const reportOptions = {
       baseSupportedVersion: catalogVersion,
       lastCheckedVersion: changelogState.lastCheckedVersion,
       lastCheckedAt: changelogState.lastCheckedAt,
       statePath: resolvedStatePath,
-      stateSaved,
-    });
+    };
 
     if (createPr) {
+      const report = buildAuditReport(fromVersion, resolvedTo, releases, {
+        ...reportOptions,
+        stateSaved: false,
+      });
       console.log(`\n🚀 Preparing Automated Upgrade & PR for OMP v${resolvedTo}...\n`);
-      const prResult = await executeUpgradeAndCreatePr(workspaceRoot, report, { dryRun });
+      const prResult = await executeUpgradeAndCreatePr(workspaceRoot, report, {
+        dryRun,
+        saveCheckpoint: async () => {
+          if (!nextState) return false;
+          await saveChangelogState(resolvedStatePath, nextState);
+          return true;
+        },
+      });
       if (dryRun) {
         console.log(`[DRY RUN] Would create branch: ${prResult.branchName}`);
         console.log(`[DRY RUN] PR Title: ${prResult.title}`);
@@ -710,6 +749,16 @@ Options:
       }
       return;
     }
+
+    let stateSaved = false;
+    if (nextState && !dryRun) {
+      await saveChangelogState(resolvedStatePath, nextState);
+      stateSaved = true;
+    }
+    const report = buildAuditReport(fromVersion, resolvedTo, releases, {
+      ...reportOptions,
+      stateSaved,
+    });
 
     if (jsonOutput) {
       console.log(JSON.stringify(report, null, 2));
