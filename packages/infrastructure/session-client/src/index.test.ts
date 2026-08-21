@@ -34,6 +34,7 @@ import {
   removeAskRequest,
   resolvePendingCommand,
   sendBrowserCommand,
+  SESSION_COMMAND_TIMEOUT_MS,
   snapshotSessionsWithCurrentMessages,
   type TranscriptHistoryState,
   type TranscriptProvenance,
@@ -401,6 +402,107 @@ describe("sendBrowserCommand", () => {
       expect(pendingCommands.size).toBe(0);
 
       // Advance timers past 20s to ensure timeout callback does not fire
+      await vi.advanceTimersByTimeAsync(30_000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    {
+      name: "prompt",
+      frame: {
+        type: "session_command" as const,
+        requestId: "req-prompt",
+        sessionId: "session-1",
+        command: "prompt" as const,
+        text: "execute step",
+      },
+    },
+    {
+      name: "steer",
+      frame: {
+        type: "session_command" as const,
+        requestId: "req-steer",
+        sessionId: "session-1",
+        command: "steer" as const,
+        text: "execute step",
+      },
+    },
+    {
+      name: "abort",
+      frame: {
+        type: "session_command" as const,
+        requestId: "req-abort",
+        sessionId: "session-1",
+        command: "abort" as const,
+      },
+    },
+    {
+      name: "kill",
+      frame: {
+        type: "session_command" as const,
+        requestId: "req-kill",
+        sessionId: "session-1",
+        command: "kill" as const,
+      },
+    },
+  ])("clears pending $name session command on 20-second timeout", async ({ frame }) => {
+    vi.useFakeTimers();
+    try {
+      const socket = {
+        readyState: WebSocket.OPEN,
+        send: vi.fn(),
+      } as unknown as WebSocket;
+      const pendingCommands = new Map();
+
+      const result = sendBrowserCommand(socket, pendingCommands, frame, SESSION_COMMAND_TIMEOUT_MS);
+      const rejection = expect(result).rejects.toThrow(
+        "The host did not respond before the command timed out",
+      );
+
+      expect(socket.send).toHaveBeenCalledWith(JSON.stringify(frame));
+      expect(pendingCommands.size).toBe(1);
+      await vi.advanceTimersByTimeAsync(SESSION_COMMAND_TIMEOUT_MS);
+      await rejection;
+      expect(pendingCommands.size).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels session command timeout on correlated success", async () => {
+    vi.useFakeTimers();
+    try {
+      const socket = {
+        readyState: WebSocket.OPEN,
+        send: vi.fn(),
+      } as unknown as WebSocket;
+      const pendingCommands = new Map();
+      const frame = {
+        type: "session_command" as const,
+        requestId: "req-prompt-success",
+        sessionId: "session-1",
+        command: "prompt" as const,
+        text: "do work",
+      };
+
+      const result = sendBrowserCommand(socket, pendingCommands, frame, SESSION_COMMAND_TIMEOUT_MS);
+      expect(pendingCommands.size).toBe(1);
+
+      const resolved = resolvePendingCommand(pendingCommands, {
+        type: "command_result",
+        requestId: "req-prompt-success",
+        outcome: {
+          status: "ok",
+          value: { type: "void" },
+        },
+      });
+
+      expect(resolved).toBe(true);
+      await expect(result).resolves.toEqual({ type: "void" });
+      expect(pendingCommands.size).toBe(0);
+
       await vi.advanceTimersByTimeAsync(30_000);
     } finally {
       vi.useRealTimers();

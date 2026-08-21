@@ -8,7 +8,8 @@ import {
 } from "@omp-remote/protocol";
 import type { SessionRegistry } from "@omp-remote/sessions/services";
 import type { FastifyInstance } from "fastify";
-import type { WebSocket } from "ws";
+import { WebSocket } from "ws";
+import type { ForwardedExtensionCommand } from "./browser-websocket.js";
 import { createRegistrationGenerationQueue, registerDeferredSession } from "./catalog-reconciliation.js";
 import {
   type AskInactivityTimeout,
@@ -24,7 +25,29 @@ type PendingAsk = {
   timeout: AskInactivityTimeout | undefined;
 };
 
+export function settleDisplacedExtensionCommands(
+  socket: WebSocket,
+  forwardedExtensionCommands: Map<string, ForwardedExtensionCommand>,
+  sendToBrowser: (socket: WebSocket, frame: ServerFrame) => void,
+  errorMessage = "This OMP session is no longer connected.",
+): void {
+  for (const [requestId, entry] of forwardedExtensionCommands.entries()) {
+    if (entry.extensionSocket === socket) {
+      clearTimeout(entry.timeoutId);
+      forwardedExtensionCommands.delete(requestId);
+      if (entry.browserSocket.readyState === WebSocket.OPEN) {
+        sendToBrowser(entry.browserSocket, {
+          type: "command_result",
+          requestId: entry.requestId,
+          outcome: { status: "error", error: errorMessage },
+        });
+      }
+    }
+  }
+}
+
 type ExtensionWebSocketDependencies = {
+  forwardedExtensionCommands?: Map<string, ForwardedExtensionCommand>;
   extensionSockets: Map<string, WebSocket>;
   extensionSessionBySocket: Map<WebSocket, string>;
   pendingAskBySession: Map<string, PendingAsk>;
@@ -44,6 +67,7 @@ type ExtensionWebSocketDependencies = {
   clearPendingAsk: (sessionId: string, requestId?: string) => void;
   expirePendingAsk: (sessionId: string, requestId: string, source: "rpc" | "extension") => void;
   markSessionHistorical: (sessionId: string) => void;
+  sendToBrowser?: (socket: WebSocket, frame: ServerFrame) => void;
   broadcast: (frame: ServerFrame) => void;
   isLoopbackAddress: (address: string) => boolean;
 };
@@ -51,6 +75,8 @@ type ExtensionWebSocketDependencies = {
 export function registerExtensionWebSocketRoute(
   app: FastifyInstance,
   {
+    forwardedExtensionCommands = new Map<string, ForwardedExtensionCommand>(),
+    sendToBrowser = () => undefined,
     extensionSockets,
     extensionSessionBySocket,
     pendingAskBySession,
@@ -85,6 +111,7 @@ export function registerExtensionWebSocketRoute(
         if (!isCurrent()) return false;
         const previousSessionId = extensionSessionBySocket.get(socket);
         if (previousSessionId && previousSessionId !== frame.session.id) {
+          settleDisplacedExtensionCommands(socket, forwardedExtensionCommands, sendToBrowser);
           const releasedSessionId = releaseCurrentExtensionSocket(
             socket,
             extensionSessionBySocket,
@@ -102,6 +129,7 @@ export function registerExtensionWebSocketRoute(
             sendExtensionAskUnavailable(frame.session.id, pending.request.requestId);
             clearPendingAsk(frame.session.id, pending.request.requestId);
           }
+          settleDisplacedExtensionCommands(replacedSocket, forwardedExtensionCommands, sendToBrowser);
         }
         extensionSessionBySocket.set(socket, frame.session.id);
         extensionSockets.set(frame.session.id, socket);
@@ -231,13 +259,25 @@ export function registerExtensionWebSocketRoute(
           ) {
             return;
           }
-          broadcast({
-            type: "command_result",
-            requestId: frame.requestId,
-            outcome: frame.ok
-              ? { status: "ok", value: { type: "void" } }
-              : { status: "error", error: frame.error },
-          });
+          const forwarded = forwardedExtensionCommands.get(frame.requestId);
+          if (forwarded) {
+            clearTimeout(forwarded.timeoutId);
+            forwardedExtensionCommands.delete(frame.requestId);
+            if (forwarded.extensionSocket === socket && forwarded.sessionId === sessionId) {
+              if (forwarded.browserSocket.readyState === WebSocket.OPEN) {
+                sendToBrowser(forwarded.browserSocket, {
+                  type: "command_result",
+                  requestId: frame.requestId,
+                  outcome: frame.ok
+                    ? { status: "ok", value: { type: "void" } }
+                    : { status: "error", error: frame.error },
+                });
+              }
+            }
+            return;
+          }
+          // Stale or unforwarded command result: ignored, never broadcast
+          return;
         }
       },
     );
@@ -274,6 +314,7 @@ export function registerExtensionWebSocketRoute(
       isSocketClosed = true;
       frameQueue.close();
       socketClosed.resolve();
+      settleDisplacedExtensionCommands(socket, forwardedExtensionCommands, sendToBrowser);
       const sessionId = releaseCurrentExtensionSocket(socket, extensionSessionBySocket, extensionSockets);
 
       if (!sessionId) return;

@@ -14,9 +14,12 @@ import { MAX_BROWSER_BUFFERED_BYTES } from "./browser-broadcast.js";
 import {
   browserSnapshotSessions,
   executeRpcSessionCommand,
+  FORWARDED_EXTENSION_COMMAND_TIMEOUT_MS,
+  type ForwardedExtensionCommand,
   pendingAskRequestsForBrowserSnapshot,
   registerBrowserWebSocketRoute,
   removeBrowserSocket,
+  removeForwardedCommandsForBrowser,
   respondToPendingAsk,
 } from "./browser-websocket.js";
 
@@ -582,5 +585,163 @@ describe("executeRpcSessionCommand", () => {
       ),
     ).rejects.toThrow("level failed");
     expect(refresh).toHaveBeenCalledWith("session-rpc-1", rpc);
+  });
+});
+
+describe("browser WebSocket extension command forwarding", () => {
+  it("records correlation and forwards command to open extension socket, then removes on browser close", async () => {
+    const socketEmitter = new EventEmitter();
+    const browserSocket = Object.assign(socketEmitter, {
+      readyState: 1,
+      close: vi.fn(),
+    }) as unknown as WebSocket;
+
+    const extensionSent: string[] = [];
+    const extensionSocket = {
+      readyState: 1,
+      send: vi.fn((payload: string) => extensionSent.push(payload)),
+    } as unknown as WebSocket;
+
+    const forwardedExtensionCommands = new Map<string, ForwardedExtensionCommand>();
+    const extensionSockets = new Map([["session-ext-1", extensionSocket]]);
+    const sendToBrowser = vi.fn();
+    const broadcast = vi.fn();
+    const logger = {
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+
+    let wsHandler: ((socket: WebSocket, req: unknown) => void) | undefined;
+    const app = {
+      get: vi.fn((path, opts, handler) => {
+        wsHandler = handler;
+      }),
+    };
+
+    registerBrowserWebSocketRoute(app as any, {
+      forwardedExtensionCommands,
+      browserSockets: new Set([browserSocket]),
+      pendingAskBySession: new Map(),
+      pushSubscriptions: { publicKey: "key" } as any,
+      savedWorkingDirectories: { list: () => [] } as any,
+      rpcSessions: new Map(),
+      extensionSockets,
+      registry: { list: () => [] } as any,
+      sendToBrowser,
+      broadcast,
+      launchRpcSession: vi.fn(),
+      branchSwitchBlocksSessionCommand: vi.fn(async () => false),
+      switchSessionBranch: vi.fn(),
+      refreshRpcState: vi.fn(),
+      clearPendingAsk: vi.fn(),
+      expirePendingAsk: vi.fn(),
+      originAllowed: () => true,
+      logger: logger as any,
+    });
+
+    wsHandler?.(browserSocket, { headers: { host: "127.0.0.1:3000" } });
+
+    const commandPayload = {
+      type: "session_command",
+      requestId: "req-fwd-1",
+      sessionId: "session-ext-1",
+      command: "prompt",
+      text: "hello extension",
+    };
+    socketEmitter.emit("message", Buffer.from(JSON.stringify(commandPayload)));
+
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(extensionSocket.send).toHaveBeenCalledOnce();
+    expect(JSON.parse(extensionSent[0] ?? "")).toEqual(commandPayload);
+    const entry = forwardedExtensionCommands.get("req-fwd-1");
+    expect(entry).toBeDefined();
+    expect(entry?.requestId).toBe("req-fwd-1");
+    expect(entry?.timeoutId).toBeDefined();
+
+    // Browser closes: correlation is removed and timeout cleared without broadcasting
+    socketEmitter.emit("close");
+    expect(forwardedExtensionCommands.has("req-fwd-1")).toBe(false);
+    expect(broadcast).not.toHaveBeenCalled();
+  });
+
+  it("expires forwarded command after 20 seconds and notifies originating browser", async () => {
+    vi.useFakeTimers();
+    try {
+      const socketEmitter = new EventEmitter();
+      const browserSocket = Object.assign(socketEmitter, {
+        readyState: 1,
+        close: vi.fn(),
+      }) as unknown as WebSocket;
+      const extensionSocket = {
+        readyState: 1,
+        send: vi.fn(),
+      } as unknown as WebSocket;
+
+      const forwardedExtensionCommands = new Map<string, ForwardedExtensionCommand>();
+      const extensionSockets = new Map([["session-ext-1", extensionSocket]]);
+      const sendToBrowser = vi.fn();
+      const broadcast = vi.fn();
+
+      let wsHandler: ((socket: WebSocket, req: unknown) => void) | undefined;
+      const app = {
+        get: vi.fn((path, opts, handler) => {
+          wsHandler = handler;
+        }),
+      };
+
+      registerBrowserWebSocketRoute(app as any, {
+        forwardedExtensionCommands,
+        browserSockets: new Set([browserSocket]),
+        pendingAskBySession: new Map(),
+        pushSubscriptions: { publicKey: "key" } as any,
+        savedWorkingDirectories: { list: () => [] } as any,
+        rpcSessions: new Map(),
+        extensionSockets,
+        registry: { list: () => [] } as any,
+        sendToBrowser,
+        broadcast,
+        launchRpcSession: vi.fn(),
+        branchSwitchBlocksSessionCommand: vi.fn(async () => false),
+        switchSessionBranch: vi.fn(),
+        refreshRpcState: vi.fn(),
+        clearPendingAsk: vi.fn(),
+        expirePendingAsk: vi.fn(),
+        originAllowed: () => true,
+        logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as any,
+      });
+
+      wsHandler?.(browserSocket, { headers: { host: "127.0.0.1:3000" } });
+
+      const commandPayload = {
+        type: "session_command",
+        requestId: "req-expire-1",
+        sessionId: "session-ext-1",
+        command: "prompt",
+        text: "timed command",
+      };
+      socketEmitter.emit("message", Buffer.from(JSON.stringify(commandPayload)));
+
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(forwardedExtensionCommands.has("req-expire-1")).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(FORWARDED_EXTENSION_COMMAND_TIMEOUT_MS);
+
+      expect(forwardedExtensionCommands.has("req-expire-1")).toBe(false);
+      expect(sendToBrowser).toHaveBeenCalledWith(browserSocket, {
+        type: "command_result",
+        requestId: "req-expire-1",
+        outcome: {
+          status: "error",
+          error: "The host did not respond before the command timed out",
+        },
+      });
+      expect(broadcast).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
