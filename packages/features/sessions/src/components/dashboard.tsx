@@ -12,3 +12,4 @@ export function Dashboard(props: DashboardProps) {
     </SidebarProvider>
   );
 }
+

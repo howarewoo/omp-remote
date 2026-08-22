@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SessionFileChangesResponseSchema, SessionFileWriteOperationSchema } from "./index.js";
+
 describe("SessionFileChangesResponseSchema", () => {
   const response = {
     sessionId: "root-session",

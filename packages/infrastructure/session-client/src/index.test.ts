@@ -1,46 +1,14 @@
-import type {
-  ApplicationErrorRecord,
-  ApplicationErrorStorageHealth,
-  AskRequest,
-  NotificationEvent,
-  Session,
-  SessionTranscriptResponse,
-} from "@omp-remote/protocol";
+import type { NotificationEvent } from "@omp-remote/protocol";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
-  addApplicationErrorRecord,
-  applyTranscriptToSessions,
   boundedServerError,
-  cleanupSessionHistory,
-  clearApplicationErrorsLedger,
   commandResultValue,
-  compareApplicationErrorsNewestFirst,
-  createCatalogLoadCoordinator,
-  deduplicateAndSortApplicationErrors,
   dispatchNotificationEvent,
-  loadApplicationErrorsLedger,
-  loadSessionBranchTopology,
-  loadSessionCost,
-  loadSessionDetails,
-  loadSessionFileChanges,
-  loadSessionTranscript,
-  mergeSessions,
-  mergeTranscriptMessages,
-  overlaySessionCosts,
-  patchSession,
-  prependTranscriptMessages,
   type QueuedUserMessage,
   rejectPendingCommands,
-  removeAskRequest,
   resolvePendingCommand,
   sendBrowserCommand,
   SESSION_COMMAND_TIMEOUT_MS,
-  snapshotSessionsWithCurrentMessages,
-  type TranscriptHistoryState,
-  type TranscriptProvenance,
-  upsertAskRequest,
-  upsertLoadedSession,
-  upsertTranscriptMessage,
   useSessionClient,
 } from "./index.js";
 
@@ -62,51 +30,6 @@ vi.mock("react", () => ({
     return [initialValue, setter] as const;
   },
 }));
-
-const SESSION: Session = {
-  id: "session-1",
-  source: "rpc",
-  name: "Stream test",
-  cwd: "/tmp/stream-test",
-  branch: "feature/streaming",
-  status: "running",
-  connected: true,
-  model: "openai/gpt-5.6",
-  contextPercent: 12,
-  createdAt: "2026-07-28T21:00:00.000Z",
-  lastActivity: "2026-07-28T22:00:00.000Z",
-  capabilities: ["prompt", "steer", "follow_up", "abort", "resume"],
-  messages: [
-    {
-      id: "message-1",
-      role: "assistant",
-      text: "Starting",
-      timestamp: "2026-07-28T22:01:00.000Z",
-      streaming: true,
-      presentation: "text",
-    },
-  ],
-  sessionPath: "/tmp/session.jsonl",
-  activeSubagents: [],
-  skillCommands: [],
-};
-const makeMsg = (id: string, text = id, streaming = false): Session["messages"][number] => ({
-  id,
-  role: "user",
-  text,
-  timestamp: "2026-08-01T00:00:00.000Z",
-  streaming,
-  presentation: "text",
-});
-const makePage = (
-  sessionId: string,
-  messages: Session["messages"] = [],
-  status: "available" | "complete" | "unavailable" | "invalidated" = "complete",
-  olderCursor: string | null = null,
-): SessionTranscriptResponse =>
-  (status === "available"
-    ? { sessionId, messages, status: "available", olderCursor: olderCursor ?? "cursor" }
-    : { sessionId, messages, status, olderCursor: null }) as SessionTranscriptResponse;
 
 class FakeWebSocket extends EventTarget {
   static readonly OPEN = 1;
