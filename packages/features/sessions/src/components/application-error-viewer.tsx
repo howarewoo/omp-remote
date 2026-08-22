@@ -329,9 +329,7 @@ export function ApplicationErrorViewer({
               const isExpanded = expandedIds.has(record.id);
               const hasContext = Boolean(record.context && Object.keys(record.context).length > 0);
               const hasDetails = Boolean(record.stack || hasContext);
-              const labelId = record.errorName
-                ? `error-title-${record.id}`
-                : `error-message-${record.id}`;
+              const labelId = record.errorName ? `error-title-${record.id}` : `error-message-${record.id}`;
 
               return (
                 <article
@@ -344,9 +342,7 @@ export function ApplicationErrorViewer({
                       <Badge className={cn("app-error-severity-badge", `severity-${record.severity}`)}>
                         {record.severity}
                       </Badge>
-                      <Badge className="app-error-source-badge">
-                        {record.source}
-                      </Badge>
+                      <Badge className="app-error-source-badge">{record.source}</Badge>
                     </div>
                     <time dateTime={record.timestamp} title={record.timestamp}>
                       {formatErrorTimestamp(record.timestamp)}

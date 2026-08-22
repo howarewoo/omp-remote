@@ -93,7 +93,7 @@ OMP Remote does not provide full access to OMP's slash-command catalog. It can i
 | PWA | `vite-plugin-pwa` | `1.3.0` | Installable shell and generated offline service worker |
 | Host | Fastify + WebSocket | `5.10.0` + `11.3.0` | Long-lived local daemon with browser and extension sockets |
 | Contracts | Zod | `4.4.3` | Runtime validation at every WebSocket and RPC boundary |
-| OMP integration | OMP SDK + RPC | `17.4.0` | Native lifecycle events for existing sessions and RPC for dashboard-launched sessions |
+| OMP integration | OMP SDK + RPC | `18.0.0` | Native lifecycle events for existing sessions and RPC for dashboard-launched sessions |
 | Workspace | Turborepo + TypeScript | `2.10.7` + `7.0.2` | Ordered builds across app, feature, and infrastructure slices |
 | Private delivery | Tailscale Serve | Tailscale `1.98.9` verified | Tailnet HTTPS without exposing the daemon on a LAN or public interface |
 

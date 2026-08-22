@@ -414,7 +414,9 @@ describe("transcript pagination and recovery", () => {
 
     const initialOutput = renderControlledDashboard(base);
     const rows = findElements(initialOutput, (node) => node.type === MessageScrollerItem);
-    const statusIndex = rows.findIndex((row) => row.props.messageId === `transcript-status:${sessionWithMessages.id}`);
+    const statusIndex = rows.findIndex(
+      (row) => row.props.messageId === `transcript-status:${sessionWithMessages.id}`,
+    );
     const messageIndex = rows.findIndex((row) => row.props.messageId === "m-1");
     expect(statusIndex).toBeGreaterThanOrEqual(0);
     expect(messageIndex).toBeGreaterThan(statusIndex);

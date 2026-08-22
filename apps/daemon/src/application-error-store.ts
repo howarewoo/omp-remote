@@ -171,8 +171,12 @@ export class ApplicationErrorStore {
       const sanitizedContext = sanitizeApplicationErrorContext(entry.fields);
       const rawMessage = entry.message || "Unknown error";
       const message = rawMessage.slice(0, APPLICATION_ERROR_MESSAGE_MAX_CHARS);
-      const errorName = entry.error?.name ? entry.error.name.slice(0, APPLICATION_ERROR_NAME_MAX_CHARS) : undefined;
-      const stack = entry.error?.stack ? entry.error.stack.slice(0, APPLICATION_ERROR_STACK_MAX_CHARS) : undefined;
+      const errorName = entry.error?.name
+        ? entry.error.name.slice(0, APPLICATION_ERROR_NAME_MAX_CHARS)
+        : undefined;
+      const stack = entry.error?.stack
+        ? entry.error.stack.slice(0, APPLICATION_ERROR_STACK_MAX_CHARS)
+        : undefined;
 
       const input: ApplicationErrorInput = {
         source: "daemon",

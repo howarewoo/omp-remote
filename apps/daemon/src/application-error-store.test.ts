@@ -204,8 +204,18 @@ describe("ApplicationErrorStore", () => {
       const { filePath } = await createStorePath();
       const store = await ApplicationErrorStore.load(filePath);
 
-      const p1 = store.record({ id: "err-before-1", source: "daemon", severity: "error", message: "Before 1" });
-      const p2 = store.record({ id: "err-before-2", source: "daemon", severity: "error", message: "Before 2" });
+      const p1 = store.record({
+        id: "err-before-1",
+        source: "daemon",
+        severity: "error",
+        message: "Before 1",
+      });
+      const p2 = store.record({
+        id: "err-before-2",
+        source: "daemon",
+        severity: "error",
+        message: "Before 2",
+      });
       const pClear = store.clear();
       const p3 = store.record({ id: "err-after-1", source: "daemon", severity: "error", message: "After 1" });
 

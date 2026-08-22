@@ -1,9 +1,5 @@
 // biome-ignore-all assist/source/organizeImports: The test support must install the React hook mock first.
-import {
-  findElements,
-  getReactHarness,
-  textContent,
-} from "./dashboard/dashboard-test-support.js";
+import { findElements, getReactHarness, textContent } from "./dashboard/dashboard-test-support.js";
 import { isValidElement, type ReactNode } from "react";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,10 +16,7 @@ import { Dialog } from "./ui/dialog.js";
 
 const reactHarness = getReactHarness();
 
-function renderViewer(
-  props: ApplicationErrorViewerProps,
-  preserveState = false,
-): ReactNode {
+function renderViewer(props: ApplicationErrorViewerProps, preserveState = false): ReactNode {
   if (!preserveState) {
     reactHarness.refValues = [];
     reactHarness.stateValues = [];
@@ -140,8 +133,7 @@ describe("ApplicationErrorViewer deterministic states", () => {
       output,
       (element) =>
         element.type === Button &&
-        (element.props["aria-label"] === "Reload application errors" ||
-          textContent(element) === "Retry"),
+        (element.props["aria-label"] === "Reload application errors" || textContent(element) === "Retry"),
     );
     expect(reloadControls).toHaveLength(2);
 

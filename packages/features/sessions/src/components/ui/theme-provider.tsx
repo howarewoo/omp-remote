@@ -7,15 +7,7 @@ import {
   getSystemTheme,
   setStoredTheme,
 } from "@omp-remote/ui";
-import {
-  type ReactNode,
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { DashboardIcon } from "../dashboard/icon.js";
 import { Button } from "./button.js";
 import { cn } from "./utils.js";
@@ -80,8 +72,7 @@ export function ThemeProvider({ children, defaultTheme }: ThemeProviderProps) {
 
   const toggleTheme = useCallback(() => {
     setThemeState((current) => {
-      const nextTheme: Theme =
-        current === "system" ? "light" : current === "light" ? "dark" : "system";
+      const nextTheme: Theme = current === "system" ? "light" : current === "light" ? "dark" : "system";
       setStoredTheme(nextTheme);
       return nextTheme;
     });
@@ -141,8 +132,7 @@ export function ThemeSelector({ className }: ThemeSelectorProps) {
     <div className={cn("ui-theme-selector", className)} role="group" aria-label="Theme mode selection">
       {THEME_OPTIONS.map((option) => {
         const selected = theme === option.value;
-        const iconName =
-          option.value === "system" ? "laptop" : option.value === "light" ? "sun" : "moon";
+        const iconName = option.value === "system" ? "laptop" : option.value === "light" ? "sun" : "moon";
         return (
           <Button
             key={option.value}

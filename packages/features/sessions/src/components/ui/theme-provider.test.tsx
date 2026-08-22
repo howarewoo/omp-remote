@@ -1,11 +1,6 @@
 import type * as ReactModule from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  ThemeProvider,
-  ThemeSelector,
-  ThemeToggle,
-  useTheme,
-} from "./theme-provider.js";
+import { ThemeProvider, ThemeSelector, ThemeToggle, useTheme } from "./theme-provider.js";
 
 const reactState = {
   theme: "system",

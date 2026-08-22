@@ -456,7 +456,10 @@ describe("dashboard current Todo tracker", () => {
 
   it("renders the Todo tracker as the first element in the metadata line", () => {
     const output = renderControlledDashboard(composerDashboardProps({ ...BASE_SESSION, messages }));
-    const metadataElement = findElements(output, (element) => element.props.className === "session-metadata")[0];
+    const metadataElement = findElements(
+      output,
+      (element) => element.props.className === "session-metadata",
+    )[0];
     expect(metadataElement).toBeDefined();
 
     const labels = findElements(metadataElement, (element) => element.type === "dt").map((element) =>

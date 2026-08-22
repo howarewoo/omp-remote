@@ -1,9 +1,5 @@
 // biome-ignore-all assist/source/organizeImports: The test support must install the React hook mock first.
-import {
-  findElements,
-  getReactHarness,
-  textContent,
-} from "./dashboard/dashboard-test-support.js";
+import { findElements, getReactHarness, textContent } from "./dashboard/dashboard-test-support.js";
 import type { ActiveSubagent, Session } from "@omp-remote/protocol";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { formatSubagentModelLabel, SubagentSessionViewer } from "./subagent-session-viewer.js";
