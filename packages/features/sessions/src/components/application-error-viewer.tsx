@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { type CSSProperties, useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { DashboardIcon } from "./dashboard/icon.js";
 import type {
@@ -43,6 +43,13 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+const FILTER_GROUP_STYLE: CSSProperties = {
+  margin: 0,
+  padding: 0,
+  border: 0,
+  minWidth: 0,
+};
 
 export function ApplicationErrorViewer({
   errors = [],
@@ -201,7 +208,7 @@ export function ApplicationErrorViewer({
 
       {errors.length > 0 ? (
         <div className="app-error-filters" role="toolbar" aria-label="Filter application errors">
-          <fieldset className="app-error-filter-group">
+          <fieldset className="app-error-filter-group" style={FILTER_GROUP_STYLE}>
             <legend className="sr-only">Filter by source</legend>
             <span className="app-error-filter-label" aria-hidden="true">
               Source:
@@ -237,7 +244,7 @@ export function ApplicationErrorViewer({
             </div>
           </fieldset>
 
-          <fieldset className="app-error-filter-group">
+          <fieldset className="app-error-filter-group" style={FILTER_GROUP_STYLE}>
             <legend className="sr-only">Filter by severity</legend>
             <span className="app-error-filter-label" aria-hidden="true">
               Severity:
