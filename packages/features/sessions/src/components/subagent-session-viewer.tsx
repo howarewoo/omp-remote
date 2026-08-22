@@ -41,7 +41,6 @@ export function formatSubagentModelLabel(session: Session | null | undefined): s
   return match?.name ?? session.model.split("/").at(-1) ?? "Default";
 }
 
-
 /** Presents a subagent transcript as a mobile bottom sheet or desktop side panel. */
 export function SubagentSessionViewer({
   open,

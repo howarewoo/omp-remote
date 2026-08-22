@@ -272,7 +272,14 @@ describe("TranscriptMessageSchema", () => {
 });
 
 describe("SessionTranscriptResponseSchema", () => {
-  const msg = { id: "m1", role: "user" as const, text: "hi", timestamp: "2026-08-01T00:00:00.000Z", streaming: false, presentation: "text" as const };
+  const msg = {
+    id: "m1",
+    role: "user" as const,
+    text: "hi",
+    timestamp: "2026-08-01T00:00:00.000Z",
+    streaming: false,
+    presentation: "text" as const,
+  };
 
   it.each([
     ["complete", { status: "complete", olderCursor: null, messages: [msg] }],
@@ -280,7 +287,10 @@ describe("SessionTranscriptResponseSchema", () => {
     ["unavailable", { status: "unavailable", olderCursor: null, messages: [msg] }],
     ["invalidated", { status: "invalidated", olderCursor: null, messages: [] }],
   ] as const)("validates %s variant", (_name, variant) => {
-    expect(SessionTranscriptResponseSchema.parse({ sessionId: "s1", ...variant })).toMatchObject({ sessionId: "s1", ...variant });
+    expect(SessionTranscriptResponseSchema.parse({ sessionId: "s1", ...variant })).toMatchObject({
+      sessionId: "s1",
+      ...variant,
+    });
   });
 
   it.each([
@@ -289,13 +299,23 @@ describe("SessionTranscriptResponseSchema", () => {
     ["unavailable with string cursor", { status: "unavailable", messages: [], olderCursor: "c" }],
     ["invalidated with string cursor", { status: "invalidated", messages: [], olderCursor: "c" }],
     ["empty sessionId", { sessionId: "", status: "complete", messages: [], olderCursor: null }],
-    ["unknown property (strict)", { sessionId: "s1", status: "complete", messages: [], olderCursor: null, extra: 1 }],
-    ["messages exceeding page size", { sessionId: "s1", status: "complete", messages: Array.from({ length: TRANSCRIPT_PAGE_SIZE + 1 }, (_, i) => ({ ...msg, id: `m-${i}` })), olderCursor: null }],
+    [
+      "unknown property (strict)",
+      { sessionId: "s1", status: "complete", messages: [], olderCursor: null, extra: 1 },
+    ],
+    [
+      "messages exceeding page size",
+      {
+        sessionId: "s1",
+        status: "complete",
+        messages: Array.from({ length: TRANSCRIPT_PAGE_SIZE + 1 }, (_, i) => ({ ...msg, id: `m-${i}` })),
+        olderCursor: null,
+      },
+    ],
   ])("rejects invalid response: %s", (_case, payload) => {
     expect(SessionTranscriptResponseSchema.safeParse({ sessionId: "s1", ...payload }).success).toBe(false);
   });
 });
-
 
 describe("normalizeSkillPromptRecord", () => {
   const record = (content: string, id?: unknown) => ({
@@ -323,10 +343,19 @@ describe("normalizeSkillPromptRecord", () => {
 
   it("preserves a valid persisted id and invokes fallback only when absent", () => {
     const fallback = vi.fn(() => "generated");
-    expect(normalizeSkillPromptRecord(record("wrapper\nUser: text", "persisted"), fallback)).toEqual({ id: "persisted", text: "text" });
+    expect(normalizeSkillPromptRecord(record("wrapper\nUser: text", "persisted"), fallback)).toEqual({
+      id: "persisted",
+      text: "text",
+    });
     expect(fallback).not.toHaveBeenCalled();
-    expect(normalizeSkillPromptRecord(record("wrapper\nUser: text"), fallback)).toEqual({ id: "generated", text: "text" });
-    expect(normalizeSkillPromptRecord(record("wrapper\nUser: invalid-id", 42), fallback)).toEqual({ id: "generated", text: "invalid-id" });
+    expect(normalizeSkillPromptRecord(record("wrapper\nUser: text"), fallback)).toEqual({
+      id: "generated",
+      text: "text",
+    });
+    expect(normalizeSkillPromptRecord(record("wrapper\nUser: invalid-id", 42), fallback)).toEqual({
+      id: "generated",
+      text: "invalid-id",
+    });
     expect(fallback).toHaveBeenCalledWith("invalid-id");
   });
 });

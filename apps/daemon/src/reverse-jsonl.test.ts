@@ -45,9 +45,9 @@ describe("readReverseJsonl", () => {
         const nextOlder = results[i + 1]!;
         expect(current.startOffset).toBe(nextOlder.endOffset);
       }
-      expect(
-        contentBuffer.subarray(current.startOffset, current.endOffset).toString("utf8"),
-      ).toBe(JSON.stringify(current.value) + "\r\n");
+      expect(contentBuffer.subarray(current.startOffset, current.endOffset).toString("utf8")).toBe(
+        JSON.stringify(current.value) + "\r\n",
+      );
     }
   });
 
@@ -88,7 +88,10 @@ describe("readReverseJsonl", () => {
       })) {
         results.push(record.value);
       }
-      expect(results).toEqual([{ id: 2, text: "second" }, { id: 1, text: "first" }]);
+      expect(results).toEqual([
+        { id: 2, text: "second" },
+        { id: 1, text: "first" },
+      ]);
     }
 
     const untermOnlyPath = join(testDir, "unterm-only.jsonl");
@@ -145,7 +148,10 @@ describe("readReverseJsonl", () => {
     // Exact limit LF passes with older record
     await writeFile(filePath, `${olderRecord}\n${exactRecord}\n`);
     const lfResults = [];
-    for await (const r of readReverseJsonl<{ id: number }>(filePath, { maxRecordBytes: maxBytes, chunkSize: 13 })) {
+    for await (const r of readReverseJsonl<{ id: number }>(filePath, {
+      maxRecordBytes: maxBytes,
+      chunkSize: 13,
+    })) {
       lfResults.push(r.value.id);
     }
     expect(lfResults).toEqual([1, 0]);
@@ -153,7 +159,10 @@ describe("readReverseJsonl", () => {
     // Exact limit CRLF passes with older record
     await writeFile(filePath, `${olderRecord}\r\n${exactRecord}\r\n`);
     const crlfResults = [];
-    for await (const r of readReverseJsonl<{ id: number }>(filePath, { maxRecordBytes: maxBytes, chunkSize: 13 })) {
+    for await (const r of readReverseJsonl<{ id: number }>(filePath, {
+      maxRecordBytes: maxBytes,
+      chunkSize: 13,
+    })) {
       crlfResults.push(r.value.id);
     }
     expect(crlfResults).toEqual([1, 0]);

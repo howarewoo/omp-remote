@@ -5,10 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLogger } from "@omp-remote/observability";
-import {
-  ApplicationErrorLedgerResponseSchema,
-  type ServerFrame,
-} from "@omp-remote/protocol";
+import { ApplicationErrorLedgerResponseSchema, type ServerFrame } from "@omp-remote/protocol";
 import Fastify from "fastify";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WebSocket } from "ws";

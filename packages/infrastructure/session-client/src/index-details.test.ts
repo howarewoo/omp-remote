@@ -213,7 +213,12 @@ describe("exact session details", () => {
 
       requests
         .get("/api/sessions/root/transcript")
-        ?.resolve(new Response(JSON.stringify({ sessionId: "root", messages: [], status: "complete", olderCursor: null }), { status: 200 }));
+        ?.resolve(
+          new Response(
+            JSON.stringify({ sessionId: "root", messages: [], status: "complete", olderCursor: null }),
+            { status: 200 },
+          ),
+        );
 
       const cleanupDetails = client.loadSession("child-c");
       const cleanupTranscript = client.loadTranscript("cleanup-root");
@@ -230,9 +235,12 @@ describe("exact session details", () => {
           ),
         );
       requests.get("/api/sessions/cleanup-root/transcript")?.resolve(
-        new Response(JSON.stringify({ sessionId: "cleanup-root", messages: [], status: "complete", olderCursor: null }), {
-          status: 200,
-        }),
+        new Response(
+          JSON.stringify({ sessionId: "cleanup-root", messages: [], status: "complete", olderCursor: null }),
+          {
+            status: 200,
+          },
+        ),
       );
       await Promise.all([cleanupDetails, cleanupTranscript]);
       await transcript;

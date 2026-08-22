@@ -4,9 +4,16 @@ import type { FileHandle } from "node:fs/promises";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  boundTranscriptImageBudget, getTranscriptImageByteLength, normalizeSkillPromptRecord, TRANSCRIPT_IMAGE_MAX_BYTES,
-  TRANSCRIPT_IMAGE_SESSION_MAX_BYTES, type TranscriptImage, type TranscriptImageMimeType,
-  type TranscriptMessage, truncateTranscriptText, validateTranscriptImageBytes,
+  boundTranscriptImageBudget,
+  getTranscriptImageByteLength,
+  normalizeSkillPromptRecord,
+  TRANSCRIPT_IMAGE_MAX_BYTES,
+  TRANSCRIPT_IMAGE_SESSION_MAX_BYTES,
+  type TranscriptImage,
+  type TranscriptImageMimeType,
+  type TranscriptMessage,
+  truncateTranscriptText,
+  validateTranscriptImageBytes,
 } from "@omp-remote/protocol";
 import { materializeReadImages, normalizeRawMessage, ToolCallTracker } from "./message-normalizer.js";
 import { DEFAULT_MAX_RECORD_BYTES, readReverseJsonl } from "./reverse-jsonl.js";
@@ -16,16 +23,54 @@ export const MAX_CURSOR_LENGTH = 512;
 const CURSOR_SECRET = randomBytes(32);
 
 export type TranscriptHistoryStatus = "complete" | "available" | "unavailable" | "invalidated";
-export interface TranscriptPageResult { sessionId: string; messages: TranscriptMessage[]; olderCursor: string | null; status: TranscriptHistoryStatus; }
-export interface ReadTranscriptPageOptions { sessionId: string; sessionPath?: string | null; cursor?: string | null; blobDirectory?: string; maxRecordBytes?: number; chunkSize?: number; openFile?: (path: string) => Promise<FileHandle>; }
-export interface CursorPayload { s: string; dev: number; ino: number; btime: number; end: number; next: number; }
+export interface TranscriptPageResult {
+  sessionId: string;
+  messages: TranscriptMessage[];
+  olderCursor: string | null;
+  status: TranscriptHistoryStatus;
+}
+export interface ReadTranscriptPageOptions {
+  sessionId: string;
+  sessionPath?: string | null;
+  cursor?: string | null;
+  blobDirectory?: string;
+  maxRecordBytes?: number;
+  chunkSize?: number;
+  openFile?: (path: string) => Promise<FileHandle>;
+}
+export interface CursorPayload {
+  s: string;
+  dev: number;
+  ino: number;
+  btime: number;
+  end: number;
+  next: number;
+}
 
 export function isValidCursorPayload(p: unknown): p is CursorPayload {
   return (
-    typeof p === "object" && !!p && !Array.isArray(p) && "s" in p && typeof p.s === "string" && p.s.length === 64 &&
-    "dev" in p && Number.isSafeInteger(p.dev) && (p.dev as number) >= 0 && "ino" in p && Number.isSafeInteger(p.ino) && (p.ino as number) >= 0 &&
-    "btime" in p && Number.isSafeInteger(p.btime) && (p.btime as number) >= 0 && "end" in p && Number.isSafeInteger(p.end) && (p.end as number) >= 0 &&
-    "next" in p && Number.isSafeInteger(p.next) && (p.next as number) >= 0 && (p.next as number) <= (p.end as number)
+    typeof p === "object" &&
+    !!p &&
+    !Array.isArray(p) &&
+    "s" in p &&
+    typeof p.s === "string" &&
+    p.s.length === 64 &&
+    "dev" in p &&
+    Number.isSafeInteger(p.dev) &&
+    (p.dev as number) >= 0 &&
+    "ino" in p &&
+    Number.isSafeInteger(p.ino) &&
+    (p.ino as number) >= 0 &&
+    "btime" in p &&
+    Number.isSafeInteger(p.btime) &&
+    (p.btime as number) >= 0 &&
+    "end" in p &&
+    Number.isSafeInteger(p.end) &&
+    (p.end as number) >= 0 &&
+    "next" in p &&
+    Number.isSafeInteger(p.next) &&
+    (p.next as number) >= 0 &&
+    (p.next as number) <= (p.end as number)
   );
 }
 
@@ -58,7 +103,12 @@ export function resolveAgentBlobDirectory(sessionPath: string): string | undefin
   return markerIndex >= 0 ? join(sessionPath.slice(0, markerIndex), "blobs") : undefined;
 }
 
-export function resolveReadImage(blobDirectory: string, reference: string, mimeType: string, maxBytes = TRANSCRIPT_IMAGE_MAX_BYTES): TranscriptImage {
+export function resolveReadImage(
+  blobDirectory: string,
+  reference: string,
+  mimeType: string,
+  maxBytes = TRANSCRIPT_IMAGE_MAX_BYTES,
+): TranscriptImage {
   const match = /^blob:sha256:([a-f0-9]{64})$/.exec(reference);
   const hash = match?.[1];
   if (!hash) return { status: "unavailable", reason: "invalid_reference" };
@@ -74,10 +124,15 @@ export function resolveReadImage(blobDirectory: string, reference: string, mimeT
     if (bytesRead > TRANSCRIPT_IMAGE_MAX_BYTES) return { status: "unavailable", reason: "oversized" };
     if (bytesRead > maxBytes) return { status: "unavailable", reason: "budget_exceeded" };
     const bytes = buffer.subarray(0, bytesRead);
-    if (createHash("sha256").update(bytes).digest("hex") !== hash) return { status: "unavailable", reason: "invalid_reference" };
+    if (createHash("sha256").update(bytes).digest("hex") !== hash)
+      return { status: "unavailable", reason: "invalid_reference" };
     const reason = validateTranscriptImageBytes(bytes, mimeType);
     if (reason) return { status: "unavailable", reason };
-    return { status: "available", mimeType: mimeType as TranscriptImageMimeType, data: bytes.toString("base64") };
+    return {
+      status: "available",
+      mimeType: mimeType as TranscriptImageMimeType,
+      data: bytes.toString("base64"),
+    };
   } catch {
     return { status: "unavailable", reason: "missing" };
   } finally {
@@ -85,7 +140,10 @@ export function resolveReadImage(blobDirectory: string, reference: string, mimeT
   }
 }
 
-export function createReadImageResolver(blobDirectory: string, maxSessionBytes = TRANSCRIPT_IMAGE_SESSION_MAX_BYTES): (data: string, mimeType: string) => TranscriptImage {
+export function createReadImageResolver(
+  blobDirectory: string,
+  maxSessionBytes = TRANSCRIPT_IMAGE_SESSION_MAX_BYTES,
+): (data: string, mimeType: string) => TranscriptImage {
   let retainedBytes = 0;
   return (data, mimeType) => {
     const remainingBytes = maxSessionBytes - retainedBytes;
@@ -93,7 +151,8 @@ export function createReadImageResolver(blobDirectory: string, maxSessionBytes =
     const image = resolveReadImage(blobDirectory, data, mimeType, remainingBytes);
     if (image.status !== "available") return image;
     const imageBytes = getTranscriptImageByteLength(image);
-    if (retainedBytes + imageBytes > maxSessionBytes) return { status: "unavailable", reason: "budget_exceeded" };
+    if (retainedBytes + imageBytes > maxSessionBytes)
+      return { status: "unavailable", reason: "budget_exceeded" };
     retainedBytes += imageBytes;
     return image;
   };
@@ -107,37 +166,71 @@ function normalizeTimestamp(value: unknown): string {
   return "1970-01-01T00:00:00.000Z";
 }
 
-function extractCanonicalToolCalls(content: unknown): Array<{ toolCallId: string; toolName: string; arguments: Record<string, unknown> }> {
+function extractCanonicalToolCalls(
+  content: unknown,
+): Array<{ toolCallId: string; toolName: string; arguments: Record<string, unknown> }> {
   if (!Array.isArray(content)) return [];
   const calls: Array<{ toolCallId: string; toolName: string; arguments: Record<string, unknown> }> = [];
   for (const part of content) {
     if (typeof part !== "object" || !part || !("type" in part) || part.type !== "toolCall") continue;
-    if (!("arguments" in part) || typeof part.arguments !== "object" || !part.arguments || Array.isArray(part.arguments)) continue;
-    const rawCallId = "toolCallId" in part && typeof part.toolCallId === "string" ? part.toolCallId : "id" in part ? part.id : undefined;
-    const rawName = "toolName" in part && typeof part.toolName === "string" ? part.toolName : "name" in part ? part.name : undefined;
+    if (
+      !("arguments" in part) ||
+      typeof part.arguments !== "object" ||
+      !part.arguments ||
+      Array.isArray(part.arguments)
+    )
+      continue;
+    const rawCallId =
+      "toolCallId" in part && typeof part.toolCallId === "string"
+        ? part.toolCallId
+        : "id" in part
+          ? part.id
+          : undefined;
+    const rawName =
+      "toolName" in part && typeof part.toolName === "string"
+        ? part.toolName
+        : "name" in part
+          ? part.name
+          : undefined;
     const id = typeof rawCallId === "string" && rawCallId ? rawCallId : undefined;
     const name = typeof rawName === "string" && rawName ? rawName : undefined;
-    if (id && name) calls.push({ toolCallId: id, toolName: name, arguments: part.arguments as Record<string, unknown> });
+    if (id && name)
+      calls.push({ toolCallId: id, toolName: name, arguments: part.arguments as Record<string, unknown> });
   }
   return calls;
 }
 
-function normalizeTranscriptMessage(record: Record<string, unknown>, offset: number, toolCallTracker: ToolCallTracker): TranscriptMessage | null {
-  if (record.type !== "message" || typeof record.message !== "object" || !record.message || Array.isArray(record.message)) return null;
+function normalizeTranscriptMessage(
+  record: Record<string, unknown>,
+  offset: number,
+  toolCallTracker: ToolCallTracker,
+): TranscriptMessage | null {
+  if (
+    record.type !== "message" ||
+    typeof record.message !== "object" ||
+    !record.message ||
+    Array.isArray(record.message)
+  )
+    return null;
   const rawMsg = record.message as Record<string, unknown>;
   const rawTimestamp = record.timestamp ?? ("timestamp" in rawMsg ? rawMsg.timestamp : undefined);
   const timestamp = normalizeTimestamp(rawTimestamp);
   const message = normalizeRawMessage(
     rawMsg,
     false,
-    typeof record.id === "string" ? record.id : (text) => `${timestamp}-${offset}-${createHash("sha256").update(text).digest("hex").slice(0, 16)}`,
+    typeof record.id === "string"
+      ? record.id
+      : (text) => `${timestamp}-${offset}-${createHash("sha256").update(text).digest("hex").slice(0, 16)}`,
     { timestamp, omitEmptyText: true, ignoreRawId: true, toolCallTracker },
   );
   return message ? { ...message, text: truncateTranscriptText(message.text) } : null;
 }
 
 function normalizeSkillPromptMessage(record: Record<string, unknown>): TranscriptMessage | null {
-  const prompt = normalizeSkillPromptRecord(record, (text) => `skill-prompt-${createHash("sha256").update(text, "utf8").digest("hex")}`);
+  const prompt = normalizeSkillPromptRecord(
+    record,
+    (text) => `skill-prompt-${createHash("sha256").update(text, "utf8").digest("hex")}`,
+  );
   if (!prompt) return null;
   return {
     id: prompt.id,
@@ -156,10 +249,17 @@ export async function readTranscriptPage(options: ReadTranscriptPageOptions): Pr
   let cursorPayload: CursorPayload | null = null;
   if (cursor !== undefined && cursor !== null) {
     cursorPayload = decodeAndVerifyCursor(cursor);
-    if (!cursorPayload || cursorPayload.s !== sessionHash) return { sessionId, messages: [], olderCursor: null, status: "invalidated" };
+    if (!cursorPayload || cursorPayload.s !== sessionHash)
+      return { sessionId, messages: [], olderCursor: null, status: "invalidated" };
   }
 
-  if (!sessionPath) return { sessionId, messages: [], olderCursor: null, status: cursorPayload ? "invalidated" : "unavailable" };
+  if (!sessionPath)
+    return {
+      sessionId,
+      messages: [],
+      olderCursor: null,
+      status: cursorPayload ? "invalidated" : "unavailable",
+    };
 
   const openFile = options.openFile ?? ((p: string) => open(p, "r"));
   let handle: FileHandle | undefined;
@@ -169,10 +269,13 @@ export async function readTranscriptPage(options: ReadTranscriptPageOptions): Pr
 
     if (cursorPayload) {
       if (
-        stat.dev !== cursorPayload.dev || stat.ino !== cursorPayload.ino ||
+        stat.dev !== cursorPayload.dev ||
+        stat.ino !== cursorPayload.ino ||
         Math.floor(stat.birthtimeMs) !== cursorPayload.btime ||
-        stat.size < cursorPayload.end || cursorPayload.next > cursorPayload.end
-      ) return { sessionId, messages: [], olderCursor: null, status: "invalidated" };
+        stat.size < cursorPayload.end ||
+        cursorPayload.next > cursorPayload.end
+      )
+        return { sessionId, messages: [], olderCursor: null, status: "invalidated" };
     }
 
     const initialEndOffset = cursorPayload ? cursorPayload.end : stat.size;
@@ -185,14 +288,22 @@ export async function readTranscriptPage(options: ReadTranscriptPageOptions): Pr
       ...(options.chunkSize !== undefined ? { chunkSize: options.chunkSize } : {}),
     };
 
-    const candidateRecords: Array<{ record: Record<string, unknown>; startOffset: number; endOffset: number }> = [];
+    const candidateRecords: Array<{
+      record: Record<string, unknown>;
+      startOffset: number;
+      endOffset: number;
+    }> = [];
     const pendingToolCallIds = new Set<string>();
     const olderMatchedAssistantRecords: Record<string, unknown>[] = [];
     let skillPromptCandidate: { record: Record<string, unknown>; startOffset: number } | undefined;
     let oldestCandidateStartOffset = targetEnd;
     let hasOlderMeaningfulMessage = false;
 
-    for await (const entry of readReverseJsonl<Record<string, unknown>>({ ...readerOpts, startOffset: 0, endOffset: targetEnd })) {
+    for await (const entry of readReverseJsonl<Record<string, unknown>>({
+      ...readerOpts,
+      startOffset: 0,
+      endOffset: targetEnd,
+    })) {
       if (typeof entry.value !== "object" || !entry.value || Array.isArray(entry.value)) continue;
 
       const skillPromptMessage = normalizeSkillPromptMessage(entry.value);
@@ -200,13 +311,25 @@ export async function readTranscriptPage(options: ReadTranscriptPageOptions): Pr
         skillPromptCandidate = { record: entry.value, startOffset: entry.startOffset };
       }
 
-      if (entry.value.type === "message" && typeof entry.value.message === "object" && entry.value.message && !Array.isArray(entry.value.message)) {
+      if (
+        entry.value.type === "message" &&
+        typeof entry.value.message === "object" &&
+        entry.value.message &&
+        !Array.isArray(entry.value.message)
+      ) {
         const rawMsg = entry.value.message as Record<string, unknown>;
-        const testMsg = normalizeRawMessage(rawMsg, false, "test-id", { omitEmptyText: true, ignoreRawId: true });
+        const testMsg = normalizeRawMessage(rawMsg, false, "test-id", {
+          omitEmptyText: true,
+          ignoreRawId: true,
+        });
 
         if (candidateRecords.length < TRANSCRIPT_PAGE_SIZE) {
           if (testMsg !== null) {
-            candidateRecords.push({ record: entry.value, startOffset: entry.startOffset, endOffset: entry.endOffset });
+            candidateRecords.push({
+              record: entry.value,
+              startOffset: entry.startOffset,
+              endOffset: entry.endOffset,
+            });
             oldestCandidateStartOffset = entry.startOffset;
             if (rawMsg.role === "toolResult" && typeof rawMsg.toolCallId === "string" && rawMsg.toolCallId) {
               pendingToolCallIds.add(rawMsg.toolCallId);
@@ -240,7 +363,9 @@ export async function readTranscriptPage(options: ReadTranscriptPageOptions): Pr
       if (Array.isArray(rawMsg.content)) toolCallTracker.capture(rawMsg.content);
     }
 
-    const blobDir = options.blobDirectory ?? (options.sessionPath ? resolveAgentBlobDirectory(options.sessionPath) : undefined);
+    const blobDir =
+      options.blobDirectory ??
+      (options.sessionPath ? resolveAgentBlobDirectory(options.sessionPath) : undefined);
     const resolveImage = blobDir ? createReadImageResolver(blobDir) : undefined;
 
     const normalizedMessages: TranscriptMessage[] = [];
@@ -249,9 +374,10 @@ export async function readTranscriptPage(options: ReadTranscriptPageOptions): Pr
       const item = candidateRecords[i]!;
       const msg = normalizeTranscriptMessage(item.record, item.startOffset, toolCallTracker);
       if (!msg) continue;
-      const withImages = resolveImage && typeof item.record.message === "object" && item.record.message
-        ? materializeReadImages(msg, item.record.message, resolveImage)
-        : msg;
+      const withImages =
+        resolveImage && typeof item.record.message === "object" && item.record.message
+          ? materializeReadImages(msg, item.record.message, resolveImage)
+          : msg;
       normalizedMessages.push(withImages);
       normalizedOffsets.push(item.startOffset);
     }
@@ -285,20 +411,39 @@ export async function readTranscriptPage(options: ReadTranscriptPageOptions): Pr
     }
 
     const payload: CursorPayload = {
-      s: sessionHash, dev: stat.dev, ino: stat.ino, btime: Math.floor(stat.birthtimeMs),
-      end: initialEndOffset, next: nextCursorOffset,
+      s: sessionHash,
+      dev: stat.dev,
+      ino: stat.ino,
+      btime: Math.floor(stat.birthtimeMs),
+      end: initialEndOffset,
+      next: nextCursorOffset,
     };
-    if (!isValidCursorPayload(payload)) return { sessionId, messages: [], olderCursor: null, status: "invalidated" };
+    if (!isValidCursorPayload(payload))
+      return { sessionId, messages: [], olderCursor: null, status: "invalidated" };
 
     return { sessionId, messages, olderCursor: encodeCursor(payload), status: "available" };
   } catch (error) {
-    if (error instanceof RangeError || (typeof error === "object" && error !== null && "name" in error && error.name === "RangeError")) {
+    if (
+      error instanceof RangeError ||
+      (typeof error === "object" && error !== null && "name" in error && error.name === "RangeError")
+    ) {
       return { sessionId, messages: [], olderCursor: null, status: "invalidated" };
     }
-    if (typeof error === "object" && error !== null && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
-      return { sessionId, messages: [], olderCursor: null, status: cursorPayload ? "invalidated" : "unavailable" };
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error.code === "ENOENT" || error.code === "ENOTDIR")
+    ) {
+      return {
+        sessionId,
+        messages: [],
+        olderCursor: null,
+        status: cursorPayload ? "invalidated" : "unavailable",
+      };
     }
-    if (error instanceof SyntaxError) return { sessionId, messages: [], olderCursor: null, status: "invalidated" };
+    if (error instanceof SyntaxError)
+      return { sessionId, messages: [], olderCursor: null, status: "invalidated" };
     throw error;
   } finally {
     await handle?.close();
