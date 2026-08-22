@@ -38,6 +38,7 @@ const INITIAL_SNAPSHOT_DEADLINE_MS = 10_000;
 const CATALOG_PAGE_SIZE = 100;
 const SWITCH_BRANCH_TIMEOUT_MS = 30_000;
 const LAUNCH_COMMAND_TIMEOUT_MS = 20_000;
+export const SESSION_COMMAND_TIMEOUT_MS = 20_000;
 const PUSH_COMMAND_TIMEOUT_MS = 10_000;
 const REPORT_APPLICATION_ERROR_TIMEOUT_MS = 10_000;
 const MAX_SERVER_ERROR_LENGTH = 500;
@@ -837,13 +838,16 @@ export function useSessionClient(): SessionClient {
         ]);
         return Promise.resolve();
       }
-      return sendVoid({
-        type: "session_command",
-        requestId: crypto.randomUUID(),
-        sessionId,
-        command: commandName,
-        text,
-      });
+      return sendVoid(
+        {
+          type: "session_command",
+          requestId: crypto.randomUUID(),
+          sessionId,
+          command: commandName,
+          text,
+        },
+        SESSION_COMMAND_TIMEOUT_MS,
+      );
     },
     [sendVoid],
   );
@@ -862,13 +866,16 @@ export function useSessionClient(): SessionClient {
     if (!dispatchable) return;
 
     setQueuedMessages((current) => current.filter((message) => message.id !== dispatchable.id));
-    void sendVoid({
-      type: "session_command",
-      requestId: crypto.randomUUID(),
-      sessionId: dispatchable.sessionId,
-      command: "prompt",
-      text: dispatchable.text,
-    }).catch((failure: unknown) => {
+    void sendVoid(
+      {
+        type: "session_command",
+        requestId: crypto.randomUUID(),
+        sessionId: dispatchable.sessionId,
+        command: "prompt",
+        text: dispatchable.text,
+      },
+      SESSION_COMMAND_TIMEOUT_MS,
+    ).catch((failure: unknown) => {
       setQueuedMessages((current) => [
         {
           ...dispatchable,
@@ -881,12 +888,18 @@ export function useSessionClient(): SessionClient {
   }, [connection, liveSessions, queuedMessages, sendVoid]);
   const abort = useCallback(
     (sessionId: string) =>
-      sendVoid({ type: "session_command", requestId: crypto.randomUUID(), sessionId, command: "abort" }),
+      sendVoid(
+        { type: "session_command", requestId: crypto.randomUUID(), sessionId, command: "abort" },
+        SESSION_COMMAND_TIMEOUT_MS,
+      ),
     [sendVoid],
   );
   const kill = useCallback(
     (sessionId: string) =>
-      sendVoid({ type: "session_command", requestId: crypto.randomUUID(), sessionId, command: "kill" }),
+      sendVoid(
+        { type: "session_command", requestId: crypto.randomUUID(), sessionId, command: "kill" },
+        SESSION_COMMAND_TIMEOUT_MS,
+      ),
     [sendVoid],
   );
   const setModel = useCallback(

@@ -38,7 +38,7 @@ import {
   broadcastBrowserFrame,
   sendBrowserFrame,
 } from "./browser-broadcast.js";
-import { registerBrowserWebSocketRoute } from "./browser-websocket.js";
+import { type ForwardedExtensionCommand, registerBrowserWebSocketRoute } from "./browser-websocket.js";
 import {
   createCatalogReconciler,
   createReconciledSessionRegistrar,
@@ -142,6 +142,7 @@ const rpcSessions = new Map<string, RpcSession>();
 const extensionSockets = new Map<string, WebSocket>();
 const extensionSessionBySocket = new Map<WebSocket, string>();
 
+const forwardedExtensionCommands = new Map<string, ForwardedExtensionCommand>();
 const pendingAskBySession = new Map<
   string,
   {
@@ -363,6 +364,7 @@ app.delete("/api/application-errors", async (request, reply) => {
   }
 });
 registerBrowserWebSocketRoute(app, {
+  forwardedExtensionCommands,
   browserSockets,
   pendingAskBySession,
   savedWorkingDirectories,
@@ -383,6 +385,7 @@ registerBrowserWebSocketRoute(app, {
   errorStore,
 });
 registerExtensionWebSocketRoute(app, {
+  forwardedExtensionCommands,
   extensionSockets,
   extensionSessionBySocket,
   pendingAskBySession,
@@ -397,6 +400,7 @@ registerExtensionWebSocketRoute(app, {
   expirePendingAsk,
   sendExtensionAskUnavailable,
   markSessionHistorical,
+  sendToBrowser,
   broadcast,
   isLoopbackAddress,
 });

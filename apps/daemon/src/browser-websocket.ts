@@ -21,6 +21,28 @@ type PendingAsk = {
   source: "rpc" | "extension";
   timeout: AskInactivityTimeout | undefined;
 };
+
+export const FORWARDED_EXTENSION_COMMAND_TIMEOUT_MS = 20_000;
+
+export type ForwardedExtensionCommand = {
+  requestId: string;
+  sessionId: string;
+  browserSocket: WebSocket;
+  extensionSocket: WebSocket;
+  timeoutId?: NodeJS.Timeout;
+};
+
+export function removeForwardedCommandsForBrowser(
+  forwardedExtensionCommands: Map<string, ForwardedExtensionCommand>,
+  browserSocket: WebSocket,
+): void {
+  for (const [requestId, entry] of forwardedExtensionCommands.entries()) {
+    if (entry.browserSocket === browserSocket) {
+      clearTimeout(entry.timeoutId);
+      forwardedExtensionCommands.delete(requestId);
+    }
+  }
+}
 export function removeBrowserSocket<T>(browserSockets: Set<T>, socket: T): void {
   browserSockets.delete(socket);
 }
@@ -36,6 +58,7 @@ export function browserSnapshotSessions(sessions: readonly Session[]): Session[]
 }
 
 type BrowserWebSocketDependencies = {
+  forwardedExtensionCommands?: Map<string, ForwardedExtensionCommand>;
   browserSockets: Set<WebSocket>;
   pendingAskBySession: Map<string, PendingAsk>;
   pushSubscriptions: PushSubscriptionStore;
@@ -157,6 +180,7 @@ export async function executeRpcSessionCommand(
 export function registerBrowserWebSocketRoute(
   app: FastifyInstance,
   {
+    forwardedExtensionCommands = new Map<string, ForwardedExtensionCommand>(),
     pushSubscriptions,
     browserSockets,
     pendingAskBySession,
@@ -468,6 +492,29 @@ export function registerBrowserWebSocketRoute(
       }
       const extensionSocket = extensionSockets.get(command.sessionId);
       if (extensionSocket?.readyState === WebSocket.OPEN) {
+        const timeoutId = setTimeout(() => {
+          const entry = forwardedExtensionCommands.get(command.requestId);
+          if (entry && entry.browserSocket === socket) {
+            forwardedExtensionCommands.delete(command.requestId);
+            if (socket.readyState === WebSocket.OPEN) {
+              sendToBrowser(socket, {
+                type: "command_result",
+                requestId: command.requestId,
+                outcome: {
+                  status: "error",
+                  error: "The host did not respond before the command timed out",
+                },
+              });
+            }
+          }
+        }, FORWARDED_EXTENSION_COMMAND_TIMEOUT_MS);
+        forwardedExtensionCommands.set(command.requestId, {
+          requestId: command.requestId,
+          sessionId: command.sessionId,
+          browserSocket: socket,
+          extensionSocket,
+          timeoutId,
+        });
         extensionSocket.send(JSON.stringify(command));
         return;
       }
@@ -479,6 +526,7 @@ export function registerBrowserWebSocketRoute(
     });
     socket.on("close", () => {
       removeBrowserSocket(browserSockets, socket);
+      removeForwardedCommandsForBrowser(forwardedExtensionCommands, socket);
     });
   });
 }

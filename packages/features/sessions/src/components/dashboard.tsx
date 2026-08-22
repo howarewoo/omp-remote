@@ -134,12 +134,22 @@ function DashboardContent({
     },
     [onLoadSession],
   );
-  const [message, setMessage] = useState("");
+  const [messagesBySession, setMessagesBySession] = useState<Record<string, string>>({});
   const [activeSkillIndex, setActiveSkillIndex] = useState(0);
   const [autocompleteDismissedFor, setAutocompleteDismissedFor] = useState<string | null>(null);
   const [notificationSettingsOpen, setNotificationSettingsOpen] = useState(false);
-  const [commandState, setCommandState] = useState<"idle" | "sending">("idle");
-  const [commandError, setCommandError] = useState<string | null>(null);
+  const [messagePendingBySession, setMessagePendingBySession] = useState<
+    Record<string, { requestId: string }>
+  >({});
+  const [commandErrorsBySession, setCommandErrorsBySession] = useState<
+    Record<string, Partial<Record<"message" | "resume" | "abort" | "kill", string>>>
+  >({});
+  const [abortPendingBySession, setAbortPendingBySession] = useState<Record<string, boolean>>({});
+  const [killPendingBySession, setKillPendingBySession] = useState<Record<string, boolean>>({});
+  const [resumePendingBySession, setResumePendingBySession] = useState<Record<string, boolean>>({});
+  const messageRequestBySessionRef = useRef<Record<string, { id: string; submittedDraft: string }>>({});
+  const selectedSessionIdRef = useRef<string | null>(null);
+
   const [launchOpen, setLaunchOpen] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [launchCwd, setLaunchCwd] = useState("");
@@ -220,6 +230,60 @@ function DashboardContent({
     () => selectedMainSession ?? sessionSections[0]?.sessions[0] ?? null,
     [selectedMainSession, sessionSections],
   );
+  const selectedSessionKey = selectedSession?.id ?? null;
+  const setSessionCommandError = useCallback(
+    (sessionId: string, operation: "message" | "resume" | "abort" | "kill", error: string) => {
+      setCommandErrorsBySession((current) => ({
+        ...current,
+        [sessionId]: {
+          ...current[sessionId],
+          [operation]: error,
+        },
+      }));
+    },
+    [],
+  );
+
+  const clearSessionCommandError = useCallback(
+    (sessionId: string, operation: "message" | "resume" | "abort" | "kill") => {
+      setCommandErrorsBySession((current) => {
+        const sessionErrors = current[sessionId];
+        if (!sessionErrors || sessionErrors[operation] === undefined) return current;
+        const updated = { ...sessionErrors };
+        delete updated[operation];
+        return {
+          ...current,
+          [sessionId]: updated,
+        };
+      });
+    },
+    [],
+  );
+
+  const message = selectedSessionKey ? (messagesBySession[selectedSessionKey] ?? "") : "";
+  const setMessage = useCallback(
+    (nextOrUpdater: string | ((current: string) => string)) => {
+      if (!selectedSessionKey) return;
+      clearSessionCommandError(selectedSessionKey, "message");
+      setMessagesBySession((current) => {
+        const currentVal = current[selectedSessionKey] ?? "";
+        const nextVal = typeof nextOrUpdater === "function" ? nextOrUpdater(currentVal) : nextOrUpdater;
+        return { ...current, [selectedSessionKey]: nextVal };
+      });
+    },
+    [clearSessionCommandError, selectedSessionKey],
+  );
+
+  const visibleMessageError = selectedSessionKey
+    ? (commandErrorsBySession[selectedSessionKey]?.message ?? null)
+    : null;
+  const visibleResumeError = selectedSessionKey
+    ? (commandErrorsBySession[selectedSessionKey]?.resume ?? null)
+    : null;
+  const visibleKillError = selectedSessionKey
+    ? (commandErrorsBySession[selectedSessionKey]?.kill ?? null)
+    : null;
+  const visibleComposerError = visibleMessageError ?? visibleResumeError;
   const canViewSelectedSessionBranches =
     selectedSession !== null &&
     selectedSession.branch !== null &&
@@ -474,6 +538,9 @@ function DashboardContent({
       setTodoOpenSessionId(null);
     }
   }, [currentTodo, selectedSession?.id, todoOpenSessionId]);
+  useLayoutEffect(() => {
+    selectedSessionIdRef.current = selectedSession?.id ?? null;
+  }, [selectedSession?.id]);
 
   useLayoutEffect(() => {
     if (branchSelectorSessionIdRef.current === null) return;
@@ -589,27 +656,47 @@ function DashboardContent({
 
   const submitMessage = async (event: FormEvent) => {
     event.preventDefault();
-    if (!selectedSession || !composerAction || commandState === "sending") return;
+    if (!selectedSession || !composerAction || messagePendingBySession[selectedSession.id]) return;
     if (composerAction === "abort") {
       setAbortOpen(true);
       return;
     }
-    setCommandState("sending");
-    setCommandError(null);
+    const sessionId = selectedSession.id;
+    const currentDraft = messagesBySession[sessionId] ?? "";
+    const submittedDraft = currentDraft;
+    const trimmed = currentDraft.trim();
+    const requestId = crypto.randomUUID();
+    const request = { id: requestId, submittedDraft };
+    messageRequestBySessionRef.current[sessionId] = request;
+    setMessagePendingBySession((current) => ({ ...current, [sessionId]: { requestId } }));
+    clearSessionCommandError(sessionId, "message");
+
     try {
-      await onCommand(
-        selectedSession.id,
-        selectedSession.status === "running" ? "follow_up" : "prompt",
-        message.trim(),
-      );
-      transcriptScrollToEndRef.current?.();
-      setMessage("");
+      await onCommand(sessionId, selectedSession.status === "running" ? "follow_up" : "prompt", trimmed);
+      if (messageRequestBySessionRef.current[sessionId] === request) {
+        if (selectedSessionIdRef.current === sessionId) {
+          transcriptScrollToEndRef.current?.();
+        }
+        setMessagesBySession((current) =>
+          current[sessionId] === submittedDraft ? { ...current, [sessionId]: "" } : current,
+        );
+      }
     } catch (commandFailure) {
-      setCommandError(
-        commandFailure instanceof Error ? commandFailure.message : "The instruction could not be sent",
-      );
+      if (messageRequestBySessionRef.current[sessionId] === request) {
+        const messageText =
+          commandFailure instanceof Error ? commandFailure.message : "The instruction could not be sent";
+        setSessionCommandError(sessionId, "message", messageText);
+      }
     } finally {
-      setCommandState("idle");
+      if (messageRequestBySessionRef.current[sessionId] === request) {
+        delete messageRequestBySessionRef.current[sessionId];
+        setMessagePendingBySession((current) => {
+          if (!current[sessionId] || current[sessionId]?.requestId !== requestId) return current;
+          const next = { ...current };
+          delete next[sessionId];
+          return next;
+        });
+      }
     }
   };
 
@@ -684,51 +771,70 @@ function DashboardContent({
   };
 
   const resumeSelectedSession = async () => {
-    if (!selectedSession?.sessionPath || commandState === "sending") return;
-    setCommandState("sending");
-    setCommandError(null);
+    if (!selectedSession?.sessionPath || resumePendingBySession[selectedSession.id]) return;
+    const sessionId = selectedSession.id;
+    setResumePendingBySession((current) => ({ ...current, [sessionId]: true }));
+    clearSessionCommandError(sessionId, "resume");
     try {
-      const sessionId = await onLaunch(selectedSession.cwd, selectedSession.sessionPath);
-      onSelectedSessionChange(sessionId);
+      const launchedSessionId = await onLaunch(selectedSession.cwd, selectedSession.sessionPath);
+      onSelectedSessionChange(launchedSessionId);
     } catch (resumeFailure) {
-      const message =
+      const messageText =
         resumeFailure instanceof Error ? resumeFailure.message : "The session could not be resumed";
-      setCommandError(message);
-      toast.error(message);
+      setSessionCommandError(sessionId, "resume", messageText);
+      toast.error(messageText);
     } finally {
-      setCommandState("idle");
+      setResumePendingBySession((current) => {
+        if (!current[sessionId]) return current;
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
     }
   };
 
   const abortSelectedSession = async () => {
-    if (!selectedSession) return;
-    setCommandState("sending");
-    setCommandError(null);
+    if (!selectedSession || abortPendingBySession[selectedSession.id]) return;
+    const sessionId = selectedSession.id;
+    setAbortPendingBySession((current) => ({ ...current, [sessionId]: true }));
+    clearSessionCommandError(sessionId, "abort");
     try {
-      await onAbort(selectedSession.id);
+      await onAbort(sessionId);
       setAbortOpen(false);
     } catch (abortFailure) {
-      setCommandError(
-        abortFailure instanceof Error ? abortFailure.message : "The active run could not be interrupted",
-      );
+      const messageText =
+        abortFailure instanceof Error ? abortFailure.message : "The active run could not be interrupted";
+      setSessionCommandError(sessionId, "abort", messageText);
+      toast.error(messageText);
     } finally {
-      setCommandState("idle");
+      setAbortPendingBySession((current) => {
+        if (!current[sessionId]) return current;
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
     }
   };
 
   const killSelectedSession = async () => {
-    if (!selectedSession) return;
-    setCommandState("sending");
-    setCommandError(null);
+    if (!selectedSession || killPendingBySession[selectedSession.id]) return;
+    const sessionId = selectedSession.id;
+    setKillPendingBySession((current) => ({ ...current, [sessionId]: true }));
+    clearSessionCommandError(sessionId, "kill");
     try {
-      await onKill(selectedSession.id);
+      await onKill(sessionId);
       setKillOpen(false);
     } catch (killFailure) {
-      setCommandError(
-        killFailure instanceof Error ? killFailure.message : "The session process could not be terminated",
-      );
+      const messageText =
+        killFailure instanceof Error ? killFailure.message : "The session process could not be terminated";
+      setSessionCommandError(sessionId, "kill", messageText);
     } finally {
-      setCommandState("idle");
+      setKillPendingBySession((current) => {
+        if (!current[sessionId]) return current;
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
     }
   };
 
@@ -844,7 +950,9 @@ function DashboardContent({
             notificationState,
             onOpenNotificationSettings: () => setNotificationSettingsOpen(true),
             onKillSession: () => {
-              setCommandError(null);
+              if (selectedSessionKey) {
+                clearSessionCommandError(selectedSessionKey, "kill");
+              }
               setKillOpen(true);
             },
             onLaunchSession: () => setLaunchOpen(true),
@@ -909,7 +1017,10 @@ function DashboardContent({
                   </div>
                   <Button
                     type="button"
-                    disabled={connection !== "connected" || commandState === "sending"}
+                    disabled={
+                      connection !== "connected" ||
+                      Boolean(selectedSessionKey && resumePendingBySession[selectedSessionKey])
+                    }
                     onClick={() => void resumeSelectedSession()}
                   >
                     Resume session
@@ -921,7 +1032,7 @@ function DashboardContent({
                   skillSuggestions: visibleSkillSuggestions,
                   activeSkillIndex,
                   composerAction,
-                  sending: commandState === "sending",
+                  sending: Boolean(selectedSessionKey && messagePendingBySession[selectedSessionKey]),
                   onSubmit: submitMessage,
                   onMessageChange: setMessage,
                   onMoveActiveSkill: (direction) =>
@@ -935,9 +1046,9 @@ function DashboardContent({
                 })
               )}
 
-              {commandError ? (
+              {visibleComposerError ? (
                 <p className="inline-error" role="alert">
-                  {commandError}
+                  {visibleComposerError}
                 </p>
               ) : null}
             </section>
@@ -1077,15 +1188,15 @@ function DashboardContent({
       })}
       {AbortSessionDialog({
         open: abortOpen,
-        sending: commandState === "sending",
+        sending: Boolean(selectedSessionKey && abortPendingBySession[selectedSessionKey]),
         onOpenChange: setAbortOpen,
         onAbort: () => void abortSelectedSession(),
         onKeepRunning: () => setAbortOpen(false),
       })}
       {KillSessionDialog({
         open: killOpen,
-        sending: commandState === "sending",
-        commandError,
+        sending: Boolean(selectedSessionKey && killPendingBySession[selectedSessionKey]),
+        commandError: visibleKillError,
         onOpenChange: setKillOpen,
         onKill: () => void killSelectedSession(),
         onKeepSession: () => setKillOpen(false),

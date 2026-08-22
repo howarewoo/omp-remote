@@ -10,6 +10,7 @@ import { SessionRegistry } from "@omp-remote/sessions/services";
 import type { FastifyInstance } from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import type { WebSocket } from "ws";
+import type { ForwardedExtensionCommand } from "./browser-websocket.js";
 import { applyRpcSessionMetadata, registerExtensionWebSocketRoute } from "./extension-websocket.js";
 
 const TEST_MODELS: SessionModelOption[] = [
@@ -226,6 +227,8 @@ function createExtensionEventFrame(
 }
 
 function createTestHarness(overrides: Partial<Parameters<typeof registerExtensionWebSocketRoute>[1]> = {}) {
+  const forwardedExtensionCommands =
+    overrides.forwardedExtensionCommands ?? new Map<string, ForwardedExtensionCommand>();
   const extensionSockets = overrides.extensionSockets ?? new Map<string, WebSocket>();
   const extensionSessionBySocket = overrides.extensionSessionBySocket ?? new Map<WebSocket, string>();
   const pendingAskBySession = overrides.pendingAskBySession ?? new Map();
@@ -244,6 +247,7 @@ function createTestHarness(overrides: Partial<Parameters<typeof registerExtensio
   const clearPendingAsk = overrides.clearPendingAsk ?? vi.fn();
   const expirePendingAsk = overrides.expirePendingAsk ?? vi.fn();
   const markSessionHistorical = overrides.markSessionHistorical ?? vi.fn();
+  const sendToBrowser = overrides.sendToBrowser ?? vi.fn();
   const broadcast = overrides.broadcast ?? vi.fn();
   const isLoopbackAddress = overrides.isLoopbackAddress ?? (() => true);
 
@@ -255,6 +259,7 @@ function createTestHarness(overrides: Partial<Parameters<typeof registerExtensio
   } as unknown as FastifyInstance;
 
   registerExtensionWebSocketRoute(app, {
+    forwardedExtensionCommands,
     extensionSockets,
     extensionSessionBySocket,
     pendingAskBySession,
@@ -271,6 +276,7 @@ function createTestHarness(overrides: Partial<Parameters<typeof registerExtensio
     clearPendingAsk,
     expirePendingAsk,
     markSessionHistorical,
+    sendToBrowser,
     broadcast,
     isLoopbackAddress,
   });
@@ -284,6 +290,7 @@ function createTestHarness(overrides: Partial<Parameters<typeof registerExtensio
 
   return {
     connectSocket,
+    forwardedExtensionCommands,
     extensionSockets,
     extensionSessionBySocket,
     pendingAskBySession,
@@ -296,6 +303,7 @@ function createTestHarness(overrides: Partial<Parameters<typeof registerExtensio
     clearPendingAsk,
     expirePendingAsk,
     markSessionHistorical,
+    sendToBrowser,
     broadcast,
   };
 }
@@ -667,5 +675,139 @@ describe("registerExtensionWebSocketRoute", () => {
     expect(harness.markSessionHistorical).toHaveBeenCalledWith("session-live-1");
     expect(harness.clearPendingAsk).toHaveBeenCalledWith("session-live-1");
     expect(socket.closeCode).toBeUndefined();
+  });
+
+  it("settles forwarded command with correlated error when owning extension socket is replaced, and ignores late stale result", async () => {
+    const harness = createTestHarness();
+    const browserSocket = { readyState: 1, send: vi.fn() } as unknown as WebSocket;
+    const socket1 = harness.connectSocket();
+    socket1.receiveFrame({ type: "register", session: BASE_EXTENSION_SESSION });
+    await vi.waitFor(() => {
+      expect(harness.extensionSockets.get("session-live-1")).toBe(socket1);
+    });
+
+    harness.forwardedExtensionCommands.set("cmd-fwd-1", {
+      requestId: "cmd-fwd-1",
+      sessionId: "session-live-1",
+      browserSocket,
+      extensionSocket: socket1,
+    });
+
+    // Socket 2 replaces socket 1
+    const socket2 = harness.connectSocket();
+    socket2.receiveFrame({ type: "register", session: BASE_EXTENSION_SESSION });
+    await vi.waitFor(() => {
+      expect(harness.extensionSockets.get("session-live-1")).toBe(socket2);
+    });
+
+    expect(harness.sendToBrowser).toHaveBeenCalledWith(browserSocket, {
+      type: "command_result",
+      requestId: "cmd-fwd-1",
+      outcome: {
+        status: "error",
+        error: "This OMP session is no longer connected.",
+      },
+    });
+    expect(harness.forwardedExtensionCommands.has("cmd-fwd-1")).toBe(false);
+
+    // Late stale result on displaced socket 1 is discarded
+    socket1.receiveFrame({
+      type: "command_result",
+      requestId: "cmd-fwd-1",
+      ok: true,
+      error: null,
+    });
+
+    for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    expect(harness.sendToBrowser).toHaveBeenCalledTimes(1);
+    expect(harness.broadcast).not.toHaveBeenCalledWith(expect.objectContaining({ requestId: "cmd-fwd-1" }));
+  });
+
+  it("settles forwarded command with correlated error when owning extension socket closes", async () => {
+    const harness = createTestHarness();
+    const browserSocket = { readyState: 1, send: vi.fn() } as unknown as WebSocket;
+    const socket1 = harness.connectSocket();
+    socket1.receiveFrame({ type: "register", session: BASE_EXTENSION_SESSION });
+    await vi.waitFor(() => {
+      expect(harness.extensionSockets.get("session-live-1")).toBe(socket1);
+    });
+
+    harness.forwardedExtensionCommands.set("cmd-close-1", {
+      requestId: "cmd-close-1",
+      sessionId: "session-live-1",
+      browserSocket,
+      extensionSocket: socket1,
+    });
+
+    socket1.close();
+
+    expect(harness.sendToBrowser).toHaveBeenCalledWith(browserSocket, {
+      type: "command_result",
+      requestId: "cmd-close-1",
+      outcome: {
+        status: "error",
+        error: "This OMP session is no longer connected.",
+      },
+    });
+    expect(harness.forwardedExtensionCommands.has("cmd-close-1")).toBe(false);
+  });
+
+  it("delivers matching extension result directly to originating browser and removes correlation", async () => {
+    const harness = createTestHarness();
+    const browserSocket = { readyState: 1, send: vi.fn() } as unknown as WebSocket;
+    const socket1 = harness.connectSocket();
+    socket1.receiveFrame({ type: "register", session: BASE_EXTENSION_SESSION });
+    await vi.waitFor(() => {
+      expect(harness.extensionSockets.get("session-live-1")).toBe(socket1);
+    });
+
+    harness.forwardedExtensionCommands.set("cmd-success-1", {
+      requestId: "cmd-success-1",
+      sessionId: "session-live-1",
+      browserSocket,
+      extensionSocket: socket1,
+    });
+
+    socket1.receiveFrame({
+      type: "command_result",
+      requestId: "cmd-success-1",
+      ok: true,
+      error: null,
+    });
+
+    await vi.waitFor(() => {
+      expect(harness.sendToBrowser).toHaveBeenCalledWith(browserSocket, {
+        type: "command_result",
+        requestId: "cmd-success-1",
+        outcome: {
+          status: "ok",
+          value: { type: "void" },
+        },
+      });
+    });
+    expect(harness.forwardedExtensionCommands.has("cmd-success-1")).toBe(false);
+    expect(harness.broadcast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: "cmd-success-1" }),
+    );
+  });
+
+  it("ignores uncorrelated extension command_result without broadcasting", async () => {
+    const harness = createTestHarness();
+    const socket = harness.connectSocket();
+    socket.receiveFrame({ type: "register", session: BASE_EXTENSION_SESSION });
+    await vi.waitFor(() => {
+      expect(harness.extensionSockets.get("session-live-1")).toBe(socket);
+    });
+
+    socket.receiveFrame({
+      type: "command_result",
+      requestId: "cmd-unknown-1",
+      ok: true,
+      error: null,
+    });
+
+    for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    expect(harness.sendToBrowser).not.toHaveBeenCalled();
+    expect(harness.broadcast).not.toHaveBeenCalled();
   });
 });
