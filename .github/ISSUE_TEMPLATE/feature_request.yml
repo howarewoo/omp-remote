@@ -1,0 +1,40 @@
+name: Feature request
+description: Propose a focused improvement to OMP Remote
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: Please describe the user problem before proposing an implementation. Security reports must follow SECURITY.md and must not be filed publicly.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user need or limitation should be addressed?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe the desired observable behavior and important constraints.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds or other approaches have you tried?
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add sanitized examples or screenshots. Do not include private transcripts, credentials, or personal data.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched for an existing request.
+          required: true
+        - label: This request preserves the loopback daemon and private Tailnet access model.
+          required: true
