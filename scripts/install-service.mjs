@@ -26,15 +26,42 @@ function quoteSystemd(value) {
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%")}"`;
 }
 
-export function renderLaunchAgent({ label, nodePath, daemonEntry, root, logDirectory, servicePath }) {
+function resolveServiceEndpoint(environment) {
+  const host = environment.OMP_REMOTE_HOST;
+  if (host !== undefined && !["127.0.0.1", "::1", "localhost"].includes(host)) {
+    throw new Error("OMP_REMOTE_HOST must be 127.0.0.1, ::1, or localhost");
+  }
+
+  const port = environment.OMP_REMOTE_PORT;
+  if (port !== undefined && (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65_535)) {
+    throw new Error("OMP_REMOTE_PORT must be an integer between 1 and 65535");
+  }
+
+  return { host, port };
+}
+
+export function renderLaunchAgent({
+  label,
+  nodePath,
+  daemonEntry,
+  root,
+  logDirectory,
+  servicePath,
+  serviceHost,
+  servicePort,
+}) {
   const escapedPath = escapeXml(requireServicePath(servicePath));
+  const endpointEnvironment = [
+    serviceHost === undefined ? "" : `<key>OMP_REMOTE_HOST</key><string>${escapeXml(serviceHost)}</string>`,
+    servicePort === undefined ? "" : `<key>OMP_REMOTE_PORT</key><string>${escapeXml(servicePort)}</string>`,
+  ].join("");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>${escapeXml(label)}</string>
   <key>ProgramArguments</key><array><string>${escapeXml(nodePath)}</string><string>${escapeXml(daemonEntry)}</string></array>
   <key>WorkingDirectory</key><string>${escapeXml(root)}</string>
-  <key>EnvironmentVariables</key><dict><key>NODE_ENV</key><string>production</string><key>PATH</key><string>${escapedPath}</string></dict>
+  <key>EnvironmentVariables</key><dict><key>NODE_ENV</key><string>production</string><key>PATH</key><string>${escapedPath}</string>${endpointEnvironment}</dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>StandardOutPath</key><string>${escapeXml(join(logDirectory, "daemon.log"))}</string>
@@ -42,8 +69,12 @@ export function renderLaunchAgent({ label, nodePath, daemonEntry, root, logDirec
 </dict></plist>\n`;
 }
 
-export function renderSystemdUnit({ nodePath, daemonEntry, root, servicePath }) {
+export function renderSystemdUnit({ nodePath, daemonEntry, root, servicePath, serviceHost, servicePort }) {
   const path = requireServicePath(servicePath);
+  const endpointEnvironment = [
+    serviceHost === undefined ? "" : `Environment=${quoteSystemd(`OMP_REMOTE_HOST=${serviceHost}`)}\n`,
+    servicePort === undefined ? "" : `Environment=${quoteSystemd(`OMP_REMOTE_PORT=${servicePort}`)}\n`,
+  ].join("");
   return `[Unit]
 Description=OMP Remote private session dashboard
 After=network.target
@@ -54,7 +85,7 @@ WorkingDirectory=${quoteSystemd(root)}
 ExecStart=${quoteSystemd(nodePath)} ${quoteSystemd(daemonEntry)}
 Environment=NODE_ENV=production
 Environment=${quoteSystemd(`PATH=${path}`)}
-Restart=on-failure
+${endpointEnvironment}Restart=on-failure
 RestartSec=2
 
 [Install]
@@ -62,18 +93,24 @@ WantedBy=default.target
 `;
 }
 
-async function installService() {
-  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+export async function installService({
+  hostPlatform = platform(),
+  homeDirectory = homedir(),
+  runCommand = spawnSync,
+  root = resolve(dirname(fileURLToPath(import.meta.url)), ".."),
+  environment = process.env,
+} = {}) {
+  const { host: serviceHost, port: servicePort } = resolveServiceEndpoint(environment);
   const daemonEntry = join(root, "apps", "daemon", "dist", "index.js");
   await access(daemonEntry).catch(() => {
     throw new Error("Build OMP Remote before installing the service: pnpm build");
   });
 
-  if (platform() === "darwin") {
+  if (hostPlatform === "darwin") {
     const label = "com.omp-remote.daemon";
-    const agentsDirectory = join(homedir(), "Library", "LaunchAgents");
+    const agentsDirectory = join(homeDirectory, "Library", "LaunchAgents");
     const plistPath = join(agentsDirectory, `${label}.plist`);
-    const logDirectory = join(homedir(), "Library", "Logs", "OMP Remote");
+    const logDirectory = join(homeDirectory, "Library", "Logs", "OMP Remote");
     await mkdir(agentsDirectory, { recursive: true });
     await mkdir(logDirectory, { recursive: true });
     const plist = renderLaunchAgent({
@@ -82,36 +119,41 @@ async function installService() {
       daemonEntry,
       root,
       logDirectory,
-      servicePath: process.env.PATH,
+      servicePath: environment.PATH,
+      serviceHost,
+      servicePort,
     });
     await writeFile(plistPath, plist, "utf8");
-    spawnSync("launchctl", ["bootout", `gui/${process.getuid()}`, plistPath], { stdio: "ignore" });
-    const result = spawnSync("launchctl", ["bootstrap", `gui/${process.getuid()}`, plistPath], {
+    runCommand("launchctl", ["bootout", `gui/${process.getuid()}`, plistPath], { stdio: "ignore" });
+    const result = runCommand("launchctl", ["bootstrap", `gui/${process.getuid()}`, plistPath], {
       stdio: "inherit",
     });
     if (result.status !== 0) throw new Error("launchctl could not install OMP Remote");
     process.stdout.write(`Installed ${label} from ${plistPath}\n`);
-  } else if (platform() === "linux") {
-    const unitDirectory = join(homedir(), ".config", "systemd", "user");
+  } else if (hostPlatform === "linux") {
+    const unitDirectory = join(homeDirectory, ".config", "systemd", "user");
     const unitPath = join(unitDirectory, "omp-remote.service");
     await mkdir(unitDirectory, { recursive: true });
     const unit = renderSystemdUnit({
       nodePath: process.execPath,
       daemonEntry,
       root,
-      servicePath: process.env.PATH,
+      servicePath: environment.PATH,
+      serviceHost,
+      servicePort,
     });
     await writeFile(unitPath, unit, "utf8");
     for (const args of [
       ["--user", "daemon-reload"],
-      ["--user", "enable", "--now", "omp-remote.service"],
+      ["--user", "enable", "omp-remote.service"],
+      ["--user", "restart", "omp-remote.service"],
     ]) {
-      const result = spawnSync("systemctl", args, { stdio: "inherit" });
+      const result = runCommand("systemctl", args, { stdio: "inherit" });
       if (result.status !== 0) throw new Error(`systemctl ${args.join(" ")} failed`);
     }
     process.stdout.write(`Installed omp-remote.service from ${unitPath}\n`);
   } else {
-    throw new Error(`Unsupported host platform: ${platform()}`);
+    throw new Error(`Unsupported host platform: ${hostPlatform}`);
   }
 }
 
