@@ -378,6 +378,30 @@ describe("ToolTranscriptText", () => {
     ).toContain(title);
   });
 
+  it("keeps the answered Ask question in the disclosure header", () => {
+    const title = "Ask: Which deployment target? +1 more";
+    const disclosure = ToolTranscriptText({
+      entry: {
+        id: "ask-1",
+        role: "tool",
+        toolName: "ask",
+        toolTitle: title,
+        text: "Preview, iad1",
+        timestamp: "2026-07-29T12:00:00.000Z",
+        streaming: false,
+        presentation: "text",
+      },
+    });
+
+    expect(
+      textContent(
+        renderTranscriptNodes(disclosure).find(
+          (node) => node.className === "transcript-disclosure-title" || node.className === "message-author",
+        )?.props?.children as ReactNode,
+      ),
+    ).toContain(title);
+  });
+
   it("shows a canonical Read filename with its icon without rendering the result", () => {
     const text = [
       "[packages/features/sessions/src/components/dashboard.tsx#ABCD]",
