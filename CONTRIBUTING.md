@@ -33,6 +33,10 @@ Run the local development process with `pnpm dev`. Do not commit dependencies, b
 
 Keep changes focused and explain the user-visible behavior, security implications, and test coverage. Update contracts, callers, and documentation together. Add tests for changed observable behavior rather than implementation details. Include screenshots for visible UI changes.
 
+`beta` is the development integration branch and the required base for ordinary pull requests. Start work from the latest `beta` and target `beta` with ordinary pull requests. `main` remains the primary branch and contains stable releases only; release pull requests promote the verified `beta` branch into `main`. CI rejects any other pull request into `main`.
+
+Only the repository owner may merge a release pull request from `beta` into `main`. The owner may merge into `beta` without review. Every other contributor requires the owner's code-owner approval after the latest push before a pull request can merge into `beta`.
+
 Before requesting review, run this exact sequence:
 
 ```sh

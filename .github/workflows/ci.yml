@@ -12,6 +12,16 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
+      - name: Enforce branch flow
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if [ "$BASE_REF" = "main" ] && [ "$HEAD_REF" != "beta" ]; then
+            echo "::error::Ordinary pull requests must target beta; only beta may be promoted to main."
+            exit 1
+          fi
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
         with:

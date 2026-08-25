@@ -1,3 +1,5 @@
+<!-- Ordinary changes must target beta. Only release PRs from beta target main. -->
+
 ## Goal
 
 <!-- What user problem does this change solve? Link related issues. -->
