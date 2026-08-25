@@ -512,4 +512,3 @@ describe("dashboard launch selection", () => {
     ).toBe(true);
   });
 });
-
