@@ -254,4 +254,3 @@ describe("application errors client support", () => {
     expect(result).toEqual({ ok: true, clearedCount: 1 });
   });
 });
-
