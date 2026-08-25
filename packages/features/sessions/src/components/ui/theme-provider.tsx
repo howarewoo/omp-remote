@@ -7,7 +7,16 @@ import {
   getSystemTheme,
   setStoredTheme,
 } from "@omp-remote/ui";
-import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  type CSSProperties,
+  type ReactNode,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { DashboardIcon } from "../dashboard/icon.js";
 import { Button } from "./button.js";
 import { cn } from "./utils.js";
@@ -27,6 +36,11 @@ const DEFAULT_THEME_CONTEXT: ThemeContextValue = {
 };
 
 export const ThemeContext = createContext<ThemeContextValue>(DEFAULT_THEME_CONTEXT);
+
+const THEME_SELECTOR_STYLE: CSSProperties = {
+  margin: 0,
+  minWidth: 0,
+};
 
 export interface ThemeProviderProps {
   children: ReactNode;
@@ -129,7 +143,7 @@ export function ThemeSelector({ className }: ThemeSelectorProps) {
   const { theme, setTheme } = useTheme();
 
   return (
-    <fieldset className={cn("ui-theme-selector", className)}>
+    <fieldset className={cn("ui-theme-selector", className)} style={THEME_SELECTOR_STYLE}>
       <legend className="sr-only">Theme mode selection</legend>
       {THEME_OPTIONS.map((option) => {
         const selected = theme === option.value;
