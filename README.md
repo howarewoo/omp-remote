@@ -2,6 +2,8 @@
 
 A phone-first PWA for supervising multiple [Oh My Pi](https://omp.sh) coding sessions from a private Tailnet. A loopback-only host daemon serves the dashboard, launches OMP RPC sessions, and accepts automatic registrations from ordinary terminal OMP sessions.
 
+OMP Remote is an independent community project. It is not affiliated with or endorsed by Oh My Pi. The `0.1.x` line is pre-1.0 software supported on a best-effort basis; minor releases may change compatibility.
+
 ## Screenshots
 
 |Desktop|Mobile|
@@ -28,23 +30,41 @@ Follow these steps on the macOS or Linux computer where you run OMP.
 
 ### 1. Install the prerequisites
 
-- [OMP](https://omp.sh), installed and authenticated.
-- [Node.js](https://nodejs.org/en/download) 24.18 or newer.
+- [OMP](https://omp.sh) 18.0.0, installed and authenticated.
+- [Node.js](https://nodejs.org/en/download) 24.18.0 or newer.
 - [pnpm](https://pnpm.io/installation) 11.17.0.
 - [Git](https://git-scm.com/downloads).
-- [Tailscale](https://tailscale.com/download) on both the computer and your phone. Sign in to the same Tailscale network (Tailnet) on both devices.
+- [Tailscale](https://tailscale.com/download) on both the computer and your phone. Sign in to the same Tailnet on both devices and configure its ACLs so only trusted users and devices can reach the host.
 
 ### 2. Install OMP Remote
 
-Paste this single command into a terminal:
+Stable releases are installed from `main`. Paste this single command into a terminal:
 
 ```bash
-git clone https://github.com/howarewoo/omp-remote.git && pnpm --dir omp-remote run setup
+git clone --branch main https://github.com/howarewoo/omp-remote.git && pnpm --dir omp-remote run setup
 ```
 
-The setup command installs dependencies, builds OMP Remote, connects future OMP terminal sessions, starts the background service, and configures private Tailscale access. It is safe to rerun. If Tailscale prints an admin URL the first time, open it to enable Serve and then rerun the same command.
+The setup command verifies Node 24.18.0 or newer, pnpm 11.17.0, OMP 18.0.0, and Tailscale; installs the frozen dependency graph; builds OMP Remote; connects future OMP terminal sessions; starts or restarts the background service; waits for the OMP Remote health endpoint; and then configures private Tailscale access. It is safe to rerun and stops at the first failed stage without continuing. Fix the reported stage and rerun the same command. If Tailscale prints an admin URL the first time, open it to enable Serve and then rerun setup.
 
-When setup finishes, it prints the private `https://...ts.net` dashboard URL. OMP Remote is not exposed to the public internet; only devices allowed onto your Tailnet can reach it.
+### Install the beta channel
+
+`beta` contains changes accepted for the next release before they are promoted to `main`. It may change more frequently than the stable channel. Install it into a separate checkout with:
+
+```bash
+git clone --branch beta https://github.com/howarewoo/omp-remote.git omp-remote-beta && pnpm --dir omp-remote-beta run setup
+```
+
+Stable and beta checkouts use the same user service, OMP extension, and state directory, so only one channel can be active at a time. Running setup from a checkout makes that checkout the active installation. To move an existing clone to beta, fetch and switch branches before rerunning setup:
+
+```bash
+cd omp-remote
+git fetch origin
+git switch beta
+git pull --ff-only origin beta
+pnpm run setup
+```
+
+When setup finishes, it prints the private `https://...ts.net` dashboard URL. The daemon listens only on loopback and has no application login. Tailnet membership and ACLs are the authentication and authorization boundary: every user or device allowed to reach the host can view session content and use its controls. Do not expose port `4387` directly to a LAN or the public internet.
 
 ### 3. Open it on your phone
 
@@ -61,9 +81,151 @@ Web Push requires a secure context, so use the private `https://...ts.net` URL p
 
 Notification delivery is best effort. The host computer must be awake with the OMP Remote daemon running and online, and both the host and receiving device need network access. A delayed or missing notification does not change session state; reopen the dashboard to see the authoritative status.
 
-OMP Remote has no notification relay or account service. The daemon stores each enabled device's push endpoint, encryption keys, and preferences locally in `~/.omp/remote/push-subscriptions.json`. Notification text is encrypted for the browser push service, but that service still handles delivery metadata; notification previews can also expose the session name and status on the receiving device's lock screen. Disable both alerts on a device to remove only that device's daemon registration and browser subscription.
+OMP Remote has no notification relay or account service. The daemon stores each enabled device's push endpoint, encryption keys, preferences, and the VAPID signing keys locally in `~/.omp/remote/push-subscriptions.json`. Notification text is encrypted for the browser push service, but that service still handles delivery metadata. Notification previews can expose the session name and status on the receiving device's lock screen; use the device's preview controls or disable the OMP Remote alerts when that disclosure is inappropriate. Disable both alerts on a device to remove only that device's daemon registration and browser subscription.
 
-The same local file also holds the daemon's VAPID signing key. If it is deleted, lost, or replaced, existing browser subscriptions cannot receive notifications under the new key. Open **Notification settings**, turn the device's alerts off, then enable the desired alerts again. Restoring an older installation or preference-only browser state also requires this one-time, per-device re-enable; OMP Remote does not silently request permission or create a subscription.
+If `push-subscriptions.json` is deleted, lost, replaced, or restored without matching browser state, existing subscriptions cannot receive notifications under the resulting VAPID key. On every affected device, open **Notification settings**, turn both alerts off, then enable the desired alerts again. OMP Remote does not silently request permission or create a subscription.
+
+Session transcripts can contain prompts, tool output, file paths, process details, and secrets. Anyone admitted by Tailnet membership and ACLs may be able to read them in the dashboard. Treat screenshots, exported transcripts, application errors, service logs, and notification previews as sensitive.
+
+## Upgrade and recovery
+
+The supported upgrade path is an in-place pull on the installed channel followed by the same idempotent setup command:
+
+```bash
+cd omp-remote
+git pull --ff-only
+pnpm run setup
+```
+
+`git pull` keeps the checkout on its current channel: `main` for stable or `beta` for beta. Check the active channel with `git branch --show-current` before running setup.
+
+Setup rebuilds the current checkout, replaces the installed user extension, and rewrites the background-service definition without deleting `~/.omp/remote`. On macOS, setup unloads and reloads the launch agent. On Linux, setup reloads the systemd user definition, enables the service, and restarts it. On both platforms, setup waits for the restarted daemon to identify itself as healthy before changing Tailscale Serve.
+
+The service definition records the checkout's absolute path, so rerun setup after moving the clone. Start new terminal OMP sessions after upgrading so they load the replaced extension.
+
+Preserving `~/.omp/remote/push-subscriptions.json` preserves the local VAPID key and registered devices. If that file is intentionally reset or cannot be restored from a trusted backup, stop the service, move the file aside for diagnosis rather than overwriting it, rerun setup, and re-enable alerts once on every device. Never share the file: it contains the VAPID private key and browser push credentials.
+
+The other daemon state is `~/.omp/remote/saved-working-directories.json` and `~/.omp/remote/errors.json`. A malformed push-subscription or saved-directory file prevents daemon startup; restore a known-good copy or, after stopping the service, move only the affected file aside and rerun setup. A malformed error ledger is preserved and reported as degraded rather than silently deleted. Moving a state file aside loses only the state represented by that file; keep it until recovery is confirmed.
+
+## Operations and troubleshooting
+
+### Installed locations
+
+| Item | macOS | Linux |
+| --- | --- | --- |
+| Service definition | `~/Library/LaunchAgents/com.omp-remote.daemon.plist` | `~/.config/systemd/user/omp-remote.service` |
+| Service logs | `~/Library/Logs/OMP Remote/daemon.log` and `daemon.error.log` | user journal for `omp-remote.service` |
+| Daemon state | `~/.omp/remote/` | `~/.omp/remote/` |
+| Extension | `${PI_CODING_AGENT_DIR:-$HOME/.omp/agent}/extensions/omp-remote.js` | same |
+| Push registrations and VAPID keys | `~/.omp/remote/push-subscriptions.json` | same |
+
+The service executes `apps/daemon/dist/index.js` from the checkout where setup ran. The extension uses `~/.omp/agent` unless `PI_CODING_AGENT_DIR` was set during installation.
+
+### Checks
+
+Use these non-destructive checks before changing files:
+
+```bash
+curl http://127.0.0.1:4387/healthz
+tailscale serve status
+```
+
+On macOS:
+
+```bash
+launchctl print "gui/$(id -u)/com.omp-remote.daemon"
+tail -n 100 "$HOME/Library/Logs/OMP Remote/daemon.error.log"
+```
+
+On Linux:
+
+```bash
+systemctl --user status omp-remote.service
+journalctl --user -u omp-remote.service -n 100 --no-pager
+```
+
+- If setup stops, correct the named prerequisite or failed stage and rerun `pnpm run setup`; later stages have not run.
+- If local health fails, inspect the platform service status and logs. Confirm the clone still exists at the path recorded in the service definition, then rerun setup from the intended clone.
+- If local health works but the private URL does not, confirm both devices are connected to Tailscale, inspect `tailscale serve status`, and review Tailnet membership and ACLs. Rerun `pnpm run tailscale:serve` if the Serve mapping is absent.
+- If an ordinary terminal session is missing, start a new OMP session after setup and confirm the extension file exists at the path above. An existing process does not reload a replaced extension.
+- If notifications fail, confirm the host is awake, the daemon and both networks are available, and the device's alerts remain enabled. After a VAPID reset or browser/PWA reinstall, disable and re-enable the alerts on that device.
+
+## Manual uninstall
+
+Uninstall is intentionally manual so each destructive choice remains explicit. Run only the block for the host platform, from any shell that is not inside a directory you plan to remove.
+
+### 1. Stop and remove the service
+
+macOS:
+
+```bash
+launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.omp-remote.daemon.plist"
+rm "$HOME/Library/LaunchAgents/com.omp-remote.daemon.plist"
+```
+
+Linux:
+
+```bash
+systemctl --user disable --now omp-remote.service
+rm "$HOME/.config/systemd/user/omp-remote.service"
+systemctl --user daemon-reload
+```
+
+Verify shutdown without deleting data:
+
+```bash
+curl http://127.0.0.1:4387/healthz
+```
+
+The expected result is a connection failure. If it still responds, stop and identify the remaining process before continuing.
+
+### 2. Disable Tailscale Serve
+
+Inspect the node's complete Serve configuration before changing it:
+
+```bash
+tailscale serve status
+```
+
+If the OMP Remote proxy to `http://127.0.0.1:4387` is the node's only Serve mapping, reset Serve and verify the mapping is gone:
+
+```bash
+tailscale serve reset
+tailscale serve status
+```
+
+`reset` removes all Serve configuration for the Tailscale node. If status shows any unrelated mapping, do not run `reset`: preserve those mappings and remove only the OMP Remote mapping, using the listener reported by `tailscale serve status`, then inspect status again before continuing.
+
+### 3. Remove the OMP extension
+
+```bash
+rm "${PI_CODING_AGENT_DIR:-$HOME/.omp/agent}/extensions/omp-remote.js"
+test ! -e "${PI_CODING_AGENT_DIR:-$HOME/.omp/agent}/extensions/omp-remote.js"
+```
+
+Use the same `PI_CODING_AGENT_DIR` value used during setup. Restart any still-running terminal OMP sessions so the already-loaded extension is no longer active.
+
+### 4. Optionally delete local data
+
+This is optional and irreversible. Keeping the directory preserves saved working directories, application errors, device registrations, and the VAPID key for a later reinstall.
+
+```bash
+rm -rf "$HOME/.omp/remote"
+```
+
+The macOS service logs are separate and may also be retained or explicitly removed:
+
+```bash
+rm -rf "$HOME/Library/Logs/OMP Remote"
+```
+
+### 5. Optionally delete the clone
+
+This is also optional. After leaving the checkout, substitute the actual clone path and review it before running:
+
+```bash
+rm -rf /path/to/omp-remote
+```
 
 ## Comparison with OMP mobile options
 
@@ -95,9 +257,9 @@ OMP Remote does not provide full access to OMP's slash-command catalog. It can i
 | Contracts | Zod | `4.4.3` | Runtime validation at every WebSocket and RPC boundary |
 | OMP integration | OMP SDK + RPC | `18.0.4` | Native lifecycle events for existing sessions and RPC for dashboard-launched sessions |
 | Workspace | Turborepo + TypeScript | `2.10.7` + `7.0.2` | Ordered builds across app, feature, and infrastructure slices |
-| Private delivery | Tailscale Serve | Tailscale `1.98.9` verified | Tailnet HTTPS without exposing the daemon on a LAN or public interface |
+| Private delivery | Tailscale Serve | Installed Tailscale CLI | Tailnet HTTPS without exposing the daemon on a LAN or public interface |
 
-No database or application login is used. This bootstrap targets one trusted user in one Tailnet; Tailscale membership is the access boundary.
+No database or application login is used. This bootstrap targets one trusted user in one Tailnet; Tailnet membership and ACLs are the access boundary.
 
 ## Architecture
 

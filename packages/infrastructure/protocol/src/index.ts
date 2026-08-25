@@ -97,9 +97,19 @@ const TranscriptImageAvailableSchema = z
       .string()
       .min(1)
       .max(Math.ceil(TRANSCRIPT_IMAGE_MAX_BYTES / 3) * 4)
-      .refine(isTranscriptImageBase64Alphabet)
-      .refine((data) => data.length % 4 === 0)
-      .refine((data) => getTranscriptImageBase64ByteLength(data) <= TRANSCRIPT_IMAGE_MAX_BYTES),
+      .superRefine((data, context) => {
+        if (getTranscriptImageBase64ByteLength(data) > TRANSCRIPT_IMAGE_MAX_BYTES) {
+          context.addIssue({ code: "custom", message: "Image exceeds the per-image byte limit" });
+          return;
+        }
+        if (data.length % 4 !== 0) {
+          context.addIssue({ code: "custom", message: "Expected padded base64" });
+          return;
+        }
+        if (!isTranscriptImageBase64Alphabet(data)) {
+          context.addIssue({ code: "custom", message: "Expected valid base64" });
+        }
+      }),
   })
   .strict();
 const TranscriptImageUnavailableSchema = z

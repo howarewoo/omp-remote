@@ -438,7 +438,7 @@ export function DashboardContent({
     clearSessionCommandError(sessionId, "message");
 
     try {
-      await onCommand(sessionId, selectedSession.status === "running" ? "follow_up" : "prompt", trimmed);
+      await onCommand(sessionId, selectedSession.status === "running" ? "steer" : "prompt", trimmed);
       if (messageRequestBySessionRef.current[sessionId] === request) {
         if (selectedSessionIdRef.current === sessionId) {
           transcriptScrollToEndRef.current?.();

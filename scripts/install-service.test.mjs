@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
-import { renderLaunchAgent, renderSystemdUnit } from "./install-service.mjs";
+import { installService, renderLaunchAgent, renderSystemdUnit } from "./install-service.mjs";
 
 const servicePath = `/Users/example/OMP & Tools/<current>/"quoted"/'single'/bin\\tools:/usr/%h/bin`;
 const service = {
@@ -42,6 +45,24 @@ test("systemd unit preserves the installation PATH with unit quoting and escapin
   );
 });
 
+test("service renderers persist configured loopback host and port overrides", () => {
+  const endpoint = { serviceHost: "::1", servicePort: "4388" };
+  const plist = renderLaunchAgent({
+    ...service,
+    ...endpoint,
+    label: "com.omp-remote.daemon",
+    logDirectory: "/Users/example/Library/Logs/OMP Remote",
+  });
+  const unit = renderSystemdUnit({ ...service, ...endpoint });
+
+  assert.match(
+    plist,
+    /<key>OMP_REMOTE_HOST<\/key><string>::1<\/string><key>OMP_REMOTE_PORT<\/key><string>4388<\/string>/,
+  );
+  assert.match(unit, /^Environment="OMP_REMOTE_HOST=::1"$/m);
+  assert.match(unit, /^Environment="OMP_REMOTE_PORT=4388"$/m);
+});
+
 test("service renderers reject a missing or blank installation PATH", () => {
   for (const invalidServicePath of [undefined, "", "   "]) {
     const invalidService = { ...service, servicePath: invalidServicePath };
@@ -56,5 +77,42 @@ test("service renderers reject a missing or blank installation PATH", () => {
       missingPathError,
     );
     assert.throws(() => renderSystemdUnit(invalidService), missingPathError);
+  }
+});
+
+test("Linux reloads, enables, and restarts the freshly written service in order", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "omp-remote-service-test-"));
+  const root = join(directory, "checkout");
+  const daemonDirectory = join(root, "apps", "daemon", "dist");
+  await mkdir(daemonDirectory, { recursive: true });
+  await writeFile(join(daemonDirectory, "index.js"), "");
+  const commands = [];
+
+  try {
+    await installService({
+      hostPlatform: "linux",
+      homeDirectory: directory,
+      root,
+      environment: {
+        PATH: servicePath,
+        OMP_REMOTE_HOST: "localhost",
+        OMP_REMOTE_PORT: "4389",
+      },
+      runCommand(command, args) {
+        commands.push({ command, args });
+        return { status: 0 };
+      },
+    });
+
+    assert.deepEqual(commands, [
+      { command: "systemctl", args: ["--user", "daemon-reload"] },
+      { command: "systemctl", args: ["--user", "enable", "omp-remote.service"] },
+      { command: "systemctl", args: ["--user", "restart", "omp-remote.service"] },
+    ]);
+    const unit = await readFile(join(directory, ".config", "systemd", "user", "omp-remote.service"), "utf8");
+    assert.match(unit, /^Environment="OMP_REMOTE_HOST=localhost"$/m);
+    assert.match(unit, /^Environment="OMP_REMOTE_PORT=4389"$/m);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });

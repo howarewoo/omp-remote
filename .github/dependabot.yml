@@ -4,8 +4,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    target-branch: beta
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    target-branch: beta
