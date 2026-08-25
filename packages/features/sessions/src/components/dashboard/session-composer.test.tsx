@@ -79,7 +79,7 @@ describe("dashboard composer keyboard", () => {
     expect(scrollToEnd).toHaveBeenCalledOnce();
   });
 
-  it("queues a follow-up instead of interrupting a running session", async () => {
+  it("steers a running session instead of queueing a follow-up", async () => {
     const onCommand = vi.fn().mockResolvedValue(undefined);
     const props = {
       ...composerDashboardProps({ ...BASE_SESSION, status: "running" }),
@@ -96,11 +96,7 @@ describe("dashboard composer keyboard", () => {
       preventDefault: vi.fn(),
     });
 
-    expect(onCommand).toHaveBeenCalledWith(
-      "session-1",
-      "follow_up",
-      "Run this when the current turn finishes",
-    );
+    expect(onCommand).toHaveBeenCalledWith("session-1", "steer", "Run this when the current turn finishes");
   });
 
   it("renders queued messages in the transcript with a cancel action", () => {
