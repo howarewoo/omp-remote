@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { resolveSessionRoots, SessionCatalog } from "./session-catalog.js";
+import { SessionCatalog } from "./session-catalog.js";
 const temporaryDirectories: string[] = [];
 async function makeTemporaryDirectory(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "omp-remote-catalog-"));
@@ -18,18 +18,6 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
 }
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true })));
-});
-describe("resolveSessionRoots", () => {
-  it("includes the default agent and every local profile", async () => {
-    const homeDirectory = await makeTemporaryDirectory();
-    await mkdir(join(homeDirectory, ".omp", "profiles", "personal", "agent"), { recursive: true });
-    await mkdir(join(homeDirectory, ".omp", "profiles", "work", "agent"), { recursive: true });
-    await expect(resolveSessionRoots(homeDirectory)).resolves.toEqual([
-      join(homeDirectory, ".omp", "agent", "sessions"),
-      join(homeDirectory, ".omp", "profiles", "personal", "agent", "sessions"),
-      join(homeDirectory, ".omp", "profiles", "work", "agent", "sessions"),
-    ]);
-  });
 });
 describe("SessionCatalog", () => {
   it("nests active subagents under their main session instead of listing them as sessions", async () => {

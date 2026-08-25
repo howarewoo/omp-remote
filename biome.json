@@ -1,7 +1,15 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.6/schema.json",
   "files": {
-    "includes": ["**", "!**/.turbo", "!**/dist", "!**/coverage", "!**/node_modules", "!apps/web/public"]
+    "includes": [
+      "**",
+      "!**/.turbo",
+      "!**/.woostack",
+      "!**/dist",
+      "!**/coverage",
+      "!**/node_modules",
+      "!apps/web/public"
+    ]
   },
   "formatter": {
     "enabled": true,

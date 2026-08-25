@@ -105,7 +105,7 @@ export function ApplicationErrorViewer({
   const hasActiveFilters = sourceFilter !== "all" || severityFilter !== "all";
 
   return (
-    <div className={cn("app-errors-workspace", className)} aria-label="Application error ledger">
+    <section className={cn("app-errors-workspace", className)} aria-label="Application error ledger">
       <header className="session-header app-errors-header">
         <div className="session-header-primary">
           <SidebarTrigger />
@@ -201,8 +201,11 @@ export function ApplicationErrorViewer({
 
       {errors.length > 0 ? (
         <div className="app-error-filters" role="toolbar" aria-label="Filter application errors">
-          <div className="app-error-filter-group" role="group" aria-label="Filter by source">
-            <span className="app-error-filter-label">Source:</span>
+          <fieldset className="app-error-filter-group">
+            <legend className="sr-only">Filter by source</legend>
+            <span className="app-error-filter-label" aria-hidden="true">
+              Source:
+            </span>
             <div className="app-error-filter-buttons">
               <Button
                 type="button"
@@ -232,10 +235,13 @@ export function ApplicationErrorViewer({
                 Browser
               </Button>
             </div>
-          </div>
+          </fieldset>
 
-          <div className="app-error-filter-group" role="group" aria-label="Filter by severity">
-            <span className="app-error-filter-label">Severity:</span>
+          <fieldset className="app-error-filter-group">
+            <legend className="sr-only">Filter by severity</legend>
+            <span className="app-error-filter-label" aria-hidden="true">
+              Severity:
+            </span>
             <div className="app-error-filter-buttons">
               <Button
                 type="button"
@@ -265,7 +271,7 @@ export function ApplicationErrorViewer({
                 Error
               </Button>
             </div>
-          </div>
+          </fieldset>
 
           {hasActiveFilters ? (
             <Button
@@ -454,6 +460,6 @@ export function ApplicationErrorViewer({
           </Button>
         </footer>
       </Dialog>
-    </div>
+    </section>
   );
 }
