@@ -12,11 +12,11 @@ import {
 
 describe("dashboard session header", () => {
   it("shows the working directory tail while retaining the full path", () => {
-    const cwd = "/Users/adamwoo/Documents/GitHub/omp-remote";
+    const cwd = "/workspace/projects/omp-remote";
     const output = renderControlledDashboard(composerDashboardProps({ ...BASE_SESSION, cwd }));
     const root = findElements(output, (element) => element.props.className === "session-root")[0];
 
-    expect(textContent(root)).toBe("…/GitHub/omp-remote");
+    expect(textContent(root)).toBe("…/projects/omp-remote");
     expect(root?.props.title).toBe(cwd);
   });
 
