@@ -43,6 +43,10 @@ type NodeLike = {
 };
 
 function walk(node: unknown, visit: (element: NodeLike) => void): void {
+  if (Array.isArray(node)) {
+    for (const child of node) walk(child, visit);
+    return;
+  }
   if (!node || typeof node !== "object") return;
   const element = node as NodeLike;
   visit(element);

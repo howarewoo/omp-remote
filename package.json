@@ -12,7 +12,7 @@
     "dev": "node scripts/dev.mjs",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "lint": "biome lint .",
+    "lint": "biome lint --max-diagnostics=none .",
     "lint:lines": "node scripts/check-file-lengths.mjs",
     "test": "node --test scripts/check-file-lengths.test.mjs scripts/check-omp-changelog.test.mjs scripts/dev.test.mjs scripts/install-service.test.mjs scripts/setup.test.mjs && turbo run test",
     "typecheck": "turbo run typecheck",

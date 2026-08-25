@@ -129,7 +129,8 @@ export function ThemeSelector({ className }: ThemeSelectorProps) {
   const { theme, setTheme } = useTheme();
 
   return (
-    <div className={cn("ui-theme-selector", className)} role="group" aria-label="Theme mode selection">
+    <fieldset className={cn("ui-theme-selector", className)}>
+      <legend className="sr-only">Theme mode selection</legend>
       {THEME_OPTIONS.map((option) => {
         const selected = theme === option.value;
         const iconName = option.value === "system" ? "laptop" : option.value === "light" ? "sun" : "moon";
@@ -150,6 +151,6 @@ export function ThemeSelector({ className }: ThemeSelectorProps) {
           </Button>
         );
       })}
-    </div>
+    </fieldset>
   );
 }

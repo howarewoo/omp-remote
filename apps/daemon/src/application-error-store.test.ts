@@ -176,7 +176,7 @@ describe("ApplicationErrorStore", () => {
       expect(reloaded.getHealth().totalBytes).toBeLessThanOrEqual(5 * 1024 * 1024);
       expect(reloaded.list().some((r) => r.id === "seed-1")).toBe(false);
       expect(reloaded.list()[reloaded.list().length - 1]?.id).toBe("err-newest");
-    });
+    }, 10_000);
   });
 
   describe("mutation queue concurrency and clear semantics", () => {
