@@ -51,6 +51,12 @@ describe("RpcFrameDecoder", () => {
 
     expect(() => decoder.decode(JSON.stringify({ type: "agent_start" }))).toThrow("interrupted");
   });
+  it("rejects malformed and oversized RPC frames", () => {
+    const decoder = new RpcFrameDecoder();
+
+    expect(() => decoder.decode("{not-json")).toThrow();
+    expect(() => decoder.decode("x".repeat(1024 * 1024 + 1))).toThrow("exceeds 1 MiB");
+  });
 });
 
 describe("RpcSession", () => {

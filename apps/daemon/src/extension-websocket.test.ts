@@ -810,4 +810,24 @@ describe("registerExtensionWebSocketRoute", () => {
     expect(harness.sendToBrowser).not.toHaveBeenCalled();
     expect(harness.broadcast).not.toHaveBeenCalled();
   });
+  it("closes non-loopback extension connections before registering handlers", () => {
+    const isLoopbackAddress = vi.fn((address: string) => address === "127.0.0.1");
+    const harness = createTestHarness({ isLoopbackAddress });
+
+    const socket = harness.connectSocket("192.168.1.20");
+
+    expect(isLoopbackAddress).toHaveBeenCalledWith("192.168.1.20");
+    expect(socket.closeCode).toBe(1008);
+    expect(socket.closeReason).toBe("Extensions must connect over loopback");
+    expect(harness.registry.list()).toEqual([]);
+  });
+
+  it("closes malformed extension frames without disclosing parser details", () => {
+    const socket = createTestHarness().connectSocket();
+
+    socket.receiveRaw("{not-json");
+
+    expect(socket.closeCode).toBe(1003);
+    expect(socket.closeReason).toBe("Invalid extension frame");
+  });
 });

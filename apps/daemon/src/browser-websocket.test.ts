@@ -173,6 +173,51 @@ describe("browser WebSocket Ask lifecycle", () => {
   });
 });
 
+describe("browser WebSocket origin boundary", () => {
+  it("closes a disallowed origin before exposing session state", () => {
+    const socket = Object.assign(new EventEmitter(), { close: vi.fn() }) as unknown as WebSocket;
+    const browserSockets = new Set<WebSocket>();
+    const sendToBrowser = vi.fn();
+    let wsHandler:
+      | ((socket: WebSocket, request: { headers: { origin?: string; host?: string } }) => void)
+      | undefined;
+    const app = {
+      get: vi.fn((_path, _options, handler) => {
+        wsHandler = handler;
+      }),
+    } as unknown as Parameters<typeof registerBrowserWebSocketRoute>[0];
+
+    registerBrowserWebSocketRoute(app, {
+      browserSockets,
+      pendingAskBySession: new Map(),
+      pushSubscriptions: {} as never,
+      savedWorkingDirectories: {} as never,
+      rpcSessions: new Map(),
+      extensionSockets: new Map(),
+      registry: {} as never,
+      sendToBrowser,
+      broadcast: vi.fn(),
+      launchRpcSession: vi.fn(),
+      branchSwitchBlocksSessionCommand: vi.fn(),
+      switchSessionBranch: vi.fn(),
+      refreshRpcState: vi.fn(),
+      clearPendingAsk: vi.fn(),
+      expirePendingAsk: vi.fn(),
+      originAllowed: () => false,
+      logger: {} as never,
+      errorStore: {} as never,
+    });
+    if (!wsHandler) throw new Error("Expected browser route handler");
+    wsHandler(socket, {
+      headers: { origin: "https://attacker.example", host: "host.ts.net" },
+    });
+
+    expect(socket.close).toHaveBeenCalledWith(1008, "Origin is not allowed");
+    expect(browserSockets.size).toBe(0);
+    expect(sendToBrowser).not.toHaveBeenCalled();
+  });
+});
+
 describe("browser WebSocket report_application_error", () => {
   it("records validated browser error, broadcasts committed frame, and responds with ok command result", async () => {
     const socketEmitter = new EventEmitter();
