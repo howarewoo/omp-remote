@@ -15,7 +15,6 @@ import {
   removeAskRequest,
   upsertAskRequest,
 } from "./index.js";
-
 const SESSION: Session = {
   id: "session-1",
   source: "rpc",
@@ -34,6 +33,7 @@ const SESSION: Session = {
   activeSubagents: [],
   skillCommands: [],
 };
+
 describe("patchSession", () => {
   it("updates only the targeted metadata while preserving stable references", () => {
     const other = {
@@ -254,3 +254,4 @@ describe("application errors client support", () => {
     expect(result).toEqual({ ok: true, clearedCount: 1 });
   });
 });
+
