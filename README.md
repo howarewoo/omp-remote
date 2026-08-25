@@ -38,13 +38,31 @@ Follow these steps on the macOS or Linux computer where you run OMP.
 
 ### 2. Install OMP Remote
 
-Paste this single command into a terminal:
+Stable releases are installed from `main`. Paste this single command into a terminal:
 
 ```bash
-git clone https://github.com/howarewoo/omp-remote.git && pnpm --dir omp-remote run setup
+git clone --branch main https://github.com/howarewoo/omp-remote.git && pnpm --dir omp-remote run setup
 ```
 
 The setup command verifies Node 24.18.0 or newer, pnpm 11.17.0, OMP 18.0.0, and Tailscale; installs the frozen dependency graph; builds OMP Remote; connects future OMP terminal sessions; starts or restarts the background service; waits for the OMP Remote health endpoint; and then configures private Tailscale access. It is safe to rerun and stops at the first failed stage without continuing. Fix the reported stage and rerun the same command. If Tailscale prints an admin URL the first time, open it to enable Serve and then rerun setup.
+
+### Install the beta channel
+
+`beta` contains changes accepted for the next release before they are promoted to `main`. It may change more frequently than the stable channel. Install it into a separate checkout with:
+
+```bash
+git clone --branch beta https://github.com/howarewoo/omp-remote.git omp-remote-beta && pnpm --dir omp-remote-beta run setup
+```
+
+Stable and beta checkouts use the same user service, OMP extension, and state directory, so only one channel can be active at a time. Running setup from a checkout makes that checkout the active installation. To move an existing clone to beta, fetch and switch branches before rerunning setup:
+
+```bash
+cd omp-remote
+git fetch origin
+git switch beta
+git pull --ff-only origin beta
+pnpm run setup
+```
 
 When setup finishes, it prints the private `https://...ts.net` dashboard URL. The daemon listens only on loopback and has no application login. Tailnet membership and ACLs are the authentication and authorization boundary: every user or device allowed to reach the host can view session content and use its controls. Do not expose port `4387` directly to a LAN or the public internet.
 
@@ -71,13 +89,15 @@ Session transcripts can contain prompts, tool output, file paths, process detail
 
 ## Upgrade and recovery
 
-The supported upgrade path is an in-place pull followed by the same idempotent setup command:
+The supported upgrade path is an in-place pull on the installed channel followed by the same idempotent setup command:
 
 ```bash
 cd omp-remote
 git pull --ff-only
 pnpm run setup
 ```
+
+`git pull` keeps the checkout on its current channel: `main` for stable or `beta` for beta. Check the active channel with `git branch --show-current` before running setup.
 
 Setup rebuilds the current checkout, replaces the installed user extension, and rewrites the background-service definition without deleting `~/.omp/remote`. On macOS, setup unloads and reloads the launch agent. On Linux, setup reloads the systemd user definition, enables the service, and restarts it. On both platforms, setup waits for the restarted daemon to identify itself as healthy before changing Tailscale Serve.
 
