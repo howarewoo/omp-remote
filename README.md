@@ -1,7 +1,7 @@
 # OMP Remote
 
 > [!IMPORTANT]
-> This repository is archived and no longer maintained. Use [Orca](https://github.com/stablyai/orca) instead.
+> This repository is archived and no longer maintained. I recommend using [Orca](https://github.com/stablyai/orca) instead (not affiliated).
 
 A phone-first PWA for supervising multiple [Oh My Pi](https://omp.sh) coding sessions from a private Tailnet. A loopback-only host daemon serves the dashboard, launches OMP RPC sessions, and accepts automatic registrations from ordinary terminal OMP sessions.
 
